@@ -1,18 +1,51 @@
-# Secrets
+# Secrets - NUNCA subir
 .env
+.env.*
+!.env.example
 
 # Python
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+*.so
+.Python
 venv/
+.venv/
+env/
+ENV/
 *.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+
+# Testing & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+coverage.xml
 
 # Docker
 docker-compose.override.yml
+*.env.docker
 
 # IDE
 .vscode/
 .idea/
+*.swp
+*.swo
 
 # OS
 .DS_Store
+Thumbs.db
+*.tmp
+
+# Logs
+*.log
+logs/
+
+# Local databases (por si usás SQLite en desarrollo)
+*.db
+*.sqlite3
