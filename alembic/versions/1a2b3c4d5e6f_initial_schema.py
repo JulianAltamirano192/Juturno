@@ -87,7 +87,7 @@ def upgrade():
         """
         ALTER TABLE booking ADD CONSTRAINT excl_overlapping_bookings 
         EXCLUDE USING gist (
-            COALESCE(staff_id, -1) WITH =, 
+            (COALESCE(staff_id, -1)) WITH =, 
             tstzrange(start_time, end_time) WITH &&
         );
         """

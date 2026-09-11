@@ -84,7 +84,7 @@ class Booking(SQLModel, table=True):
         
         # Red de seguridad física contra superposición de turnos para el mismo profesional (Exclusion Constraint).
         ExcludeConstraint(
-            (text("COALESCE(staff_id, -1)"), '='),
+            (text("(COALESCE(staff_id, -1))"), '='),
             (text("tstzrange(start_time, end_time)"), '&&'),
             name='excl_overlapping_bookings',
             using='gist'
