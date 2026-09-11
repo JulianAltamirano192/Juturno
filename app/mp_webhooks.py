@@ -1,6 +1,7 @@
 import hmac
 import hashlib
 from datetime import datetime
+import httpx
 from fastapi import APIRouter, Request, Header, Depends, Response, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
@@ -77,11 +78,22 @@ async def mercadopago_webhook(
 
     # 3. Procesamiento transaccional de negocio
     try:
-        # Aquí consultarías el estado real a la API de MP usando data_id
-        real_payment_status = "approved"  # Simulación de respuesta real de MP
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                payment_response = await client.get(
+                    f"https://api.mercadopago.com/v1/payments/{data_id}",
+                    headers={"Authorization": f"Bearer {settings.MP_ACCESS_TOKEN}"},
+                )
+        except httpx.TimeoutException as exc:
+            raise HTTPException(status_code=504, detail="Timeout consultando Mercado Pago") from exc
+
+        if payment_response.status_code == 404:
+            raise HTTPException(status_code=404, detail="Pago no encontrado en Mercado Pago")
+        payment_response.raise_for_status()
+        real_payment_status = payment_response.json().get("status")
         
         if real_payment_status == "approved":
-            stmt = select(Payment).where(Payment.id == int(data_id))
+            stmt = select(Payment).where(Payment.mp_payment_id == data_id)
             payment = (await session.execute(stmt)).scalar_one_or_none()
             
             if payment and payment.status != "approved":

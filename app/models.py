@@ -1,7 +1,8 @@
 from datetime import datetime
+from decimal import Decimal
 from typing import Optional, List, Any
 from sqlmodel import SQLModel, Field, Relationship, Column, JSON
-from sqlalchemy import UniqueConstraint, CheckConstraint, Index
+from sqlalchemy import DateTime, Numeric, UniqueConstraint, CheckConstraint, Index
 from sqlalchemy.dialects.postgresql import ExcludeConstraint, TSTZRANGE
 from sqlalchemy import text
 
@@ -42,7 +43,7 @@ class Service(SQLModel, table=True):
     # Campos de datos
     name: str
     duration_minutes: int
-    price: float
+    price: Decimal = Field(sa_column=Column(Numeric(10, 2), nullable=False))
     is_active: bool = Field(default=True, index=True)
     
     # Relaciones bidireccionales definidas en ambos lados
@@ -83,7 +84,7 @@ class Booking(SQLModel, table=True):
         
         # Red de seguridad física contra superposición de turnos para el mismo profesional (Exclusion Constraint).
         ExcludeConstraint(
-            ('staff_id', '='),
+            (text("COALESCE(staff_id, -1)"), '='),
             (text("tstzrange(start_time, end_time)"), '&&'),
             name='excl_overlapping_bookings',
             using='gist'
@@ -103,11 +104,11 @@ class Booking(SQLModel, table=True):
     client_phone: str
     
     # Campos de slot temporal estrictamente como DateTime
-    start_time: datetime = Field(index=True)
-    end_time: datetime = Field(index=True)
+    start_time: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False, index=True))
+    end_time: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False, index=True))
     
     # Snapshot financiero y de estados
-    price_at_booking: float
+    price_at_booking: Decimal = Field(sa_column=Column(Numeric(10, 2), nullable=False))
     status: str = Field(default="pending", index=True) # pending, confirmed, cancelled
     
     # Campo agregado para el control de recordatorios del scheduler (Fase 4)
@@ -137,7 +138,8 @@ class Payment(SQLModel, table=True):
     booking_id: int = Field(foreign_key="booking.id", index=True, ondelete="CASCADE")
     
     # Campos financieros
-    amount: float
+    amount: Decimal = Field(sa_column=Column(Numeric(10, 2), nullable=False))
+    mp_payment_id: Optional[str] = Field(default=None, index=True)
     method: str
     status: str = Field(index=True)
     paid_at: Optional[datetime] = None
@@ -156,6 +158,8 @@ class NotificationOutbox(SQLModel, table=True):
     booking_id: int = Field(foreign_key="booking.id", index=True)
     notification_type: str # 'confirmation' o 'reminder'
     status: str = Field(default="pending", index=True) # pending, sent, failed
+    retry_count: int = Field(default=0)
+    error_message: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 

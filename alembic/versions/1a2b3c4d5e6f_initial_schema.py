@@ -35,7 +35,7 @@ def upgrade():
         sa.Column('tenant_id', sa.Integer(), nullable=False),
         sa.Column('name', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
         sa.Column('duration_minutes', sa.Integer(), nullable=False),
-        sa.Column('price', sa.Float(), nullable=False),
+        sa.Column('price', sa.Numeric(precision=10, scale=2), nullable=False),
         sa.Column('is_active', sa.Boolean(), nullable=False),
         sa.ForeignKeyConstraint(['tenant_id'], ['tenant.id'], ondelete='CASCADE'),
         sa.PrimaryKeyConstraint('id')
@@ -59,10 +59,11 @@ def upgrade():
         sa.Column('staff_id', sa.Integer(), nullable=True),
         sa.Column('client_name', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
         sa.Column('client_phone', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
-        sa.Column('start_time', sa.DateTime(), nullable=False), # Slot como DateTime
-        sa.Column('end_time', sa.DateTime(), nullable=False),     # Slot como DateTime
-        sa.Column('price_at_booking', sa.Float(), nullable=False),
+        sa.Column('start_time', sa.DateTime(timezone=True), nullable=False), # Slot como DateTime
+        sa.Column('end_time', sa.DateTime(timezone=True), nullable=False),     # Slot como DateTime
+        sa.Column('price_at_booking', sa.Numeric(precision=10, scale=2), nullable=False),
         sa.Column('status', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+        sa.Column('reminder_sent', sa.Boolean(), nullable=False),
         sa.Column('idempotency_key', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
         sa.Column('created_at', sa.DateTime(), nullable=False),
         sa.ForeignKeyConstraint(['service_id'], ['service.id'], ondelete='CASCADE'),
@@ -86,7 +87,7 @@ def upgrade():
         """
         ALTER TABLE booking ADD CONSTRAINT excl_overlapping_bookings 
         EXCLUDE USING gist (
-            staff_id WITH =, 
+            COALESCE(staff_id, -1) WITH =, 
             tstzrange(start_time, end_time) WITH &&
         );
         """
@@ -95,7 +96,8 @@ def upgrade():
     op.create_table('payment',
         sa.Column('id', sa.Integer(), nullable=False),
         sa.Column('booking_id', sa.Integer(), nullable=False),
-        sa.Column('amount', sa.Float(), nullable=False),
+        sa.Column('amount', sa.Numeric(precision=10, scale=2), nullable=False),
+        sa.Column('mp_payment_id', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
         sa.Column('method', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
         sa.Column('status', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
         sa.Column('paid_at', sa.DateTime(), nullable=True),
@@ -104,9 +106,49 @@ def upgrade():
     )
     op.create_index(op.f('ix_payment_booking_id'), 'payment', ['booking_id'], unique=False)
     op.create_index(op.f('ix_payment_status'), 'payment', ['status'], unique=False)
+    op.create_index(op.f('ix_payment_mp_payment_id'), 'payment', ['mp_payment_id'], unique=False)
+
+    op.create_table('notification_outbox',
+        sa.Column('id', sa.Integer(), nullable=False),
+        sa.Column('booking_id', sa.Integer(), nullable=False),
+        sa.Column('notification_type', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+        sa.Column('status', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+        sa.Column('retry_count', sa.Integer(), nullable=False),
+        sa.Column('error_message', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
+        sa.Column('created_at', sa.DateTime(), nullable=False),
+        sa.ForeignKeyConstraint(['booking_id'], ['booking.id']),
+        sa.PrimaryKeyConstraint('id')
+    )
+    op.create_index(op.f('ix_notification_outbox_booking_id'), 'notification_outbox', ['booking_id'], unique=False)
+    op.create_index(op.f('ix_notification_outbox_status'), 'notification_outbox', ['status'], unique=False)
+
+    op.create_table('payment_events',
+        sa.Column('event_id', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+        sa.Column('booking_id', sa.Integer(), nullable=True),
+        sa.Column('event_type', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+        sa.Column('payload', sa.JSON(), nullable=False),
+        sa.Column('received_at', sa.DateTime(), nullable=False),
+        sa.Column('processed_at', sa.DateTime(), nullable=True),
+        sa.Column('status', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+        sa.ForeignKeyConstraint(['booking_id'], ['booking.id']),
+        sa.PrimaryKeyConstraint('event_id')
+    )
+    op.create_index(op.f('ix_payment_events_booking_id'), 'payment_events', ['booking_id'], unique=False)
+    op.create_index(op.f('ix_payment_events_event_id'), 'payment_events', ['event_id'], unique=False)
+    op.create_index(op.f('ix_payment_events_status'), 'payment_events', ['status'], unique=False)
 
 
 def downgrade():
+    op.drop_index(op.f('ix_payment_events_status'), table_name='payment_events')
+    op.drop_index(op.f('ix_payment_events_event_id'), table_name='payment_events')
+    op.drop_index(op.f('ix_payment_events_booking_id'), table_name='payment_events')
+    op.drop_table('payment_events')
+
+    op.drop_index(op.f('ix_notification_outbox_status'), table_name='notification_outbox')
+    op.drop_index(op.f('ix_notification_outbox_booking_id'), table_name='notification_outbox')
+    op.drop_table('notification_outbox')
+
+    op.drop_index(op.f('ix_payment_mp_payment_id'), table_name='payment')
     op.drop_index(op.f('ix_payment_status'), table_name='payment')
     op.drop_index(op.f('ix_payment_booking_id'), table_name='payment')
     op.drop_table('payment')
