@@ -3,7 +3,8 @@ from datetime import date, datetime, time
 from typing import Optional, List, Annotated
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Depends, HTTPException, Query
+from fastapi import FastAPI, Depends, HTTPException, Header, Query
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
@@ -17,6 +18,7 @@ from app.scheduler import process_reminders
 from app.outbox_worker import process_outbox
 from app.mp_webhooks import router as mp_router
 from app.webhooks import router as whatsapp_router
+from app.config import settings
 
 
 # --- SCHEDULER + LIFESPAN ---
@@ -58,6 +60,13 @@ async def lifespan(app: FastAPI):
 # --- APP ---
 
 app = FastAPI(lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 app.include_router(mp_router)
 app.include_router(whatsapp_router)
@@ -108,6 +117,12 @@ class BookingCreate(BaseModel):
     idempotency_key: str
 
 
+async def require_tenant_auth(
+    x_tenant_api_key: Annotated[Optional[str], Header(alias="X-Tenant-API-Key")] = None,
+) -> None:
+    """TODO: validar X-Tenant-API-Key y comprobar que autoriza el tenant solicitado."""
+
+
 # --- ENDPOINTS ---
 
 @app.get("/bookings/available-slots", response_model=AvailableSlotsResponse)
@@ -116,6 +131,7 @@ async def get_available_slots(
     service_id: Annotated[int, Query(gt=0, description="ID del servicio")],
     day: Annotated[date, Query(description="Fecha YYYY-MM-DD")],
     staff_id: Annotated[Optional[int], Query(description="ID del profesional")] = None,
+    _: None = Depends(require_tenant_auth),
     session: AsyncSession = Depends(get_db),
 ):
     """Devuelve los slots libres para un servicio/día/staff."""
@@ -170,6 +186,7 @@ async def get_available_slots(
 @app.post("/bookings", status_code=201)
 async def create_booking(
     payload: BookingCreate,
+    _: None = Depends(require_tenant_auth),
     session: AsyncSession = Depends(get_db),
 ):
     """
