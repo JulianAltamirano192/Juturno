@@ -8,6 +8,7 @@ from sqlalchemy import select
 
 from app.models import ProcessedWebhookEvent, Payment, Booking, NotificationOutbox
 from app.database import get_db
+from app.config import settings
 
 router = APIRouter()
 
@@ -27,7 +28,7 @@ def verify_mp_signature(x_signature: str, x_request_id: str, data_id: str) -> bo
         if not ts or not v1:
             return False
             
-        MP_WEBHOOK_SECRET = "tu_secreto_de_webhook"  # Reemplazar con tu secret key real de producción
+        MP_WEBHOOK_SECRET = settings.MP_SECRET_KEY
         manifest = f"id:{data_id};request-id:{x_request_id};ts:{ts};"
         
         expected_hmac = hmac.new(

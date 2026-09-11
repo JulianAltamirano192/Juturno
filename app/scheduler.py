@@ -4,11 +4,12 @@ import redis.asyncio as redis
 from sqlalchemy import select, and_
 
 from app.models import Booking, NotificationOutbox
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
 # Conexión asíncrona a Redis
-redis_client = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
+redis_client = redis.from_url(settings.REDIS_URL, decode_responses=True)
 
 async def process_reminders(async_session_maker):
     """

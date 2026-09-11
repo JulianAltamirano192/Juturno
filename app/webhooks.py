@@ -1,12 +1,13 @@
 from fastapi import APIRouter, Request, Query, HTTPException, Response
 from fastapi.responses import PlainTextResponse
 import logging
+from app.config import settings
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
 # Este token debe coincidir EXACTAMENTE con el que configures en el panel de Meta
-META_VERIFY_TOKEN = "mi_token_super_secreto_123"
+META_VERIFY_TOKEN = settings.META_VERIFY_TOKEN
 
 @router.get("/webhooks/whatsapp")
 async def verify_webhook(

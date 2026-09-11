@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     WHATSAPP_PHONE_NUMBER_ID: str = ""
     MP_ACCESS_TOKEN: str = ""
     MP_SECRET_KEY: str = ""
+    META_VERIFY_TOKEN: str = ""
     
     class Config:
         env_file = ".env"
