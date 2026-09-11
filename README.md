@@ -30,7 +30,7 @@ Los tests de integración usan exclusivamente `saas_test`. Creala antes de corre
 
 ```bash
 docker compose exec db createdb -U postgres saas_test
-TEST_DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/saas_test pytest -v
+docker compose exec -e TEST_DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/saas_test api pytest -v
 ```
 
 ## Worker de outbox
