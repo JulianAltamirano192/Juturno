@@ -2,6 +2,7 @@
 from datetime import date, datetime, time, timezone
 from typing import Optional, List, Annotated
 from contextlib import asynccontextmanager
+from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, Depends, HTTPException, Header, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -147,8 +148,9 @@ async def get_available_slots(
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
 
-    window_start = datetime.combine(day, time(9, 0), tzinfo=timezone.utc)
-    window_end = datetime.combine(day, time(18, 0), tzinfo=timezone.utc)
+    tenant_timezone = ZoneInfo(tenant.timezone)
+    window_start = datetime.combine(day, time(9, 0), tzinfo=tenant_timezone)
+    window_end = datetime.combine(day, time(18, 0), tzinfo=tenant_timezone)
 
     stmt = select(Booking).where(
         and_(
@@ -210,14 +212,22 @@ async def create_booking(
         if not staff or staff.tenant_id != payload.tenant_id:
             raise HTTPException(status_code=404, detail="Staff not found for tenant")
 
+    tenant_timezone = ZoneInfo(tenant.timezone)
+    start_time = payload.start_time
+    end_time = payload.end_time
+    if start_time.tzinfo is None:
+        start_time = start_time.replace(tzinfo=tenant_timezone)
+    if end_time.tzinfo is None:
+        end_time = end_time.replace(tzinfo=tenant_timezone)
+
     new_booking = Booking(
         tenant_id=payload.tenant_id,
         service_id=payload.service_id,
         staff_id=payload.staff_id,
         client_name=payload.client_name,
         client_phone=payload.client_phone,
-        start_time=payload.start_time,
-        end_time=payload.end_time,
+        start_time=start_time,
+        end_time=end_time,
         price_at_booking=service.price,
         idempotency_key=payload.idempotency_key
     )
