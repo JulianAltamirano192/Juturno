@@ -20,6 +20,7 @@ from app.outbox_worker import process_outbox
 from app.mp_webhooks import router as mp_router
 from app.webhooks import router as whatsapp_router
 from app.config import settings
+from app.auth import get_current_tenant
 
 
 # --- SCHEDULER + LIFESPAN ---
@@ -118,12 +119,6 @@ class BookingCreate(BaseModel):
     idempotency_key: str
 
 
-async def require_tenant_auth(
-    x_tenant_api_key: Annotated[Optional[str], Header(alias="X-Tenant-API-Key")] = None,
-) -> None:
-    """TODO: validar X-Tenant-API-Key y comprobar que autoriza el tenant solicitado."""
-
-
 # --- ENDPOINTS ---
 
 @app.get("/bookings/available-slots", response_model=AvailableSlotsResponse)
@@ -132,7 +127,7 @@ async def get_available_slots(
     service_id: Annotated[int, Query(gt=0, description="ID del servicio")],
     day: Annotated[date, Query(description="Fecha YYYY-MM-DD")],
     staff_id: Annotated[Optional[int], Query(description="ID del profesional")] = None,
-    _: None = Depends(require_tenant_auth),
+    current_tenant: Tenant = Depends(get_current_tenant),
     session: AsyncSession = Depends(get_db),
 ):
     """Devuelve los slots libres para un servicio/día/staff."""
@@ -140,13 +135,16 @@ async def get_available_slots(
     if day < date.today():
         raise HTTPException(status_code=400, detail="No se pueden consultar fechas pasadas")
 
+    if tenant_id != current_tenant.id:
+        # La API key es válida pero para otro tenant: 404 para no
+        # revelar si el tenant_id existe.
+        raise HTTPException(status_code=404, detail="Service not found")
+
     service = await session.get(Service, service_id)
     if not service or service.tenant_id != tenant_id:
         raise HTTPException(status_code=404, detail="Service not found")
 
-    tenant = await session.get(Tenant, tenant_id)
-    if not tenant:
-        raise HTTPException(status_code=404, detail="Tenant not found")
+    tenant = current_tenant
 
     tenant_timezone = ZoneInfo(tenant.timezone)
     window_start = datetime.combine(day, time(9, 0), tzinfo=tenant_timezone)
@@ -188,7 +186,7 @@ async def get_available_slots(
 @app.post("/bookings", status_code=201)
 async def create_booking(
     payload: BookingCreate,
-    _: None = Depends(require_tenant_auth),
+    current_tenant: Tenant = Depends(get_current_tenant),
     session: AsyncSession = Depends(get_db),
 ):
     """
@@ -196,12 +194,13 @@ async def create_booking(
     Commitea booking + notificación en una sola transacción atómica.
     Devuelve 409 si el slot ya está ocupado (ExcludeConstraint).
     """
+    if payload.tenant_id != current_tenant.id:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
     if payload.end_time <= payload.start_time:
         raise HTTPException(status_code=400, detail="end_time debe ser posterior a start_time")
 
-    tenant = await session.get(Tenant, payload.tenant_id)
-    if not tenant:
-        raise HTTPException(status_code=404, detail="Tenant not found")
+    tenant = current_tenant
 
     service = await session.get(Service, payload.service_id)
     if not service or service.tenant_id != payload.tenant_id:
@@ -246,4 +245,4 @@ async def create_booking(
         await session.rollback()
         raise HTTPException(status_code=409, detail="Slot ya reservado o superpuesto")
 
-    return {"message": "Reserva confirmada", "booking_id": new_booking.id}   
+    return {"message": "Reserva confirmada", "booking_id": new_booking.id}

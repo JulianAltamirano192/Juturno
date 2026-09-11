@@ -1,76 +1,48 @@
 import pytest
-import pytest_asyncio
-import httpx
 import hmac
 import hashlib
-import os
-from datetime import datetime, timedelta, date
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker
+from datetime import timedelta, date
 from sqlalchemy import text
-from sqlalchemy.pool import NullPool
 
-# Importamos la app de FastAPI y los modelos SQLModel
-from app.main import app
-from app.models import SQLModel, Tenant, Service, Booking, ProcessedWebhookEvent, NotificationOutbox
-from app.database import get_db
+from app.models import Tenant, Service, NotificationOutbox, ApiKey
 from app import mp_webhooks
+from app.auth import hash_api_key
 
-# URL de la base de datos de test (apuntando al contenedor de Docker 'db')
-TEST_DATABASE_URL = os.getenv(
-    "TEST_DATABASE_URL",
-    "postgresql+asyncpg://postgres:postgres@localhost:5432/saas_test",
-)
 
-engine = create_async_engine(TEST_DATABASE_URL, echo=False, poolclass=NullPool)
-TestingSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+# --- HELPERS DE AUTENTICACIÓN ---
 
-@pytest_asyncio.fixture(autouse=True)
-async def setup_db():
-    """Fixture: Crea las tablas, asegura la extensión btree_gist y limpia al terminar"""
-    async with engine.begin() as conn:
-        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS btree_gist;"))
-        await conn.run_sync(SQLModel.metadata.create_all)
-    yield
-    async with engine.begin() as conn:
-        await conn.run_sync(SQLModel.metadata.drop_all)
+async def _create_api_key(db_session, tenant_id: int) -> str:
+    """Crea una ApiKey para el tenant y devuelve la key en texto plano."""
+    raw_key = f"test-key-tenant-{tenant_id}"
+    db_session.add(ApiKey(
+        tenant_id=tenant_id,
+        key_hash=hash_api_key(raw_key),
+    ))
+    await db_session.commit()
+    return raw_key
 
-@pytest_asyncio.fixture
-async def db_session():
-    """Fixture: Provee una sesión visible para las requests de integración."""
-    async with TestingSessionLocal() as session:
-        yield session
-        await session.rollback()
 
-@pytest_asyncio.fixture
-async def client():
-    """Fixture: Cliente HTTP asíncrono para testear la API de FastAPI"""
-    async def override_get_db():
-        async with TestingSessionLocal() as session:
-            yield session
+def _auth_headers(raw_key: str) -> dict:
+    return {"X-Tenant-API-Key": raw_key}
 
-    app.dependency_overrides[get_db] = override_get_db
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as ac:
-        yield ac
-    app.dependency_overrides.clear()
 
 # --- SUITE DE PRUEBAS DE INTEGRACIÓN ---
 
 @pytest.mark.asyncio
 async def test_booking_flow_and_available_slots(client, db_session):
     """Test: Crear tenant, servicio, reservar un turno y verificar que desaparece de available-slots"""
-    # 1. Crear Tenant y Service de prueba
     tenant = Tenant(name="Salon Test", timezone="UTC")
     db_session.add(tenant)
     await db_session.flush()
-    
+
     service = Service(tenant_id=tenant.id, name="Corte de Pelo", duration_minutes=60, price=1500.0)
     db_session.add(service)
     await db_session.commit()
 
+    raw_key = await _create_api_key(db_session, tenant.id)
+
     day = date.today() + timedelta(days=1)
-    
-    # 2. Hacer POST a /bookings
+
     payload = {
         "tenant_id": tenant.id,
         "service_id": service.id,
@@ -82,17 +54,20 @@ async def test_booking_flow_and_available_slots(client, db_session):
         "price_at_booking": 1500.0,
         "idempotency_key": "unique-booking-key-01"
     }
-    res = await client.post("/bookings", json=payload)
+    res = await client.post("/bookings", json=payload, headers=_auth_headers(raw_key))
     assert res.status_code == 201
     data = res.json()
     assert "booking_id" in data
 
-    # 3. Consultar /bookings/available-slots y verificar que las 10:00 ya no están disponibles
-    res_slots = await client.get(f"/bookings/available-slots?tenant_id={tenant.id}&service_id={service.id}&day={day}")
+    res_slots = await client.get(
+        f"/bookings/available-slots?tenant_id={tenant.id}&service_id={service.id}&day={day}",
+        headers=_auth_headers(raw_key),
+    )
     assert res_slots.status_code == 200
     slots = res_slots.json()["slots"]
     assert "10:00" not in slots
-    assert "09:00" in slots  # El slot anterior debería mantenerse libre
+    assert "09:00" in slots
+
 
 @pytest.mark.asyncio
 async def test_double_booking_conflict(client, db_session):
@@ -100,10 +75,12 @@ async def test_double_booking_conflict(client, db_session):
     tenant = Tenant(name="Salon Test 2")
     db_session.add(tenant)
     await db_session.flush()
-    
+
     service = Service(tenant_id=tenant.id, name="Manicura", duration_minutes=60, price=2000.0)
     db_session.add(service)
     await db_session.commit()
+
+    raw_key = await _create_api_key(db_session, tenant.id)
 
     payload = {
         "tenant_id": tenant.id,
@@ -115,15 +92,14 @@ async def test_double_booking_conflict(client, db_session):
         "price_at_booking": 2000.0,
         "idempotency_key": "key-conflict-1"
     }
-    
-    # Primer intento: Exitoso (201)
-    res1 = await client.post("/bookings", json=payload)
+
+    res1 = await client.post("/bookings", json=payload, headers=_auth_headers(raw_key))
     assert res1.status_code == 201
 
-    # Segundo intento con otra clave de idempotencia pero mismo horario exacto: Bloqueado por ExcludeConstraint (409)
     payload["idempotency_key"] = "key-conflict-2"
-    res2 = await client.post("/bookings", json=payload)
+    res2 = await client.post("/bookings", json=payload, headers=_auth_headers(raw_key))
     assert res2.status_code == 409
+
 
 @pytest.mark.asyncio
 async def test_webhook_mp_idempotency(client, db_session, monkeypatch):
@@ -135,8 +111,7 @@ async def test_webhook_mp_idempotency(client, db_session, monkeypatch):
         return "approved"
 
     monkeypatch.setattr(mp_webhooks, "get_payment_status", approved_payment_status)
-    
-    # Generar firma HMAC válida para el test
+
     manifest = "id:pay_999;request-id:req_888;ts:12345;"
     hash_hmac = hmac.new(secret.encode(), manifest.encode(), hashlib.sha256).hexdigest()
     signature = f"ts=12345,v1={hash_hmac}"
@@ -144,15 +119,14 @@ async def test_webhook_mp_idempotency(client, db_session, monkeypatch):
     payload = {"id": "evt_duplicate_test", "action": "payment.updated", "data": {"id": "pay_999"}}
     headers = {"x-signature": signature, "x-request-id": "req_888"}
 
-    # Primer envío (Debe procesarse con éxito)
     res1 = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
     assert res1.status_code == 200
     assert res1.text == "EVENT_PROCESSED"
 
-    # Segundo envío idéntico (Debe ser interceptado por la tabla payment_events y retornar 200 sin duplicar lógica)
     res2 = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
     assert res2.status_code == 200
     assert res2.text == "DUPLICATE_EVENT_IGNORED"
+
 
 @pytest.mark.asyncio
 async def test_outbox_created_on_booking(client, db_session):
@@ -163,7 +137,9 @@ async def test_outbox_created_on_booking(client, db_session):
 
     service = Service(tenant_id=tenant.id, name="Spa", duration_minutes=30, price=5000.0)
     db_session.add(service)
-    await db_session.commit()  # Commit para consolidar IDs previos al request HTTP
+    await db_session.commit()
+
+    raw_key = await _create_api_key(db_session, tenant.id)
 
     payload = {
         "tenant_id": tenant.id,
@@ -175,14 +151,13 @@ async def test_outbox_created_on_booking(client, db_session):
         "price_at_booking": 5000.0,
         "idempotency_key": "outbox-test-key-99"
     }
-    
-    res = await client.post("/bookings", json=payload)
+
+    res = await client.post("/bookings", json=payload, headers=_auth_headers(raw_key))
     assert res.status_code == 201
 
-    # Consultar directamente la tabla notification_outbox en la BD
     result = await db_session.execute(text("SELECT status, notification_type FROM notification_outbox"))
     rows = result.fetchall()
-    
+
     assert len(rows) == 1
     assert rows[0][0] == "pending"
     assert rows[0][1] == "confirmation"
