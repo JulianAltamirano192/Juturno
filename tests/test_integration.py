@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, date
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import text
+from sqlalchemy.pool import NullPool
 
 # Importamos la app de FastAPI y los modelos SQLModel
 from app.main import app
@@ -21,7 +22,7 @@ TEST_DATABASE_URL = os.getenv(
     "postgresql+asyncpg://postgres:postgres@localhost:5432/saas_test",
 )
 
-engine = create_async_engine(TEST_DATABASE_URL, echo=False)
+engine = create_async_engine(TEST_DATABASE_URL, echo=False, poolclass=NullPool)
 TestingSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 @pytest_asyncio.fixture(autouse=True)
@@ -36,12 +37,10 @@ async def setup_db():
 
 @pytest_asyncio.fixture
 async def db_session():
-    """Fixture: Provee sesión de BD y hace rollback aislando cada test"""
-    async with engine.connect() as conn:
-        transaction = await conn.begin()
-        async with TestingSessionLocal(bind=conn) as session:
-            yield session
-            await transaction.rollback()
+    """Fixture: Provee una sesión visible para las requests de integración."""
+    async with TestingSessionLocal() as session:
+        yield session
+        await session.rollback()
 
 @pytest_asyncio.fixture
 async def client():
