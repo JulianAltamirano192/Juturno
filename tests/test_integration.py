@@ -3,6 +3,7 @@ import pytest_asyncio
 import httpx
 import hmac
 import hashlib
+import os
 from datetime import datetime, timedelta, date
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
@@ -15,7 +16,10 @@ from app.database import get_db
 from app import mp_webhooks
 
 # URL de la base de datos de test (apuntando al contenedor de Docker 'db')
-TEST_DATABASE_URL = "postgresql+asyncpg://postgres:postgres@localhost:5432/saas_test"
+TEST_DATABASE_URL = os.getenv(
+    "TEST_DATABASE_URL",
+    "postgresql+asyncpg://postgres:postgres@localhost:5432/saas_test",
+)
 
 engine = create_async_engine(TEST_DATABASE_URL, echo=False)
 TestingSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
