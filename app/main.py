@@ -1,5 +1,5 @@
 # app/main.py
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timezone
 from typing import Optional, List, Annotated
 from contextlib import asynccontextmanager
 
@@ -147,8 +147,8 @@ async def get_available_slots(
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
 
-    window_start = datetime.combine(day, time(9, 0))
-    window_end = datetime.combine(day, time(18, 0))
+    window_start = datetime.combine(day, time(9, 0), tzinfo=timezone.utc)
+    window_end = datetime.combine(day, time(18, 0), tzinfo=timezone.utc)
 
     stmt = select(Booking).where(
         and_(
@@ -223,16 +223,14 @@ async def create_booking(
     )
 
     session.add(new_booking)
-    await session.flush()
-
-    outbox_event = NotificationOutbox(
-        booking_id=new_booking.id,
-        notification_type="confirmation",
-        status="pending"
-    )
-    session.add(outbox_event)
-
     try:
+        await session.flush()
+        outbox_event = NotificationOutbox(
+            booking_id=new_booking.id,
+            notification_type="confirmation",
+            status="pending"
+        )
+        session.add(outbox_event)
         await session.commit()
     except IntegrityError:
         await session.rollback()
