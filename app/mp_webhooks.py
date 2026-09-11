@@ -13,6 +13,22 @@ from app.config import settings
 
 router = APIRouter()
 
+
+async def get_payment_status(data_id: str) -> str | None:
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            payment_response = await client.get(
+                f"https://api.mercadopago.com/v1/payments/{data_id}",
+                headers={"Authorization": f"Bearer {settings.MP_ACCESS_TOKEN}"},
+            )
+    except httpx.TimeoutException as exc:
+        raise HTTPException(status_code=504, detail="Timeout consultando Mercado Pago") from exc
+
+    if payment_response.status_code == 404:
+        raise HTTPException(status_code=404, detail="Pago no encontrado en Mercado Pago")
+    payment_response.raise_for_status()
+    return payment_response.json().get("status")
+
 def verify_mp_signature(x_signature: str, x_request_id: str, data_id: str) -> bool:
     """
     Verifica la autenticidad del webhook de MP mediante HMAC SHA256.
@@ -78,19 +94,7 @@ async def mercadopago_webhook(
 
     # 3. Procesamiento transaccional de negocio
     try:
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                payment_response = await client.get(
-                    f"https://api.mercadopago.com/v1/payments/{data_id}",
-                    headers={"Authorization": f"Bearer {settings.MP_ACCESS_TOKEN}"},
-                )
-        except httpx.TimeoutException as exc:
-            raise HTTPException(status_code=504, detail="Timeout consultando Mercado Pago") from exc
-
-        if payment_response.status_code == 404:
-            raise HTTPException(status_code=404, detail="Pago no encontrado en Mercado Pago")
-        payment_response.raise_for_status()
-        real_payment_status = payment_response.json().get("status")
+        real_payment_status = await get_payment_status(data_id)
         
         if real_payment_status == "approved":
             stmt = select(Payment).where(Payment.mp_payment_id == data_id)

@@ -1,9 +1,9 @@
 import pytest
+import pytest_asyncio
 import httpx
 import hmac
 import hashlib
 from datetime import datetime, timedelta, date
-from sqlalchemy.ext.create_async_engine import create_async_engine # type: ignore
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import text
@@ -11,14 +11,16 @@ from sqlalchemy import text
 # Importamos la app de FastAPI y los modelos SQLModel
 from app.main import app
 from app.models import SQLModel, Tenant, Service, Booking, ProcessedWebhookEvent, NotificationOutbox
+from app.database import get_db
+from app import mp_webhooks
 
 # URL de la base de datos de test (apuntando al contenedor de Docker 'db')
-TEST_DATABASE_URL = "postgresql+asyncpg://postgres:postgres@db:5432/saas_db"
+TEST_DATABASE_URL = "postgresql+asyncpg://postgres:postgres@localhost:5432/saas_test"
 
 engine = create_async_engine(TEST_DATABASE_URL, echo=False)
 TestingSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
-@pytest.fixture(autouse=True)
+@pytest_asyncio.fixture(autouse=True)
 async def setup_db():
     """Fixture: Crea las tablas, asegura la extensión btree_gist y limpia al terminar"""
     async with engine.begin() as conn:
@@ -28,7 +30,7 @@ async def setup_db():
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.drop_all)
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def db_session():
     """Fixture: Provee sesión de BD y hace rollback aislando cada test"""
     async with engine.connect() as conn:
@@ -37,11 +39,17 @@ async def db_session():
             yield session
             await transaction.rollback()
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def client():
     """Fixture: Cliente HTTP asíncrono para testear la API de FastAPI"""
-    async with httpx.AsyncClient(app=app, base_url="http://test") as ac:
+    async def override_get_db():
+        async with TestingSessionLocal() as session:
+            yield session
+
+    app.dependency_overrides[get_db] = override_get_db
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as ac:
         yield ac
+    app.dependency_overrides.clear()
 
 # --- SUITE DE PRUEBAS DE INTEGRACIÓN ---
 
@@ -55,7 +63,7 @@ async def test_booking_flow_and_available_slots(client, db_session):
     
     service = Service(tenant_id=tenant.id, name="Corte de Pelo", duration_minutes=60, price=1500.0)
     db_session.add(service)
-    await db_session.flush()
+    await db_session.commit()
 
     day = date.today() + timedelta(days=1)
     
@@ -92,7 +100,7 @@ async def test_double_booking_conflict(client, db_session):
     
     service = Service(tenant_id=tenant.id, name="Manicura", duration_minutes=60, price=2000.0)
     db_session.add(service)
-    await db_session.flush()
+    await db_session.commit()
 
     payload = {
         "tenant_id": tenant.id,
@@ -115,9 +123,15 @@ async def test_double_booking_conflict(client, db_session):
     assert res2.status_code == 409
 
 @pytest.mark.asyncio
-async def test_webhook_mp_idempotency(client, db_session):
+async def test_webhook_mp_idempotency(client, db_session, monkeypatch):
     """Test: Enviar el mismo webhook de Mercado Pago 2 veces solo procesa 1 efecto"""
-    secret = "tu_secreto_de_webhook"  # Debe coincidir con el secret configurado en tu mp_webhooks.py
+    secret = "test-webhook-secret"
+    monkeypatch.setattr(mp_webhooks.settings, "MP_SECRET_KEY", secret)
+
+    async def approved_payment_status(data_id: str):
+        return "approved"
+
+    monkeypatch.setattr(mp_webhooks, "get_payment_status", approved_payment_status)
     
     # Generar firma HMAC válida para el test
     manifest = "id:pay_999;request-id:req_888;ts:12345;"
