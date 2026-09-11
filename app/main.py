@@ -11,9 +11,10 @@ from sqlalchemy.exc import IntegrityError
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from app.database import async_session_maker, get_db
-from app.models import Tenant, Service, Booking, NotificationOutbox
+from app.models import Tenant, Service, Staff, Booking, NotificationOutbox
 from app.services import calculate_available_slots
 from app.scheduler import process_reminders
+from app.outbox_worker import process_outbox
 from app.mp_webhooks import router as mp_router
 from app.webhooks import router as whatsapp_router
 
@@ -35,6 +36,14 @@ async def lifespan(app: FastAPI):
         minutes=5,
         args=[async_session_maker],
         id='reminder_job',
+        replace_existing=True
+    )
+    scheduler.add_job(
+        process_outbox,
+        'interval',
+        minutes=1,
+        args=[async_session_maker],
+        id='outbox_job',
         replace_existing=True
     )
     scheduler.start()
@@ -168,6 +177,22 @@ async def create_booking(
     Commitea booking + notificación en una sola transacción atómica.
     Devuelve 409 si el slot ya está ocupado (ExcludeConstraint).
     """
+    if payload.end_time <= payload.start_time:
+        raise HTTPException(status_code=400, detail="end_time debe ser posterior a start_time")
+
+    tenant = await session.get(Tenant, payload.tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    service = await session.get(Service, payload.service_id)
+    if not service or service.tenant_id != payload.tenant_id:
+        raise HTTPException(status_code=404, detail="Service not found for tenant")
+
+    if payload.staff_id is not None:
+        staff = await session.get(Staff, payload.staff_id)
+        if not staff or staff.tenant_id != payload.tenant_id:
+            raise HTTPException(status_code=404, detail="Staff not found for tenant")
+
     new_booking = Booking(
         tenant_id=payload.tenant_id,
         service_id=payload.service_id,
@@ -176,7 +201,7 @@ async def create_booking(
         client_phone=payload.client_phone,
         start_time=payload.start_time,
         end_time=payload.end_time,
-        price_at_booking=payload.price_at_booking,
+        price_at_booking=service.price,
         idempotency_key=payload.idempotency_key
     )
 
