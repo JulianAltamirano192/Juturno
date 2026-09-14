@@ -85,7 +85,9 @@ class Booking(SQLModel, table=True):
         UniqueConstraint("idempotency_key", name="uq_booking_idempotency_key"),
 
         # Red de seguridad física contra superposición de turnos para el mismo profesional (Exclusion Constraint).
+        # Incluye tenant_id para evitar colisiones cross-tenant.
         ExcludeConstraint(
+            (text("tenant_id"), '='),
             (text("(COALESCE(staff_id, -1))"), '='),
             (text("tstzrange(start_time, end_time)"), '&&'),
             name='excl_overlapping_bookings',
