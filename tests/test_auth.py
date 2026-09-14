@@ -117,7 +117,8 @@ async def test_last_used_at_updates_on_request(client, db_session):
     db_session.add(tenant)
     await db_session.flush()
 
-    raw = "last-used-key-test"
+    import uuid
+    raw = f"last-used-key-test-{uuid.uuid4()}"
     old_time = datetime.now(timezone.utc) - timedelta(minutes=10)
     api_key = ApiKey(
         tenant_id=tenant.id,
