@@ -112,9 +112,11 @@ async def test_webhook_mp_idempotency(client, db_session, monkeypatch):
 
     monkeypatch.setattr(mp_webhooks, "get_payment_status", approved_payment_status)
 
-    manifest = "id:pay_999;request-id:req_888;ts:12345;"
+    from datetime import datetime, timezone
+    ts = int(datetime.now(timezone.utc).timestamp())
+    manifest = f"id:pay_999;request-id:req_888;ts:{ts};"
     hash_hmac = hmac.new(secret.encode(), manifest.encode(), hashlib.sha256).hexdigest()
-    signature = f"ts=12345,v1={hash_hmac}"
+    signature = f"ts={ts},v1={hash_hmac}"
 
     payload = {"id": "evt_duplicate_test", "action": "payment.updated", "data": {"id": "pay_999"}}
     headers = {"x-signature": signature, "x-request-id": "req_888"}
