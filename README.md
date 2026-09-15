@@ -1,6 +1,8 @@
 # Turnify
 
-API de gestión de turnos construida con FastAPI, PostgreSQL, Redis, WhatsApp y Mercado Pago.
+![CI](https://github.com/JulianAltamirano192/Turnify/actions/workflows/ci.yml/badge.svg)
+
+SaaS de gestión de turnos con FastAPI + PostgreSQL + WhatsApp + Mercado Pago.
 
 ## Setup
 
