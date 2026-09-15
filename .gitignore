@@ -49,3 +49,8 @@ logs/
 # Local databases (por si usás SQLite en desarrollo)
 *.db
 *.sqlite3
+
+# Archivos temporales
+*.deb
+test_webhook.sh
+report_fixes.md
