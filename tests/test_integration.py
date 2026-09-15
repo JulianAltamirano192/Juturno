@@ -1,10 +1,10 @@
 import pytest
 import hmac
 import hashlib
-from datetime import timedelta, date
+from datetime import datetime, timedelta, date, timezone
 from sqlalchemy import text
 
-from app.models import Tenant, Service, NotificationOutbox, ApiKey
+from app.models import Tenant, Service, NotificationOutbox, ApiKey, Booking
 from app import mp_webhooks
 from app.auth import hash_api_key
 
@@ -107,12 +107,46 @@ async def test_webhook_mp_idempotency(client, db_session, monkeypatch):
     secret = "test-webhook-secret"
     monkeypatch.setattr(mp_webhooks.settings, "MP_SECRET_KEY", secret)
 
-    async def approved_payment_status(data_id: str):
-        return "approved"
+    # Crear un booking real para que el webhook tenga a quién confirmar
+    tenant = Tenant(name="Tenant MP Idempotency", timezone="UTC")
+    db_session.add(tenant)
+    await db_session.flush()
 
-    monkeypatch.setattr(mp_webhooks, "get_payment_status", approved_payment_status)
+    service = Service(
+        tenant_id=tenant.id,
+        name="Servicio MP",
+        duration_minutes=30,
+        price=100.0,
+    )
+    db_session.add(service)
+    await db_session.flush()
 
-    from datetime import datetime, timezone
+    booking = Booking(
+        tenant_id=tenant.id,
+        service_id=service.id,
+        client_name="Cliente MP",
+        client_phone="3584000000",
+        start_time=datetime(2026, 12, 1, 15, 0, tzinfo=timezone.utc),
+        end_time=datetime(2026, 12, 1, 15, 30, tzinfo=timezone.utc),
+        price_at_booking=100.0,
+        idempotency_key="mp-idempotency-test-1",
+        status="pending",
+    )
+    db_session.add(booking)
+    await db_session.commit()
+    await db_session.refresh(booking)
+
+    async def approved_payment_details(data_id: str):
+        return {
+            "status": "approved",
+            "external_reference": f"booking-{booking.id}",
+            "transaction_amount": 100.0,
+            "payment_method_id": "visa",
+            "date_approved": datetime.now(timezone.utc).isoformat(),
+        }
+
+    monkeypatch.setattr(mp_webhooks, "get_payment_details", approved_payment_details)
+
     ts = int(datetime.now(timezone.utc).timestamp())
     manifest = f"id:pay_999;request-id:req_888;ts:{ts};"
     hash_hmac = hmac.new(secret.encode(), manifest.encode(), hashlib.sha256).hexdigest()
