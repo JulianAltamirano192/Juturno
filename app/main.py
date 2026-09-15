@@ -3,6 +3,7 @@ from datetime import date, datetime, time, timezone
 from typing import Optional, List, Annotated
 from contextlib import asynccontextmanager
 from zoneinfo import ZoneInfo
+import logging
 
 from fastapi import FastAPI, Depends, HTTPException, Header, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,9 +24,15 @@ from app.config import settings
 from app.auth import get_current_tenant
 
 
-# --- SCHEDULER + LIFESPAN ---
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
 
+
+# --- SCHEDULER + LIFESPAN ---
 scheduler = AsyncIOScheduler()
+# ... resto del archivo
 
 
 @asynccontextmanager
