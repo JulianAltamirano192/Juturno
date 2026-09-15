@@ -2,6 +2,7 @@
 Fixtures compartidos por todos los tests del proyecto.
 Pytest los descubre automáticamente para cualquier test_*.py en este directorio.
 """
+
 import os
 
 import httpx
@@ -47,6 +48,7 @@ async def db_session():
 @pytest_asyncio.fixture
 async def client():
     """Cliente HTTP asíncrono para testear la API de FastAPI."""
+
     async def override_get_db():
         async with TestingSessionLocal() as session:
             yield session

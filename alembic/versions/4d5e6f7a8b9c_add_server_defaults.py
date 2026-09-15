@@ -8,11 +8,12 @@ Convierte columnas naive a TIMESTAMPTZ e inyecta server_default
 para que INSERTs directos por SQL funcionen sin pasar los campos
 que SQLModel completa en Python.
 """
+
 from alembic import op
 import sqlalchemy as sa
 
-revision = '4d5e6f7a8b9c'
-down_revision = '3c4d5e6f7a8b'
+revision = "4d5e6f7a8b9c"
+down_revision = "3c4d5e6f7a8b"
 branch_labels = None
 depends_on = None
 
@@ -20,74 +21,85 @@ depends_on = None
 def upgrade():
     # ─── booking ─────────────────────────────────────────────
     op.alter_column(
-        'booking', 'created_at',
+        "booking",
+        "created_at",
         type_=sa.DateTime(timezone=True),
         existing_type=sa.DateTime(timezone=False),
         existing_nullable=False,
-        server_default=sa.text('NOW()'),
+        server_default=sa.text("NOW()"),
         postgresql_using="created_at AT TIME ZONE 'UTC'",
     )
     op.alter_column(
-        'booking', 'status',
+        "booking",
+        "status",
         server_default=sa.text("'pending'"),
     )
     op.alter_column(
-        'booking', 'reminder_sent',
-        server_default=sa.text('false'),
+        "booking",
+        "reminder_sent",
+        server_default=sa.text("false"),
     )
 
     # ─── notification_outbox ─────────────────────────────────
     op.alter_column(
-        'notification_outbox', 'created_at',
+        "notification_outbox",
+        "created_at",
         type_=sa.DateTime(timezone=True),
         existing_type=sa.DateTime(timezone=False),
         existing_nullable=False,
-        server_default=sa.text('NOW()'),
+        server_default=sa.text("NOW()"),
         postgresql_using="created_at AT TIME ZONE 'UTC'",
     )
     op.alter_column(
-        'notification_outbox', 'status',
+        "notification_outbox",
+        "status",
         server_default=sa.text("'pending'"),
     )
     op.alter_column(
-        'notification_outbox', 'retry_count',
-        server_default=sa.text('0'),
+        "notification_outbox",
+        "retry_count",
+        server_default=sa.text("0"),
     )
 
     # ─── payment_events ──────────────────────────────────────
     op.alter_column(
-        'payment_events', 'received_at',
+        "payment_events",
+        "received_at",
         type_=sa.DateTime(timezone=True),
         existing_type=sa.DateTime(timezone=False),
         existing_nullable=False,
-        server_default=sa.text('NOW()'),
+        server_default=sa.text("NOW()"),
         postgresql_using="received_at AT TIME ZONE 'UTC'",
     )
     op.alter_column(
-        'payment_events', 'processed_at',
+        "payment_events",
+        "processed_at",
         type_=sa.DateTime(timezone=True),
         existing_type=sa.DateTime(timezone=False),
         existing_nullable=True,
         postgresql_using="processed_at AT TIME ZONE 'UTC'",
     )
     op.alter_column(
-        'payment_events', 'status',
+        "payment_events",
+        "status",
         server_default=sa.text("'received'"),
     )
 
 
 def downgrade():
     # ─── payment_events ──────────────────────────────────────
-    op.alter_column('payment_events', 'status', server_default=None)
+    op.alter_column("payment_events", "status", server_default=None)
     op.alter_column(
-        'payment_events', 'processed_at',
+        "payment_events",
+        "processed_at",
         type_=sa.DateTime(timezone=False),
         existing_type=sa.DateTime(timezone=True),
         existing_nullable=True,
         postgresql_using="processed_at AT TIME ZONE 'UTC'",
     )
     op.alter_column(
-        'payment_events', 'received_at',
+        "payment_events",
+        "received_at",
         type_=sa.DateTime(timezone=False),
         existing_type=sa.DateTime(timezone=True),
         existing_nullable=False,
@@ -96,10 +108,11 @@ def downgrade():
     )
 
     # ─── notification_outbox ─────────────────────────────────
-    op.alter_column('notification_outbox', 'retry_count', server_default=None)
-    op.alter_column('notification_outbox', 'status', server_default=None)
+    op.alter_column("notification_outbox", "retry_count", server_default=None)
+    op.alter_column("notification_outbox", "status", server_default=None)
     op.alter_column(
-        'notification_outbox', 'created_at',
+        "notification_outbox",
+        "created_at",
         type_=sa.DateTime(timezone=False),
         existing_type=sa.DateTime(timezone=True),
         existing_nullable=False,
@@ -108,10 +121,11 @@ def downgrade():
     )
 
     # ─── booking ─────────────────────────────────────────────
-    op.alter_column('booking', 'reminder_sent', server_default=None)
-    op.alter_column('booking', 'status', server_default=None)
+    op.alter_column("booking", "reminder_sent", server_default=None)
+    op.alter_column("booking", "status", server_default=None)
     op.alter_column(
-        'booking', 'created_at',
+        "booking",
+        "created_at",
         type_=sa.DateTime(timezone=False),
         existing_type=sa.DateTime(timezone=True),
         existing_nullable=False,

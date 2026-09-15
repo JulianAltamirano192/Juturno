@@ -2,8 +2,8 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Optional, List, Any
 from sqlmodel import SQLModel, Field, Relationship, Column, JSON
-from sqlalchemy import DateTime, Numeric, UniqueConstraint, CheckConstraint, Index, String
-from sqlalchemy.dialects.postgresql import ExcludeConstraint, TSTZRANGE
+from sqlalchemy import DateTime, Numeric, UniqueConstraint
+from sqlalchemy.dialects.postgresql import ExcludeConstraint
 from sqlalchemy import text
 
 
@@ -12,6 +12,7 @@ class Tenant(SQLModel, table=True):
     Representa a un cliente del SaaS (ej. una peluquería o consultorio).
     Es la raíz del aislamiento de datos (Multi-tenant).
     """
+
     __tablename__ = "tenant"
 
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -19,16 +20,29 @@ class Tenant(SQLModel, table=True):
     whatsapp_number: Optional[str] = None
     timezone: str = Field(default="UTC")
 
-    services: List["Service"] = Relationship(back_populates="tenant", sa_relationship_kwargs={"cascade": "all, delete-orphan"})
-    staff_members: List["Staff"] = Relationship(back_populates="tenant", sa_relationship_kwargs={"cascade": "all, delete-orphan"})
-    bookings: List["Booking"] = Relationship(back_populates="tenant", sa_relationship_kwargs={"cascade": "all, delete-orphan"})
-    api_keys: List["ApiKey"] = Relationship(back_populates="tenant", sa_relationship_kwargs={"cascade": "all, delete-orphan"})
+    services: List["Service"] = Relationship(
+        back_populates="tenant",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"},
+    )
+    staff_members: List["Staff"] = Relationship(
+        back_populates="tenant",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"},
+    )
+    bookings: List["Booking"] = Relationship(
+        back_populates="tenant",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"},
+    )
+    api_keys: List["ApiKey"] = Relationship(
+        back_populates="tenant",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"},
+    )
 
 
 class Service(SQLModel, table=True):
     """
     Define los servicios que se pueden reservar en un Tenant.
     """
+
     __tablename__ = "service"
 
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -39,13 +53,17 @@ class Service(SQLModel, table=True):
     is_active: bool = Field(default=True, index=True)
 
     tenant: Optional[Tenant] = Relationship(back_populates="services")
-    bookings: List["Booking"] = Relationship(back_populates="service", sa_relationship_kwargs={"cascade": "all, delete-orphan"})
+    bookings: List["Booking"] = Relationship(
+        back_populates="service",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"},
+    )
 
 
 class Staff(SQLModel, table=True):
     """
     Profesional o recurso físico que atiende el servicio.
     """
+
     __tablename__ = "staff"
 
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -60,29 +78,36 @@ class Booking(SQLModel, table=True):
     """
     El núcleo del sistema. Intersección de Tenant, Service, Staff y Cliente.
     """
+
     __tablename__ = "booking"
 
     __table_args__ = (
         UniqueConstraint("idempotency_key", name="uq_booking_idempotency_key"),
         ExcludeConstraint(
-            (text("tenant_id"), '='),
-            (text("(COALESCE(staff_id, -1))"), '='),
-            (text("tstzrange(start_time, end_time)"), '&&'),
-            name='excl_overlapping_bookings',
-            using='gist'
+            (text("tenant_id"), "="),
+            (text("(COALESCE(staff_id, -1))"), "="),
+            (text("tstzrange(start_time, end_time)"), "&&"),
+            name="excl_overlapping_bookings",
+            using="gist",
         ),
     )
 
     id: Optional[int] = Field(default=None, primary_key=True)
     tenant_id: int = Field(foreign_key="tenant.id", index=True, ondelete="CASCADE")
     service_id: int = Field(foreign_key="service.id", index=True, ondelete="CASCADE")
-    staff_id: Optional[int] = Field(default=None, foreign_key="staff.id", index=True, ondelete="SET NULL")
+    staff_id: Optional[int] = Field(
+        default=None, foreign_key="staff.id", index=True, ondelete="SET NULL"
+    )
 
     client_name: str
     client_phone: str
 
-    start_time: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False, index=True))
-    end_time: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False, index=True))
+    start_time: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), nullable=False, index=True)
+    )
+    end_time: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), nullable=False, index=True)
+    )
 
     price_at_booking: Decimal = Field(sa_column=Column(Numeric(10, 2), nullable=False))
 
@@ -112,13 +137,17 @@ class Booking(SQLModel, table=True):
     tenant: Optional[Tenant] = Relationship(back_populates="bookings")
     service: Optional[Service] = Relationship(back_populates="bookings")
     staff: Optional[Staff] = Relationship(back_populates="bookings")
-    payments: List["Payment"] = Relationship(back_populates="booking", sa_relationship_kwargs={"cascade": "all, delete-orphan"})
+    payments: List["Payment"] = Relationship(
+        back_populates="booking",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"},
+    )
 
 
 class Payment(SQLModel, table=True):
     """
     Traza el historial financiero 1:N por reserva.
     """
+
     __tablename__ = "payment"
 
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -139,6 +168,7 @@ class NotificationOutbox(SQLModel, table=True):
     """
     Tabla de Cola (Outbox Pattern) para notificaciones asíncronas.
     """
+
     __tablename__ = "notification_outbox"
 
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -172,10 +202,13 @@ class ProcessedWebhookEvent(SQLModel, table=True):
     """
     Tabla de Idempotencia para Webhooks (Mercado Pago).
     """
+
     __tablename__ = "payment_events"
 
     event_id: str = Field(primary_key=True, index=True)
-    booking_id: Optional[int] = Field(default=None, foreign_key="booking.id", index=True, nullable=True)
+    booking_id: Optional[int] = Field(
+        default=None, foreign_key="booking.id", index=True, nullable=True
+    )
     event_type: str
 
     payload: Any = Field(default={}, sa_column=Column(JSON))
@@ -205,6 +238,7 @@ class ApiKey(SQLModel, table=True):
     """
     Credencial de autenticación por tenant (header X-Tenant-API-Key).
     """
+
     __tablename__ = "api_key"
 
     id: Optional[int] = Field(default=None, primary_key=True)

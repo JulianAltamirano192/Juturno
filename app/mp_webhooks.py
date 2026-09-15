@@ -22,6 +22,7 @@ _WEBHOOK_TS_TOLERANCE = 300  # 5 minutos
 # Integración con la API de Mercado Pago
 # ─────────────────────────────────────────────────────────────────
 
+
 async def get_payment_details(data_id: str) -> Optional[Dict[str, Any]]:
     """
     Consulta la API de MP y devuelve el JSON completo del pago.
@@ -35,7 +36,9 @@ async def get_payment_details(data_id: str) -> Optional[Dict[str, Any]]:
                 headers={"Authorization": f"Bearer {settings.MP_ACCESS_TOKEN}"},
             )
     except httpx.TimeoutException as exc:
-        raise HTTPException(status_code=504, detail="Timeout consultando Mercado Pago") from exc
+        raise HTTPException(
+            status_code=504, detail="Timeout consultando Mercado Pago"
+        ) from exc
 
     if payment_response.status_code == 404:
         return None
@@ -47,6 +50,7 @@ async def get_payment_details(data_id: str) -> Optional[Dict[str, Any]]:
 # Verificación de firma y timestamp
 # ─────────────────────────────────────────────────────────────────
 
+
 def verify_mp_signature(x_signature: str, x_request_id: str, data_id: str) -> bool:
     """
     Verifica la autenticidad del webhook de MP mediante HMAC SHA256.
@@ -56,9 +60,9 @@ def verify_mp_signature(x_signature: str, x_request_id: str, data_id: str) -> bo
         return False
 
     try:
-        parts = dict(item.split('=') for item in x_signature.split(','))
-        ts = parts.get('ts')
-        v1 = parts.get('v1')
+        parts = dict(item.split("=") for item in x_signature.split(","))
+        ts = parts.get("ts")
+        v1 = parts.get("v1")
 
         if not ts or not v1:
             return False
@@ -66,9 +70,7 @@ def verify_mp_signature(x_signature: str, x_request_id: str, data_id: str) -> bo
         manifest = f"id:{data_id};request-id:{x_request_id};ts:{ts};"
 
         expected_hmac = hmac.new(
-            settings.MP_SECRET_KEY.encode(),
-            manifest.encode(),
-            hashlib.sha256
+            settings.MP_SECRET_KEY.encode(), manifest.encode(), hashlib.sha256
         ).hexdigest()
 
         return hmac.compare_digest(expected_hmac, v1)
@@ -82,8 +84,8 @@ def verify_timestamp_freshness(x_signature: str) -> bool:
     tolerancia (±5 min). Previene ataques de replay.
     """
     try:
-        parts = dict(item.split('=') for item in x_signature.split(','))
-        ts = parts.get('ts')
+        parts = dict(item.split("=") for item in x_signature.split(","))
+        ts = parts.get("ts")
         if not ts:
             return False
         webhook_time = int(ts)
@@ -96,6 +98,7 @@ def verify_timestamp_freshness(x_signature: str) -> bool:
 # ─────────────────────────────────────────────────────────────────
 # Helpers para extracción de datos del webhook
 # ─────────────────────────────────────────────────────────────────
+
 
 def _extract_data_id(payload: dict, request: Request) -> str:
     """
@@ -128,7 +131,12 @@ def _extract_event_id(payload: dict, request: Request) -> str:
         return str(event_id)
     # Fallback: usar data_id + action como clave sintética
     data_id = _extract_data_id(payload, request)
-    action = payload.get("action") or payload.get("type") or request.query_params.get("topic") or "unknown"
+    action = (
+        payload.get("action")
+        or payload.get("type")
+        or request.query_params.get("topic")
+        or "unknown"
+    )
     return f"{data_id}:{action}"
 
 
@@ -141,7 +149,9 @@ def _extract_event_type(payload: dict, request: Request) -> str:
     )
 
 
-def _parse_booking_id_from_external_reference(external_ref: Optional[str]) -> Optional[int]:
+def _parse_booking_id_from_external_reference(
+    external_ref: Optional[str],
+) -> Optional[int]:
     """
     Extrae el booking_id del external_reference.
     Formato esperado: 'booking-23' → 23
@@ -152,7 +162,7 @@ def _parse_booking_id_from_external_reference(external_ref: Optional[str]) -> Op
     if not external_ref.startswith(prefix):
         return None
     try:
-        return int(external_ref[len(prefix):])
+        return int(external_ref[len(prefix) :])
     except (ValueError, TypeError):
         return None
 
@@ -170,6 +180,7 @@ def _parse_mp_datetime(value: Optional[str]) -> Optional[datetime]:
 # ─────────────────────────────────────────────────────────────────
 # Endpoint del webhook
 # ─────────────────────────────────────────────────────────────────
+
 
 @router.post("/webhooks/mercadopago")
 async def mercadopago_webhook(
@@ -190,7 +201,10 @@ async def mercadopago_webhook(
 
     # 1b. Protección contra replay: timestamps fuera de ±5 min
     if not verify_timestamp_freshness(x_signature):
-        raise HTTPException(status_code=403, detail="Timestamp del webhook fuera de ventana de tolerancia")
+        raise HTTPException(
+            status_code=403,
+            detail="Timestamp del webhook fuera de ventana de tolerancia",
+        )
 
     # Si no hay data_id extraíble (ej. merchant_order mal formado), salimos limpio
     if not data_id:
@@ -231,7 +245,9 @@ async def mercadopago_webhook(
             await session.commit()
             return Response(content="PAYMENT_NOT_FOUND_ON_MP", status_code=200)
 
-        payment_status = details.get("status")  # approved, pending, rejected, in_process, ...
+        payment_status = details.get(
+            "status"
+        )  # approved, pending, rejected, in_process, ...
         external_reference = details.get("external_reference") or ""
         booking_id = _parse_booking_id_from_external_reference(external_reference)
 
@@ -268,7 +284,9 @@ async def mercadopago_webhook(
             if payment.status != payment_status:
                 payment.status = payment_status
                 if payment_status == "approved" and payment.paid_at is None:
-                    payment.paid_at = _parse_mp_datetime(details.get("date_approved")) or datetime.now(timezone.utc)
+                    payment.paid_at = _parse_mp_datetime(
+                        details.get("date_approved")
+                    ) or datetime.now(timezone.utc)
                 session.add(payment)
 
         # Si el pago está aprobado, confirmar el booking y encolar WhatsApp
@@ -286,7 +304,9 @@ async def mercadopago_webhook(
                         NotificationOutbox.booking_id == booking.id,
                         NotificationOutbox.notification_type == "confirmation",
                     )
-                    existing_outbox = (await session.execute(outbox_stmt)).scalar_one_or_none()
+                    existing_outbox = (
+                        await session.execute(outbox_stmt)
+                    ).scalar_one_or_none()
 
                     if existing_outbox is None:
                         outbox_event = NotificationOutbox(
@@ -307,7 +327,9 @@ async def mercadopago_webhook(
     except HTTPException:
         # Errores esperados (timeout, etc.) — marcar como failed y propagar
         await session.rollback()
-        stmt = select(ProcessedWebhookEvent).where(ProcessedWebhookEvent.event_id == event_id)
+        stmt = select(ProcessedWebhookEvent).where(
+            ProcessedWebhookEvent.event_id == event_id
+        )
         fresh = (await session.execute(stmt)).scalar_one_or_none()
         if fresh is not None:
             fresh.status = "failed"
@@ -318,7 +340,9 @@ async def mercadopago_webhook(
     except Exception:
         await session.rollback()
         # Re-fetch para no reusar un objeto invalidado por el rollback
-        stmt = select(ProcessedWebhookEvent).where(ProcessedWebhookEvent.event_id == event_id)
+        stmt = select(ProcessedWebhookEvent).where(
+            ProcessedWebhookEvent.event_id == event_id
+        )
         fresh = (await session.execute(stmt)).scalar_one_or_none()
         if fresh is not None:
             fresh.status = "failed"

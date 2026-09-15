@@ -16,10 +16,11 @@ async_session_maker = async_sessionmaker(
     expire_on_commit=False,
 )
 
+
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     """Dependency para FastAPI."""
     async with async_session_maker() as session:
         try:
             yield session
         finally:
-            await session.close()   
+            await session.close()

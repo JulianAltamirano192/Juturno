@@ -11,6 +11,7 @@ Diseño:
   aceptándose hasta 60s.
 - last_used_at se actualiza con throttle (máximo una vez cada 5 min).
 """
+
 import hashlib
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, Optional
@@ -42,10 +43,9 @@ def _get_redis_client() -> "redis.Redis":
     loop = asyncio.get_running_loop()
     key = id(loop)
     if key not in _redis_clients:
-        _redis_clients[key] = redis.from_url(
-            settings.REDIS_URL, decode_responses=True
-        )
+        _redis_clients[key] = redis.from_url(settings.REDIS_URL, decode_responses=True)
     return _redis_clients[key]
+
 
 def hash_api_key(key: str) -> str:
     """Hash determinístico de una API key en texto plano."""
@@ -64,9 +64,7 @@ async def _cache_tenant_id(key_hash: str, tenant_id: int) -> None:
 
 
 async def get_current_tenant(
-    x_tenant_api_key: Annotated[
-        Optional[str], Header(alias="X-Tenant-API-Key")
-    ] = None,
+    x_tenant_api_key: Annotated[Optional[str], Header(alias="X-Tenant-API-Key")] = None,
     session: AsyncSession = Depends(get_db),
 ) -> Tenant:
     """

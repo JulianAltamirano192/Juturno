@@ -4,20 +4,23 @@ import hashlib
 from datetime import datetime, timedelta, date, timezone
 from sqlalchemy import text
 
-from app.models import Tenant, Service, NotificationOutbox, ApiKey, Booking
+from app.models import Tenant, Service, ApiKey, Booking
 from app import mp_webhooks
 from app.auth import hash_api_key
 
 
 # --- HELPERS DE AUTENTICACIÓN ---
 
+
 async def _create_api_key(db_session, tenant_id: int) -> str:
     """Crea una ApiKey para el tenant y devuelve la key en texto plano."""
     raw_key = f"test-key-tenant-{tenant_id}"
-    db_session.add(ApiKey(
-        tenant_id=tenant_id,
-        key_hash=hash_api_key(raw_key),
-    ))
+    db_session.add(
+        ApiKey(
+            tenant_id=tenant_id,
+            key_hash=hash_api_key(raw_key),
+        )
+    )
     await db_session.commit()
     return raw_key
 
@@ -28,6 +31,7 @@ def _auth_headers(raw_key: str) -> dict:
 
 # --- SUITE DE PRUEBAS DE INTEGRACIÓN ---
 
+
 @pytest.mark.asyncio
 async def test_booking_flow_and_available_slots(client, db_session):
     """Test: Crear tenant, servicio, reservar un turno y verificar que desaparece de available-slots"""
@@ -35,7 +39,9 @@ async def test_booking_flow_and_available_slots(client, db_session):
     db_session.add(tenant)
     await db_session.flush()
 
-    service = Service(tenant_id=tenant.id, name="Corte de Pelo", duration_minutes=60, price=1500.0)
+    service = Service(
+        tenant_id=tenant.id, name="Corte de Pelo", duration_minutes=60, price=1500.0
+    )
     db_session.add(service)
     await db_session.commit()
 
@@ -52,7 +58,7 @@ async def test_booking_flow_and_available_slots(client, db_session):
         "start_time": f"{day}T10:00:00",
         "end_time": f"{day}T11:00:00",
         "price_at_booking": 1500.0,
-        "idempotency_key": "unique-booking-key-01"
+        "idempotency_key": "unique-booking-key-01",
     }
     res = await client.post("/bookings", json=payload, headers=_auth_headers(raw_key))
     assert res.status_code == 201
@@ -76,7 +82,9 @@ async def test_double_booking_conflict(client, db_session):
     db_session.add(tenant)
     await db_session.flush()
 
-    service = Service(tenant_id=tenant.id, name="Manicura", duration_minutes=60, price=2000.0)
+    service = Service(
+        tenant_id=tenant.id, name="Manicura", duration_minutes=60, price=2000.0
+    )
     db_session.add(service)
     await db_session.commit()
 
@@ -90,7 +98,7 @@ async def test_double_booking_conflict(client, db_session):
         "start_time": "2026-10-15T14:00:00",
         "end_time": "2026-10-15T15:00:00",
         "price_at_booking": 2000.0,
-        "idempotency_key": "key-conflict-1"
+        "idempotency_key": "key-conflict-1",
     }
 
     res1 = await client.post("/bookings", json=payload, headers=_auth_headers(raw_key))
@@ -152,7 +160,11 @@ async def test_webhook_mp_idempotency(client, db_session, monkeypatch):
     hash_hmac = hmac.new(secret.encode(), manifest.encode(), hashlib.sha256).hexdigest()
     signature = f"ts={ts},v1={hash_hmac}"
 
-    payload = {"id": "evt_duplicate_test", "action": "payment.updated", "data": {"id": "pay_999"}}
+    payload = {
+        "id": "evt_duplicate_test",
+        "action": "payment.updated",
+        "data": {"id": "pay_999"},
+    }
     headers = {"x-signature": signature, "x-request-id": "req_888"}
 
     res1 = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
@@ -171,7 +183,9 @@ async def test_outbox_created_on_booking(client, db_session):
     db_session.add(tenant)
     await db_session.flush()
 
-    service = Service(tenant_id=tenant.id, name="Spa", duration_minutes=30, price=5000.0)
+    service = Service(
+        tenant_id=tenant.id, name="Spa", duration_minutes=30, price=5000.0
+    )
     db_session.add(service)
     await db_session.commit()
 
@@ -185,13 +199,15 @@ async def test_outbox_created_on_booking(client, db_session):
         "start_time": "2026-11-01T16:00:00",
         "end_time": "2026-11-01T16:30:00",
         "price_at_booking": 5000.0,
-        "idempotency_key": "outbox-test-key-99"
+        "idempotency_key": "outbox-test-key-99",
     }
 
     res = await client.post("/bookings", json=payload, headers=_auth_headers(raw_key))
     assert res.status_code == 201
 
-    result = await db_session.execute(text("SELECT status, notification_type FROM notification_outbox"))
+    result = await db_session.execute(
+        text("SELECT status, notification_type FROM notification_outbox")
+    )
     rows = result.fetchall()
 
     assert len(rows) == 1

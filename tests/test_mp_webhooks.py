@@ -2,17 +2,16 @@ import pytest
 import hmac
 import hashlib
 from datetime import datetime, timezone, timedelta
-from app.models import ProcessedWebhookEvent, Booking, Payment, Tenant, Service
+from app.models import Booking, Tenant, Service
 from sqlalchemy import text
 from app import mp_webhooks
+
 
 # Helper para firmar webhooks
 def _sign_webhook(data_id: str, request_id: str, timestamp: int, secret: str) -> str:
     manifest = f"id:{data_id};request-id:{request_id};ts:{timestamp};"
     expected_hmac = hmac.new(
-        secret.encode(),
-        manifest.encode(),
-        hashlib.sha256
+        secret.encode(), manifest.encode(), hashlib.sha256
     ).hexdigest()
     return f"ts={timestamp},v1={expected_hmac}"
 
@@ -30,9 +29,7 @@ def _make_payment_details(
         "transaction_amount": amount,
         "payment_method_id": method,
         "date_approved": (
-            datetime.now(timezone.utc).isoformat()
-            if status == "approved"
-            else None
+            datetime.now(timezone.utc).isoformat() if status == "approved" else None
         ),
     }
 
@@ -97,7 +94,11 @@ async def test_webhook_idempotency_retry(client, db_session, monkeypatch):
     request_id = "req_1"
     signature = _sign_webhook(data_id, request_id, ts, secret)
 
-    payload = {"id": "evt_retry_test", "action": "payment.updated", "data": {"id": data_id}}
+    payload = {
+        "id": "evt_retry_test",
+        "action": "payment.updated",
+        "data": {"id": data_id},
+    }
     headers = {"x-signature": signature, "x-request-id": request_id}
 
     # Primer intento: debe fallar con la excepción simulada
@@ -148,7 +149,11 @@ async def test_webhook_idempotency_processed(client, db_session, monkeypatch):
     request_id = "req_2"
     signature = _sign_webhook(data_id, request_id, ts, secret)
 
-    payload = {"id": "evt_processed_test", "action": "payment.updated", "data": {"id": data_id}}
+    payload = {
+        "id": "evt_processed_test",
+        "action": "payment.updated",
+        "data": {"id": data_id},
+    }
     headers = {"x-signature": signature, "x-request-id": request_id}
 
     res1 = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
@@ -172,12 +177,18 @@ async def test_webhook_replay_attack(client, db_session, monkeypatch):
     request_id = "req_3"
     signature = _sign_webhook(data_id, request_id, ts, secret)
 
-    payload = {"id": "evt_replay_test", "action": "payment.updated", "data": {"id": data_id}}
+    payload = {
+        "id": "evt_replay_test",
+        "action": "payment.updated",
+        "data": {"id": data_id},
+    }
     headers = {"x-signature": signature, "x-request-id": request_id}
 
     res = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
     assert res.status_code == 403
-    assert res.json()["detail"] == "Timestamp del webhook fuera de ventana de tolerancia"
+    assert (
+        res.json()["detail"] == "Timestamp del webhook fuera de ventana de tolerancia"
+    )
 
 
 @pytest.mark.asyncio
@@ -202,7 +213,11 @@ async def test_webhook_valid_timestamp(client, db_session, monkeypatch):
     request_id = "req_4"
     signature = _sign_webhook(data_id, request_id, ts, secret)
 
-    payload = {"id": "evt_valid_ts_test", "action": "payment.updated", "data": {"id": data_id}}
+    payload = {
+        "id": "evt_valid_ts_test",
+        "action": "payment.updated",
+        "data": {"id": data_id},
+    }
     headers = {"x-signature": signature, "x-request-id": request_id}
 
     res = await client.post("/webhooks/mercadopago", json=payload, headers=headers)

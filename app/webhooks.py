@@ -9,11 +9,12 @@ logger = logging.getLogger(__name__)
 # Este token debe coincidir EXACTAMENTE con el que configures en el panel de Meta
 META_VERIFY_TOKEN = settings.META_VERIFY_TOKEN
 
+
 @router.get("/webhooks/whatsapp")
 async def verify_webhook(
     mode: str = Query(None, alias="hub.mode"),
     token: str = Query(None, alias="hub.verify_token"),
-    challenge: str = Query(None, alias="hub.challenge")
+    challenge: str = Query(None, alias="hub.challenge"),
 ):
     """
     Paso 1 del diseño: Handshake con Meta.
@@ -27,7 +28,7 @@ async def verify_webhook(
         else:
             # Token incorrecto
             raise HTTPException(status_code=403, detail="Forbidden: Token mismatch")
-    
+
     raise HTTPException(status_code=400, detail="Bad Request")
 
 
@@ -40,7 +41,7 @@ async def receive_whatsapp_event(request: Request):
     try:
         # Extraemos el payload completo
         body = await request.json()
-        
+
         # Validamos estructura básica
         if body.get("object") != "whatsapp_business_account":
             return Response(status_code=404)
@@ -48,7 +49,7 @@ async def receive_whatsapp_event(request: Request):
         for entry in body.get("entry", []):
             for change in entry.get("changes", []):
                 value = change.get("value", {})
-                
+
                 # A) Escenario: El usuario nos envió un mensaje de respuesta
                 if "messages" in value:
                     for msg in value["messages"]:
@@ -57,7 +58,7 @@ async def receive_whatsapp_event(request: Request):
                         msg_text = msg.get("text", {}).get("body", "")
                         msg_id = msg.get("id")
                         logger.info(f"Nuevo mensaje de {wa_id} ({msg_id}): {msg_text}")
-                        
+
                         # ACA: Idealmente encolarías la respuesta o la enviarías a un LLM.
                         # No procesar pesadamente aquí para asegurar el 200 rápido.
 
@@ -65,9 +66,9 @@ async def receive_whatsapp_event(request: Request):
                 elif "statuses" in value:
                     for status in value["statuses"]:
                         msg_id = status.get("id")
-                        estado = status.get("status") # sent, delivered, read, failed
+                        estado = status.get("status")  # sent, delivered, read, failed
                         logger.info(f"Status del mensaje {msg_id} cambió a: {estado}")
-                        
+
                         # ACA: Actualizar el estado en tu tabla NotificationOutbox
 
         # Siempre devolver 200 OK inmediatamente (Paso 2 del diseño)

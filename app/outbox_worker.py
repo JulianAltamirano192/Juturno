@@ -17,6 +17,7 @@ def format_booking_datetime(dt, tenant_timezone: str) -> str:
     """
     if dt.tzinfo is None:
         from datetime import timezone as _tz
+
         dt = dt.replace(tzinfo=_tz.utc)
 
     local_dt = dt.astimezone(ZoneInfo(tenant_timezone))
@@ -52,9 +53,7 @@ async def process_outbox(async_session_maker) -> None:
                 tenant_tz = tenant.timezone if tenant else "UTC"
 
                 # Formatear la fecha en el timezone del tenant
-                fecha_legible = format_booking_datetime(
-                    booking.start_time, tenant_tz
-                )
+                fecha_legible = format_booking_datetime(booking.start_time, tenant_tz)
 
                 try:
                     if event.notification_type == "confirmation":

@@ -23,6 +23,7 @@ class WhatsAppClientSingleton:
     Singleton para mantener un único httpx.AsyncClient compartiendo
     el pool de conexiones y evitando overhead de latencia.
     """
+
     _client: httpx.AsyncClient | None = None
 
     @classmethod
@@ -36,13 +37,17 @@ class WhatsAppService:
     def __init__(self, phone_number_id: str, access_token: str):
         self.phone_number_id = phone_number_id
         self.access_token = access_token
-        self.base_url = f"https://graph.facebook.com/v19.0/{self.phone_number_id}/messages"
+        self.base_url = (
+            f"https://graph.facebook.com/v19.0/{self.phone_number_id}/messages"
+        )
         self.headers = {
             "Authorization": f"Bearer {self.access_token}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
         }
 
-    async def _send_request_with_retry(self, payload: Dict[str, Any], max_retries: int = 3) -> httpx.Response:
+    async def _send_request_with_retry(
+        self, payload: Dict[str, Any], max_retries: int = 3
+    ) -> httpx.Response:
         """
         Envía la petición a Meta manejando Timeouts, 429 (Rate Limit) y 5xx.
         Implementa backoff exponencial (ej: 1s, 2s, 4s).
@@ -51,7 +56,9 @@ class WhatsAppService:
 
         for attempt in range(max_retries):
             try:
-                response = await client.post(self.base_url, headers=self.headers, json=payload)
+                response = await client.post(
+                    self.base_url, headers=self.headers, json=payload
+                )
 
                 # 429 (rate limit) o 5xx (Meta caído) → forzar retry
                 if response.status_code == 429 or response.status_code >= 500:
@@ -72,13 +79,17 @@ class WhatsAppService:
                 return response
 
             except (httpx.TimeoutException, httpx.HTTPStatusError) as e:
-                logger.warning(f"Error en Meta API (intento {attempt + 1}/{max_retries}): {str(e)}")
+                logger.warning(
+                    f"Error en Meta API (intento {attempt + 1}/{max_retries}): {str(e)}"
+                )
                 if attempt == max_retries - 1:
                     raise e
 
-                await asyncio.sleep(2 ** attempt)
+                await asyncio.sleep(2**attempt)
 
-    async def send_confirmation(self, phone: str, booking_id: int, nombre: str, fecha: str):
+    async def send_confirmation(
+        self, phone: str, booking_id: int, nombre: str, fecha: str
+    ):
         """
         Template Message (Utility). Se dispara asíncronamente desde el worker.
         Requiere que la plantilla 'booking_confirmation' esté aprobada en Meta.
@@ -97,11 +108,11 @@ class WhatsAppService:
                         "parameters": [
                             {"type": "text", "text": nombre},
                             {"type": "text", "text": fecha},
-                            {"type": "text", "text": str(booking_id)}
-                        ]
+                            {"type": "text", "text": str(booking_id)},
+                        ],
                     }
-                ]
-            }
+                ],
+            },
         }
         return await self._send_request_with_retry(payload)
 
@@ -123,10 +134,10 @@ class WhatsAppService:
                         "type": "body",
                         "parameters": [
                             {"type": "text", "text": nombre},
-                            {"type": "text", "text": fecha}
-                        ]
+                            {"type": "text", "text": fecha},
+                        ],
                     }
-                ]
-            }
+                ],
+            },
         }
         return await self._send_request_with_retry(payload)

@@ -1,16 +1,17 @@
 """
 Tests de autenticación por tenant vía header X-Tenant-API-Key.
 """
+
 import pytest
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
 
 from app.auth import hash_api_key
 from app.models import ApiKey, Tenant
 
 
 # --- TESTS ---
+
 
 @pytest.mark.asyncio
 async def test_request_without_api_key_returns_401(client):
@@ -43,11 +44,13 @@ async def test_request_with_revoked_api_key_returns_401(client, db_session):
     await db_session.flush()
 
     raw = "revoked-key-test"
-    db_session.add(ApiKey(
-        tenant_id=tenant.id,
-        key_hash=hash_api_key(raw),
-        revoked_at=datetime.now(timezone.utc),
-    ))
+    db_session.add(
+        ApiKey(
+            tenant_id=tenant.id,
+            key_hash=hash_api_key(raw),
+            revoked_at=datetime.now(timezone.utc),
+        )
+    )
     await db_session.commit()
 
     res = await client.get(
@@ -91,12 +94,15 @@ async def test_tenant_a_cannot_read_tenant_b_data(client, db_session):
     await db_session.flush()
 
     raw_b = "key-tenant-b"
-    db_session.add(ApiKey(
-        tenant_id=tenant_b.id, key_hash=hash_api_key(raw_b),
-    ))
+    db_session.add(
+        ApiKey(
+            tenant_id=tenant_b.id,
+            key_hash=hash_api_key(raw_b),
+        )
+    )
     await db_session.commit()
 
-        # Tenant B intenta acceder a datos del tenant A pasando tenant_id=A
+    # Tenant B intenta acceder a datos del tenant A pasando tenant_id=A
     res = await client.get(
         "/bookings/available-slots",
         params={
@@ -118,6 +124,7 @@ async def test_last_used_at_updates_on_request(client, db_session):
     await db_session.flush()
 
     import uuid
+
     raw = f"last-used-key-test-{uuid.uuid4()}"
     old_time = datetime.now(timezone.utc) - timedelta(minutes=10)
     api_key = ApiKey(

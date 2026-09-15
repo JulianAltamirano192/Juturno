@@ -1,11 +1,11 @@
 # app/main.py
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time
 from typing import Optional, List, Annotated
 from contextlib import asynccontextmanager
 from zoneinfo import ZoneInfo
 import logging
 
-from fastapi import FastAPI, Depends, HTTPException, Header, Query
+from fastapi import FastAPI, Depends, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -43,19 +43,19 @@ async def lifespan(app: FastAPI):
     """
     scheduler.add_job(
         process_reminders,
-        'interval',
+        "interval",
         minutes=5,
         args=[async_session_maker],
-        id='reminder_job',
-        replace_existing=True
+        id="reminder_job",
+        replace_existing=True,
     )
     scheduler.add_job(
         process_outbox,
-        'interval',
+        "interval",
         minutes=1,
         args=[async_session_maker],
-        id='outbox_job',
-        replace_existing=True
+        id="outbox_job",
+        replace_existing=True,
     )
     scheduler.start()
     print("Scheduler distribuido de recordatorios iniciado correctamente.")
@@ -83,12 +83,14 @@ app.include_router(whatsapp_router)
 
 # --- HEALTHCHECK ---
 
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}
 
 
 # --- SCHEMAS PARA SLOTS ---
+
 
 class SlotQuery(BaseModel):
     tenant_id: int = Field(gt=0, description="ID del negocio")
@@ -114,6 +116,7 @@ class AvailableSlotsResponse(BaseModel):
 
 # --- SCHEMAS PARA BOOKINGS ---
 
+
 class BookingCreate(BaseModel):
     tenant_id: int
     service_id: int
@@ -128,6 +131,7 @@ class BookingCreate(BaseModel):
 
 # --- ENDPOINTS ---
 
+
 @app.get("/bookings/available-slots", response_model=AvailableSlotsResponse)
 async def get_available_slots(
     tenant_id: Annotated[int, Query(gt=0, description="ID del negocio")],
@@ -140,7 +144,9 @@ async def get_available_slots(
     """Devuelve los slots libres para un servicio/día/staff."""
 
     if day < date.today():
-        raise HTTPException(status_code=400, detail="No se pueden consultar fechas pasadas")
+        raise HTTPException(
+            status_code=400, detail="No se pueden consultar fechas pasadas"
+        )
 
     if tenant_id != current_tenant.id:
         # La API key es válida pero para otro tenant: 404 para no
@@ -162,7 +168,7 @@ async def get_available_slots(
             Booking.tenant_id == tenant_id,
             Booking.status.in_(["pending", "confirmed"]),
             Booking.start_time < window_end,
-            Booking.end_time > window_start
+            Booking.end_time > window_start,
         )
     )
 
@@ -179,14 +185,14 @@ async def get_available_slots(
         window_end=window_end,
         bookings=bookings_intervals,
         duration_min=service.duration_minutes,
-        granularity_min=30
+        granularity_min=30,
     )
 
     return AvailableSlotsResponse(
         date=day,
         service_duration_min=service.duration_minutes,
         timezone=tenant.timezone,
-        slots=slots
+        slots=slots,
     )
 
 
@@ -205,7 +211,9 @@ async def create_booking(
         raise HTTPException(status_code=404, detail="Tenant not found")
 
     if payload.end_time <= payload.start_time:
-        raise HTTPException(status_code=400, detail="end_time debe ser posterior a start_time")
+        raise HTTPException(
+            status_code=400, detail="end_time debe ser posterior a start_time"
+        )
 
     tenant = current_tenant
 
@@ -235,7 +243,7 @@ async def create_booking(
         start_time=start_time,
         end_time=end_time,
         price_at_booking=service.price,
-        idempotency_key=payload.idempotency_key
+        idempotency_key=payload.idempotency_key,
     )
 
     session.add(new_booking)
@@ -244,7 +252,7 @@ async def create_booking(
         outbox_event = NotificationOutbox(
             booking_id=new_booking.id,
             notification_type="confirmation",
-            status="pending"
+            status="pending",
         )
         session.add(outbox_event)
         await session.commit()

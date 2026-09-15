@@ -6,6 +6,7 @@ Uso:
     python -m app.cli list-api-keys --tenant-id 1
     python -m app.cli revoke-api-key --api-key-id 3
 """
+
 import argparse
 import asyncio
 import secrets
