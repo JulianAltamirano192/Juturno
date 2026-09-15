@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     MP_SECRET_KEY: str = ""
     META_VERIFY_TOKEN: str = ""
     CORS_ORIGINS: List[str] = []
+    SENTRY_DSN: str = ""
+    ENVIRONMENT: str = "development"
 
     class Config:
         env_file = ".env"

@@ -10,3 +10,4 @@ apscheduler>=3.10.4
 pydantic-settings>=2.1.0
 pytest>=8.0.0
 pytest-asyncio>=0.23.5
+sentry-sdk[fastapi]==2.69.2

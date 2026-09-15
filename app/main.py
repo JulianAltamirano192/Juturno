@@ -5,6 +5,11 @@ from contextlib import asynccontextmanager
 from zoneinfo import ZoneInfo
 import logging
 
+import sentry_sdk
+from sentry_sdk.integrations.fastapi import FastApiIntegration
+from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
+from sentry_sdk.integrations.httpx import HttpxIntegration
+
 from fastapi import FastAPI, Depends, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
@@ -24,6 +29,22 @@ from app.config import settings
 from app.auth import get_current_tenant
 
 
+# --- SENTRY (inicializar antes de crear la app) ---
+if settings.SENTRY_DSN:
+    sentry_sdk.init(
+        dsn=settings.SENTRY_DSN,
+        environment=settings.ENVIRONMENT,
+        integrations=[
+            FastApiIntegration(transaction_style="endpoint"),
+            SqlalchemyIntegration(),
+            HttpxIntegration(),
+        ],
+        traces_sample_rate=0.1,
+        profiles_sample_rate=0.1,
+        send_default_pii=False,
+    )
+
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -32,7 +53,6 @@ logging.basicConfig(
 
 # --- SCHEDULER + LIFESPAN ---
 scheduler = AsyncIOScheduler()
-# ... resto del archivo
 
 
 @asynccontextmanager
