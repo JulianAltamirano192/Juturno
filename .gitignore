@@ -54,3 +54,6 @@ logs/
 *.deb
 test_webhook.sh
 report_fixes.md
+
+# Antigravity agents (contiene credenciales)
+.agents/
