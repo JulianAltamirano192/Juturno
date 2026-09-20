@@ -57,3 +57,6 @@ report_fixes.md
 
 # Antigravity agents (contiene credenciales)
 .agents/
+
+# Backups (no versionar)
+backups/
