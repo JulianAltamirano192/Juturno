@@ -12,11 +12,13 @@ from sentry_sdk.integrations.httpx import HttpxIntegration
 
 from fastapi import FastAPI, Depends, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, text
 from sqlalchemy.exc import IntegrityError
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+import redis.asyncio as aioredis
 
 from app.database import async_session_maker, get_db
 from app.models import Tenant, Service, Staff, Booking, NotificationOutbox
@@ -105,8 +107,41 @@ app.include_router(whatsapp_router)
 
 
 @app.get("/health")
-async def health():
-    return {"status": "ok"}
+async def health(session: AsyncSession = Depends(get_db)):
+    """
+    Health check profundo: verifica API, DB y Redis.
+    Retorna 200 si todo OK, 503 si algo falla.
+    """
+    checks = {
+        "api": "ok",
+        "database": "unknown",
+        "redis": "unknown",
+    }
+    is_healthy = True
+
+    # DB
+    try:
+        await session.execute(text("SELECT 1"))
+        checks["database"] = "ok"
+    except Exception as exc:
+        checks["database"] = f"error: {type(exc).__name__}"
+        is_healthy = False
+
+    # Redis
+    try:
+        r = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+        await r.ping()
+        await r.aclose()
+        checks["redis"] = "ok"
+    except Exception as exc:
+        checks["redis"] = f"error: {type(exc).__name__}"
+        is_healthy = False
+
+    status_code = 200 if is_healthy else 503
+    return JSONResponse(
+        status_code=status_code,
+        content={"status": "ok" if is_healthy else "degraded", "checks": checks},
+    )
 
 
 # --- SCHEMAS PARA SLOTS ---
