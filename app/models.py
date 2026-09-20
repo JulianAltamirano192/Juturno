@@ -172,7 +172,7 @@ class NotificationOutbox(SQLModel, table=True):
     __tablename__ = "notification_outbox"
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    booking_id: int = Field(foreign_key="booking.id", index=True)
+    booking_id: int = Field(foreign_key="booking.id", index=True, ondelete="CASCADE")
     notification_type: str
 
     status: str = Field(
@@ -207,7 +207,11 @@ class ProcessedWebhookEvent(SQLModel, table=True):
 
     event_id: str = Field(primary_key=True, index=True)
     booking_id: Optional[int] = Field(
-        default=None, foreign_key="booking.id", index=True, nullable=True
+        default=None,
+        foreign_key="booking.id",
+        index=True,
+        nullable=True,
+        ondelete="CASCADE",
     )
     event_type: str
 
