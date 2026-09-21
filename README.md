@@ -1,6 +1,6 @@
-# Turnify
+# Juturno
 
-![CI](https://github.com/JulianAltamirano192/Turnify/actions/workflows/ci.yml/badge.svg)
+![CI](https://github.com/JulianAltamirano192/Juturno/actions/workflows/ci.yml/badge.svg)
 
 SaaS multi-tenant de gestión de turnos con cobro de señas y notificaciones
 por WhatsApp.
@@ -43,8 +43,8 @@ Para el detalle de componentes, flujos y decisiones de diseño, ver
 ### 1. Clonar y configurar env
 
 ```bash
-git clone git@github.com:JulianAltamirano192/Turnify.git
-cd Turnify
+git clone git@github.com:JulianAltamirano192/Juturno.git
+cd Juturno
 cp .env.example .env
 ```
 

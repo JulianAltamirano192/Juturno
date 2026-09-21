@@ -1,11 +1,11 @@
-# Arquitectura de Turnify
+# Arquitectura de Juturno
 
 Documento de referencia técnica. Explica **qué** hace cada componente y **por qué**
 está diseñado así. Para decisiones específicas, ver `DECISIONS.md`.
 
 ## 1. Visión general
 
-Turnify es un SaaS **multi-tenant** donde cada negocio (tenant) gestiona sus
+Juturno es un SaaS **multi-tenant** donde cada negocio (tenant) gestiona sus
 turnos de forma aislada. Los clientes reservan desde un link público, pagan
 seña con Mercado Pago, y reciben confirmación por WhatsApp.
 
