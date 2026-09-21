@@ -252,7 +252,7 @@ async def mercadopago_webhook(
         booking_id = _parse_booking_id_from_external_reference(external_reference)
 
         if booking_id is None:
-            # El pago no está vinculado a un booking de Turnify
+            # El pago no está vinculado a un booking de Juturno
             webhook_event.status = "processed"
             webhook_event.processed_at = datetime.now(timezone.utc)
             session.add(webhook_event)

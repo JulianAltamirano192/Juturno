@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Backup de la base de datos de Turnify.
+# Backup de la base de datos de Juturno.
 # Uso: ./scripts/backup_db.sh [ruta_destino]
 #
 # Hace un dump de PostgreSQL comprimido y rota backups viejos (>30 días).

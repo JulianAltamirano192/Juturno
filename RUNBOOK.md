@@ -1,4 +1,4 @@
-# Runbook de Turnify
+# Runbook de Juturno
 
 Guía operativa para incidentes comunes. Cada sección es un "si pasa X, hacé Y".
 
