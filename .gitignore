@@ -60,3 +60,6 @@ report_fixes.md
 
 # Backups (no versionar)
 backups/
+
+# Cloudflare Tunnel credentials
+.cloudflared/
