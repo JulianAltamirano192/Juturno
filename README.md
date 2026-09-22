@@ -1,11 +1,11 @@
-# Juturno 📅
+# Juturno
 
 ![CI](https://github.com/JulianAltamirano192/Juturno/actions/workflows/ci.yml/badge.svg)
 
-> *"Juturno fue la diosa romana de las fuentes y pozos de agua. Nosotros somos la diosa romana de los turnos y los recordatorios por WhatsApp. Misma energía."*
+> *Juturno toma su nombre de Juturna, diosa romana de las fuentes y los pozos de agua.*
 
 SaaS multi-tenant de gestión de turnos con cobro de señas y notificaciones por WhatsApp.
-Los clientes reservan, pagan, y reciben confirmación — todo sin que el dueño del negocio levante un dedo.
+Los clientes reservan, pagan y reciben la confirmación sin intervención del negocio.
 
 ---
 
@@ -17,12 +17,12 @@ Los clientes reservan, pagan, y reciben confirmación — todo sin que el dueño
 | **Base de datos** | PostgreSQL 16 + `btree_gist` | Anti-solapamiento atómico a nivel motor (no en código) |
 | **Cache & locks** | Redis 7 | TTL de API keys y mutex distribuido para el scheduler |
 | **Scheduler** | APScheduler (in-process) | Sin infraestructura extra; un solo Dockerfile |
-| **Pagos** | Mercado Pago Checkout Pro | Lo que usan todos en LATAM |
-| **Notificaciones** | WhatsApp Business API (Meta) | Mejor open rate que el email en Argentina |
-| **Observabilidad** | Sentry | Para enterarnos de los crashes antes que los clientes |
-| **Infra local** | Docker Compose | `docker compose up` y listo, sin magia innecesaria |
+| **Pagos** | Mercado Pago Checkout Pro | Amplia adopción en LATAM |
+| **Notificaciones** | WhatsApp Business API (Meta) | Mayor tasa de apertura que el email en Argentina |
+| **Observabilidad** | Sentry | Detección temprana de errores en producción |
+| **Infra local** | Docker Compose | `docker compose up` sin configuración adicional |
 | **CI** | GitHub Actions | Tests automáticos en cada push a `main` |
-| **Calidad** | pre-commit (ruff + black + mypy) | Porque el código feo también duele |
+| **Calidad** | pre-commit (ruff + black + mypy) | Consistencia de estilo y verificación de tipos |
 
 ---
 
@@ -68,7 +68,7 @@ cd Juturno
 cp .env.example .env
 ```
 
-Editá `.env` y completá todas las variables (ver tabla más abajo).
+Editar `.env` y completar todas las variables (ver tabla más abajo).
 
 ### 2. Levantar servicios
 
@@ -100,7 +100,7 @@ curl http://localhost:8000/health
 # {"status":"ok"}
 ```
 
-Si ves ese JSON, estás adentro. Bienvenido. 🎉
+Si la respuesta es `{"status":"ok"}`, el servicio está operativo.
 
 ---
 
@@ -117,17 +117,17 @@ Si ves ese JSON, estás adentro. Bienvenido. 🎉
 | `META_APP_SECRET` | Secret HMAC de la app de Meta | Cadena de Meta |
 | `MP_ACCESS_TOKEN` | Access token de Mercado Pago | `APP_USR-...` o `TEST-...` |
 | `MP_SECRET_KEY` | Clave secreta para firmar webhooks MP | Cadena de MP |
-| `SENTRY_DSN` | DSN de Sentry (opcional, pero útil) | `https://xxx@sentry.io/xxx` |
+| `SENTRY_DSN` | DSN de Sentry (opcional) | `https://xxx@sentry.io/xxx` |
 | `ENVIRONMENT` | Entorno (`development` / `production`) | `development` |
 
-Copiá `.env.example` como base; tiene todos los campos con descripción.
+Usar `.env.example` como base; contiene todos los campos con descripción.
 
 ---
 
 ## Tests
 
 ```bash
-# Asegurate de tener la DB de tests creada (ver Setup local, paso 4)
+# Asegurarse de tener la DB de tests creada (ver Setup local, paso 4)
 docker compose exec api pytest -v
 ```
 
@@ -166,7 +166,7 @@ docker compose exec api alembic current
 docker compose exec api alembic downgrade -1
 ```
 
-> 💡 **Pro tip**: Nunca editÉs una migración ya aplicada. Si rompiste algo, creá una nueva.
+> **Nota**: nunca editar una migración ya aplicada. Si un cambio produjo un error, crear una nueva migración que lo corrija.
 
 ---
 
@@ -209,8 +209,8 @@ pre-commit install
 ```
 
 Los hooks (ruff, black, mypy) corren automáticamente en cada commit.
-Si modifican archivos, el commit falla y tenés que hacer `git add -A` y commitear de nuevo.
-Un poco molesto, sí, pero el código queda impecable.
+Si los hooks modifican archivos, el commit se aborta: agregar los cambios con `git add -A`
+y volver a commitear.
 
 ### Estructura del proyecto
 
@@ -237,7 +237,7 @@ tests/                   # 8 archivos de tests pytest-asyncio
 
 ### Convenciones de commits
 
-Usamos [Conventional Commits](https://www.conventionalcommits.org/):
+Se utiliza [Conventional Commits](https://www.conventionalcommits.org/):
 
 ```
 feat: agregar endpoint público de slots
@@ -254,7 +254,7 @@ chore: bump dependencias menores
 # Backup manual (genera saas_db_YYYYMMDD_HHMMSS.sql.gz en ./backups/)
 ./scripts/backup_db.sh
 
-# Restaurar (⚠️ borra los datos actuales, hacer backup antes)
+# Restaurar (⚠️ borra los datos actuales; verificar que exista un backup previo)
 gunzip -c backups/saas_db_20260922_120000.sql.gz | \
   docker compose exec -T db psql -U postgres -d saas_db
 ```

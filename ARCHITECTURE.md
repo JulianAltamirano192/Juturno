@@ -11,7 +11,7 @@ Juturno es un SaaS **multi-tenant** donde cada negocio (tenant) gestiona sus tur
 Los clientes reservan desde un link público, pagan seña con Mercado Pago, y reciben confirmación por WhatsApp.
 
 El diseño prioriza **operación simple** sobre escalabilidad prematura: un solo VPS con Docker Compose,
-sin colas externas, sin Kubernetes, sin reuniones de arquitectura de 3 horas. Por ahora.
+sin colas externas ni orquestación de contenedores.
 
 ---
 
@@ -59,8 +59,8 @@ que coordinar, y el volumen actual de datos no justifica aislamiento físico.
 2. Todos los endpoints validan que el recurso pertenece al `tenant_id` del request (retorna 404 si no — nunca 403, para no filtrar existencia).
 3. El `ExcludeConstraint` de bookings incluye `tenant_id` como primera dimensión, garantizando que la protección de solapamiento nunca colisione entre tenants.
 
-**Cabeza de playa contra bugs de filtrado**: si alguien olvida el filtro de `tenant_id` en una query,
-Sentry lo captura y los tests de cross-tenant lo detectan.
+**Defensa contra errores de filtrado**: si un filtro de `tenant_id` se omite en una query,
+Sentry lo registra y los tests de aislamiento entre tenants lo detectan.
 
 ---
 
@@ -113,7 +113,7 @@ EXCLUDE USING gist (
 
 **Por qué no validar en aplicación**: dos requests simultáneos pueden pasar la validación a nivel código
 y crear bookings superpuestos (race condition). El `EXCLUDE` de Postgres lo previene a nivel motor,
-con semántica atómica. No hay workaround más robusto que este.
+con semántica atómica: es el mecanismo más robusto disponible para este caso.
 
 ---
 
@@ -141,8 +141,8 @@ APScheduler (cada 60s):
 **Garantía**: la reserva y la notificación son atómicas respecto a la DB. Si el envío falla,
 el booking ya está confirmado y el outbox queda en `failed` para reintentar o investigar.
 
-**Compensación**: la notificación puede tardar hasta 60s. En la práctica no importa — el cliente
-ya sabe que reservó (recibió el 201).
+**Compensación**: la notificación puede tardar hasta 60s. Es aceptable porque el cliente ya recibe
+la confirmación de la reserva en la respuesta 201.
 
 ---
 
@@ -171,11 +171,10 @@ ya sabe que reservó (recibió el 201).
 ## 8. Scheduler y locks distribuidos
 
 **Problema**: si corren 2+ instancias de la API (o en el futuro), cada una ejecuta el scheduler.
-El outbox podría procesarse dos veces, y los clientes recibirían WhatsApp duplicados.
-Nadie quiere eso.
+El outbox podría procesarse dos veces y los clientes recibirían WhatsApp duplicados.
 
 **Solución**: lock distribuido en Redis con `SET NX EX` al inicio de cada job.
-Si otra instancia tiene el lock, el job sale silenciosamente. Sin logging de ruido, sin errores.
+Si otra instancia tiene el lock, el job finaliza sin ejecutarse. Sin logs innecesarios ni errores.
 
 ```python
 lock = await redis.set(f"lock:{job_name}", "1", nx=True, ex=ttl_seconds)
@@ -229,7 +228,7 @@ El script `scripts/backup_db.sh` hace un `pg_dump` comprimido con gzip y rota ba
 # Backup a directorio específico
 ./scripts/backup_db.sh /mnt/backup-externo
 
-# Restaurar (⚠️ borra los datos actuales)
+# Restaurar (⚠️ borra los datos actuales; verificar que exista un backup previo)
 gunzip -c backups/saas_db_20260922_120000.sql.gz | \
   docker compose exec -T db psql -U postgres -d saas_db
 ```

@@ -1,12 +1,12 @@
 # Runbook de Juturno
 
-Guía operativa para incidentes comunes. Cada sección es un "si pasa X, hacé Y".
+Guía operativa para incidentes comunes. Cada sección indica "si ocurre X, realizar Y".
 
-**Regla de oro**: si algo no está acá, primero mirá los logs (`docker compose logs api --tail=100`) y Sentry antes de tocar nada.
+**Principio**: si un escenario no está documentado acá, revisar primero los logs (`docker compose logs api --tail=100`) y Sentry antes de modificar nada.
 
 ---
 
-## 🔥 La API no responde
+## La API no responde
 
 ### Síntomas
 - `curl http://localhost:8000/health` da timeout o connection refused.
@@ -16,7 +16,7 @@ Guía operativa para incidentes comunes. Cada sección es un "si pasa X, hacé Y
 ### Diagnóstico
 
 ```bash
-cd ~/turnify
+cd ~/juturno
 
 # 1. ¿Los contenedores están corriendo?
 docker compose ps
@@ -29,7 +29,7 @@ docker compose ps
 docker compose logs api --tail=50
 ```
 
-### Fixes por causa
+### Remediación por causa
 
 **Causa A — El contenedor está reiniciándose en loop**
 
@@ -37,7 +37,7 @@ docker compose logs api --tail=50
 docker compose logs api --tail=100 | grep -i "error\|traceback\|exception"
 ```
 
-Buscá el error específico. Causas comunes:
+Buscar el error específico. Causas comunes:
 - Falta una env var (ej. `SENTRY_DSN` mal formada).
 - Error de sintaxis en algún `.py` (revisar el último commit).
 - Migración pendiente que rompe el startup.
@@ -55,7 +55,7 @@ docker compose ps
 
 ```bash
 sudo lsof -i :8000
-# Matar el proceso intruso o cambiar el puerto en docker-compose.yml
+# Terminar el proceso intruso o cambiar el puerto en docker-compose.yml
 ```
 
 **Causa D — Crash silencioso de uvicorn**
@@ -77,7 +77,7 @@ Si responde, el incidente está resuelto.
 
 ---
 
-## 💾 La base de datos no responde
+## La base de datos no responde
 
 ### Síntomas
 - La API devuelve `500 Internal Server Error` en todos los endpoints.
@@ -90,7 +90,7 @@ docker compose logs db --tail=50
 docker compose exec db pg_isready
 ```
 
-### Fixes
+### Remediación
 
 **Causa A — Contenedor caído**
 
@@ -125,7 +125,7 @@ Si hay corrupción, **restaurar backup** (ver sección Backups).
 
 ---
 
-## 🔴 Redis no responde
+## Redis no responde
 
 ### Síntomas
 - El scheduler falla con `ConnectionRefusedError` a Redis.
@@ -138,7 +138,7 @@ docker compose exec redis redis-cli ping
 # Esperado: PONG
 ```
 
-### Fixes
+### Remediación
 
 ```bash
 # Si no responde PONG:
@@ -147,11 +147,11 @@ sleep 5
 docker compose exec redis redis-cli ping
 ```
 
-Redis no tiene datos críticos (solo locks y cache), así que **perder el contenido no es grave**. El sistema se recupera solo.
+Redis no almacena datos críticos (solo locks y cache), por lo que perder su contenido no compromete el servicio: el sistema se recupera de forma automática.
 
 ---
 
-## 📨 Los WhatsApp no llegan
+## Los WhatsApp no llegan
 
 ### Síntomas
 - Los clientes no reciben confirmaciones ni recordatorios.
@@ -174,7 +174,7 @@ docker compose exec db psql -U postgres -d saas_db -c \
 docker compose logs api --tail=100 | grep -i "outbox\|whatsapp\|meta"
 ```
 
-### Fixes por error de Meta
+### Remediación según error de Meta
 
 **Error `131030` — Recipient not in allowed list**
 El número del cliente no está autorizado en el panel de Meta (solo aplica en modo sandbox). En producción con número real, este error no aparece.
@@ -188,7 +188,7 @@ La plantilla `booking_confirmation` o `booking_reminder` no existe o cambió de 
 Los parámetros `{{1}}, {{2}}, {{3}}` no coinciden con la plantilla. Verificar cantidad y orden en `app/whatsapp_service.py`.
 
 **Error `400 Bad Request` genérico**
-Mirar el log completo (Sentry captura el body). Puede ser número mal formado o token expirado.
+Revisar el log completo (Sentry captura el body). Puede ser número mal formado o token expirado.
 
 **Error `401 Unauthorized` de Meta**
 El `WHATSAPP_TOKEN` expiró o fue revocado. Regenerar en:
@@ -211,7 +211,7 @@ En el próximo ciclo del worker (60s), se reintentarán.
 
 ---
 
-## 💳 Los pagos de MP no confirman bookings
+## Los pagos de MP no confirman bookings
 
 ### Síntomas
 - Cliente pagó en MP pero el booking sigue en `pending`.
@@ -249,16 +249,16 @@ docker compose exec db psql -U postgres -d saas_db -c \
   "SELECT id, booking_id, mp_payment_id, status FROM payment ORDER BY id DESC LIMIT 5;"
 ```
 
-Si `payment_events.status = 'processed'` pero no hay `payment` con `approved`, hubo un error interno. Mirar Sentry.
+Si `payment_events.status = 'processed'` pero no hay `payment` con `approved`, hubo un error interno. Revisar Sentry.
 
 ---
 
-## 🔧 Comandos útiles
+## Comandos útiles
 
 ### Ver estado general
 
 ```bash
-cd ~/turnify
+cd ~/juturno
 docker compose ps
 docker compose logs api --tail=30
 ```
@@ -323,30 +323,36 @@ docker compose exec api bash
 
 ---
 
-## 🆘 Si nada de esto funciona
+## Si nada de esto funciona
 
-1. **Mirá Sentry primero**: https://sentry.io → proyecto `turnify`.
-2. **Guardá los logs**:
+1. **Revisar Sentry**: https://sentry.io → proyecto `juturno`.
+2. **Conservar los logs**:
    ```bash
    docker compose logs api > /tmp/api_logs_$(date +%Y%m%d_%H%M).txt
    docker compose logs db > /tmp/db_logs_$(date +%Y%m%d_%H%M).txt
    ```
-3. **Reiniciá todo**:
+3. **Reiniciar todo**:
    ```bash
    docker compose down
    docker compose up -d --build
    sleep 20
    curl http://localhost:8000/health
    ```
-4. **Si sigue sin andar**: hay que revisar el código. Revisar el último commit en Git y hacer `git revert` si es necesario.
+4. **Si sigue sin responder**: revisar el código. Evaluar el último commit en Git y hacer `git revert` si corresponde.
 
 ---
 
-## Backups (ver también Día 5)
+## Backups
+
+Referencia: `scripts/backup_db.sh` (backup con rotación automática) y `ARCHITECTURE.md` → sección 11.
 
 ### Backup manual
 
 ```bash
+# Con script (recomendado)
+./scripts/backup_db.sh
+
+# Con pg_dump directo
 docker compose exec -T db pg_dump -U postgres saas_db > backup_$(date +%Y%m%d_%H%M).sql
 ```
 
@@ -356,7 +362,7 @@ docker compose exec -T db pg_dump -U postgres saas_db > backup_$(date +%Y%m%d_%H
 cat backup_20260915_1200.sql | docker compose exec -T db psql -U postgres -d saas_db
 ```
 
-**⚠️ Cuidado**: la restauración **borra** los datos actuales. Hacer backup antes de restaurar.
+**⚠️ Cuidado**: la restauración **borra** los datos actuales. Verificar que exista un backup vigente antes de restaurar.
 
 ---
 
