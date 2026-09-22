@@ -344,25 +344,38 @@ docker compose exec api bash
 
 ## Backups
 
-Referencia: `scripts/backup_db.sh` (backup con rotación automática) y `ARCHITECTURE.md` → sección 11.
+Procedimiento canónico: `scripts/backup_db.sh` (pg_dump comprimido + rotación a 30 días).
+Contexto de diseño: `ARCHITECTURE.md` → sección 11.
 
-### Backup manual
+### Crear un backup
 
 ```bash
-# Con script (recomendado)
+# Ruta por defecto: ./backups/saas_db_YYYYMMDD_HHMMSS.sql.gz
 ./scripts/backup_db.sh
 
-# Con pg_dump directo
-docker compose exec -T db pg_dump -U postgres saas_db > backup_$(date +%Y%m%d_%H%M).sql
+# Directorio alternativo (ej. un volumen externo)
+./scripts/backup_db.sh /mnt/backup-externo
 ```
 
-### Restaurar backup
+El script sale con código de error si el dump queda vacío y elimina los backups con más de 30 días.
+
+### Restaurar un backup
 
 ```bash
-cat backup_20260915_1200.sql | docker compose exec -T db psql -U postgres -d saas_db
+gunzip -c backups/saas_db_YYYYMMDD_HHMMSS.sql.gz | \
+  docker compose exec -T db psql -U postgres -d saas_db
 ```
 
-**⚠️ Cuidado**: la restauración **borra** los datos actuales. Verificar que exista un backup vigente antes de restaurar.
+**⚠️ Cuidado**: la restauración **reemplaza** los datos actuales (el dump se genera con `--clean --if-exists`).
+Verificar que exista un backup vigente antes de restaurar.
+
+### Backup puntual sin el script
+
+```bash
+docker compose exec -T db pg_dump -U postgres saas_db | gzip > backup_$(date +%Y%m%d_%H%M%S).sql.gz
+```
+
+Este archivo no participa de la rotación automática: limpiarlo manualmente.
 
 ---
 

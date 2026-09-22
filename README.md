@@ -2,7 +2,8 @@
 
 ![CI](https://github.com/JulianAltamirano192/Juturno/actions/workflows/ci.yml/badge.svg)
 
-> *Juturno toma su nombre de Juturna, diosa romana de las fuentes y los pozos de agua.*
+> *Proyecto personal desarrollado en paralelo a los estudios universitarios. El objetivo es construir
+> un producto con un propósito real, listo para operar en producción.*
 
 SaaS multi-tenant de gestión de turnos con cobro de señas y notificaciones por WhatsApp.
 Los clientes reservan, pagan y reciben la confirmación sin intervención del negocio.
@@ -128,8 +129,13 @@ Usar `.env.example` como base; contiene todos los campos con descripción.
 
 ```bash
 # Asegurarse de tener la DB de tests creada (ver Setup local, paso 4)
-docker compose exec api pytest -v
+docker compose exec \
+  -e TEST_DATABASE_URL="postgresql+asyncpg://postgres:$(grep '^POSTGRES_PASSWORD=' .env | cut -d= -f2-)@db:5432/saas_test" \
+  api pytest -v
 ```
+
+`TEST_DATABASE_URL` debe apuntar al servicio `db` (no a `localhost`): los tests corren dentro del
+contenedor de la API. El valor por defecto de `tests/conftest.py` asume ejecución local en el host.
 
 **Cobertura actual**: 8 archivos, +41 tests
 
@@ -251,21 +257,25 @@ chore: bump dependencias menores
 ## Backups
 
 ```bash
-# Backup manual (genera saas_db_YYYYMMDD_HHMMSS.sql.gz en ./backups/)
+# Backup manual (genera backups/saas_db_YYYYMMDD_HHMMSS.sql.gz)
 ./scripts/backup_db.sh
 
-# Restaurar (⚠️ borra los datos actuales; verificar que exista un backup previo)
-gunzip -c backups/saas_db_20260922_120000.sql.gz | \
+# Restaurar (⚠️ reemplaza los datos actuales; verificar que exista un backup previo)
+gunzip -c backups/saas_db_YYYYMMDD_HHMMSS.sql.gz | \
   docker compose exec -T db psql -U postgres -d saas_db
 ```
 
-El script rota automáticamente backups con más de 30 días. Ver [`RUNBOOK.md`](RUNBOOK.md) para el procedimiento completo.
+El script rota automáticamente los backups con más de 30 días. Ver [`RUNBOOK.md`](RUNBOOK.md)
+para el procedimiento completo y [`ARCHITECTURE.md`](ARCHITECTURE.md) para la política de retención.
 
 ---
 
-## Deploy
+## Operación
 
-Ver [`RUNBOOK.md`](RUNBOOK.md) para instrucciones de deploy, operación e incidentes.
+Ver [`RUNBOOK.md`](RUNBOOK.md) para operación diaria, backups e incidentes.
+
+El despliegue a producción aún no está documentado: está pendiente para Q1 2027
+(ver [`DECISIONS.md`](DECISIONS.md) → Roadmap).
 
 ---
 

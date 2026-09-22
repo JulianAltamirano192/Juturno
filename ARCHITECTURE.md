@@ -220,6 +220,7 @@ se interpreta como hora local del tenant.
 ## 11. Backups
 
 El script `scripts/backup_db.sh` hace un `pg_dump` comprimido con gzip y rota backups con más de 30 días.
+Es el procedimiento canónico de backup: `README.md` y `RUNBOOK.md` referencian este mismo flujo.
 
 ```bash
 # Backup manual
@@ -228,8 +229,8 @@ El script `scripts/backup_db.sh` hace un `pg_dump` comprimido con gzip y rota ba
 # Backup a directorio específico
 ./scripts/backup_db.sh /mnt/backup-externo
 
-# Restaurar (⚠️ borra los datos actuales; verificar que exista un backup previo)
-gunzip -c backups/saas_db_20260922_120000.sql.gz | \
+# Restaurar (⚠️ reemplaza los datos actuales; verificar que exista un backup previo)
+gunzip -c backups/saas_db_YYYYMMDD_HHMMSS.sql.gz | \
   docker compose exec -T db psql -U postgres -d saas_db
 ```
 
