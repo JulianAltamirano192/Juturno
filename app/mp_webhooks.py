@@ -295,11 +295,13 @@ async def mercadopago_webhook(
             if booking is not None:
                 webhook_event.booking_id = booking.id
 
-                if booking.status != "confirmed":
+                # Solo cambiar estado a confirmed si estaba en pending
+                if booking.status == "pending":
                     booking.status = "confirmed"
                     session.add(booking)
 
-                    # Evitar duplicar outbox si ya hay uno para esta confirmación
+                # Generar outbox de confirmación si el booking está confirmado y no existe previa
+                if booking.status == "confirmed":
                     outbox_stmt = select(NotificationOutbox).where(
                         NotificationOutbox.booking_id == booking.id,
                         NotificationOutbox.notification_type == "confirmation",

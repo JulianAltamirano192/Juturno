@@ -227,3 +227,71 @@ async def test_webhook_valid_timestamp(client, db_session, monkeypatch):
     # El booking NO debe estar confirmado (el pago está pending)
     await db_session.refresh(booking)
     assert booking.status == "pending"
+
+
+@pytest.mark.asyncio
+async def test_webhook_different_event_ids_same_payment_no_duplication(
+    client, db_session, monkeypatch
+):
+    """
+    Test A3: Múltiples webhooks con DISTINTO event_id para el mismo pago de MP.
+    Verifica que no se duplique Payment, ni Booking status, ni mensaje en NotificationOutbox.
+    """
+    secret = "test-webhook-secret"
+    monkeypatch.setattr(mp_webhooks.settings, "MP_SECRET_KEY", secret)
+
+    booking = await _create_booking(db_session, "book_idx_dup_test")
+
+    async def mock_get_payment_details(data_id: str):
+        return _make_payment_details("approved", f"booking-{booking.id}")
+
+    monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_get_payment_details)
+
+    ts = int(datetime.now(timezone.utc).timestamp())
+    data_id = "pay_dup_777"
+
+    # Evento 1
+    sig1 = _sign_webhook(data_id, "req_dup_1", ts, secret)
+    payload1 = {
+        "id": "evt_dup_1",
+        "action": "payment.updated",
+        "data": {"id": data_id},
+    }
+    res1 = await client.post(
+        "/webhooks/mercadopago",
+        json=payload1,
+        headers={"x-signature": sig1, "x-request-id": "req_dup_1"},
+    )
+    assert res1.status_code == 200
+
+    # Evento 2 (distinto event_id pero mismo payment)
+    sig2 = _sign_webhook(data_id, "req_dup_2", ts, secret)
+    payload2 = {
+        "id": "evt_dup_2",
+        "action": "payment.updated",
+        "data": {"id": data_id},
+    }
+    res2 = await client.post(
+        "/webhooks/mercadopago",
+        json=payload2,
+        headers={"x-signature": sig2, "x-request-id": "req_dup_2"},
+    )
+    assert res2.status_code == 200
+
+    # Verificar que solo hay 1 registro de Payment para este mp_payment_id
+    pay_count = await db_session.execute(
+        text("SELECT COUNT(*) FROM payment WHERE mp_payment_id='pay_dup_777'")
+    )
+    assert pay_count.scalar_one() == 1
+
+    # Verificar que solo hay 1 registro en NotificationOutbox para este booking
+    outbox_count = await db_session.execute(
+        text(
+            f"SELECT COUNT(*) FROM notification_outbox WHERE booking_id={booking.id} AND notification_type='confirmation'"
+        )
+    )
+    assert outbox_count.scalar_one() == 1
+
+    # Verificar estado del booking
+    await db_session.refresh(booking)
+    assert booking.status == "confirmed"

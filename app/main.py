@@ -1,5 +1,5 @@
 # app/main.py
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from typing import Optional, List, Annotated
 from contextlib import asynccontextmanager
 from zoneinfo import ZoneInfo
@@ -21,7 +21,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import redis.asyncio as aioredis
 
 from app.database import async_session_maker, get_db
-from app.models import Tenant, Service, Staff, Booking, NotificationOutbox
+from app.models import Tenant, Service, Staff, Booking
 from app.services import calculate_available_slots
 from app.scheduler import process_reminders
 from app.outbox_worker import process_outbox
@@ -169,6 +169,21 @@ class AvailableSlotsResponse(BaseModel):
     slots: List[str]
 
 
+class PublicServiceRead(BaseModel):
+    id: int
+    name: str
+    duration_minutes: int
+    price: float
+
+
+class PublicTenantDetailResponse(BaseModel):
+    id: int
+    name: str
+    slug: Optional[str] = None
+    timezone: str
+    services: List[PublicServiceRead]
+
+
 # --- SCHEMAS PARA BOOKINGS ---
 
 
@@ -179,8 +194,8 @@ class BookingCreate(BaseModel):
     client_name: str
     client_phone: str
     start_time: datetime
-    end_time: datetime
-    price_at_booking: float
+    end_time: Optional[datetime] = None
+    price_at_booking: Optional[float] = None
     idempotency_key: str
 
 
@@ -198,7 +213,15 @@ async def get_available_slots(
 ):
     """Devuelve los slots libres para un servicio/día/staff."""
 
-    if day < date.today():
+    tenant = current_tenant
+
+    tenant_timezone = ZoneInfo(
+        tenant.timezone if tenant.timezone else "America/Argentina/Buenos_Aires"
+    )
+    now_local = datetime.now(tenant_timezone)
+    today_local = now_local.date()
+
+    if day < today_local:
         raise HTTPException(
             status_code=400, detail="No se pueden consultar fechas pasadas"
         )
@@ -212,9 +235,6 @@ async def get_available_slots(
     if not service or service.tenant_id != tenant_id:
         raise HTTPException(status_code=404, detail="Service not found")
 
-    tenant = current_tenant
-
-    tenant_timezone = ZoneInfo(tenant.timezone)
     window_start = datetime.combine(day, time(9, 0), tzinfo=tenant_timezone)
     window_end = datetime.combine(day, time(18, 0), tzinfo=tenant_timezone)
 
@@ -233,7 +253,13 @@ async def get_available_slots(
     result = await session.execute(stmt)
     bookings_db = result.scalars().all()
 
-    bookings_intervals = [(b.start_time, b.end_time) for b in bookings_db]
+    bookings_intervals = [
+        (
+            b.start_time.astimezone(tenant_timezone),
+            b.end_time.astimezone(tenant_timezone),
+        )
+        for b in bookings_db
+    ]
 
     slots = calculate_available_slots(
         window_start=window_start,
@@ -242,6 +268,18 @@ async def get_available_slots(
         duration_min=service.duration_minutes,
         granularity_min=30,
     )
+
+    # Si la fecha es HOY en el timezone del tenant, filtrar slots pasados
+    if day == today_local:
+        filtered_slots = []
+        for s in slots:
+            slot_h, slot_m = map(int, s.split(":"))
+            slot_dt = datetime.combine(
+                day, time(slot_h, slot_m), tzinfo=tenant_timezone
+            )
+            if slot_dt >= now_local:
+                filtered_slots.append(s)
+        slots = filtered_slots
 
     return AvailableSlotsResponse(
         date=day,
@@ -258,16 +296,28 @@ async def create_booking(
     session: AsyncSession = Depends(get_db),
 ):
     """
-    Crea una reserva con Patrón Outbox transaccional.
-    Commitea booking + notificación en una sola transacción atómica.
-    Devuelve 409 si el slot ya está ocupado (ExcludeConstraint).
+    Crea una reserva derivando end_time automáticamente a partir de service.duration_minutes.
+    Es totalmente idempotente por idempotency_key (devuelve 200 + booking existente si se reintenta).
+    Devuelve 409 si el slot ya está ocupado (ExcludeConstraint) por otra reserva distinta.
     """
     if payload.tenant_id != current_tenant.id:
         raise HTTPException(status_code=404, detail="Tenant not found")
 
-    if payload.end_time <= payload.start_time:
-        raise HTTPException(
-            status_code=400, detail="end_time debe ser posterior a start_time"
+    # 1. Verificar si ya existe una reserva con el mismo idempotency_key para este tenant
+    existing_stmt = select(Booking).where(
+        and_(
+            Booking.tenant_id == payload.tenant_id,
+            Booking.idempotency_key == payload.idempotency_key,
+        )
+    )
+    existing_booking = (await session.execute(existing_stmt)).scalar_one_or_none()
+    if existing_booking is not None:
+        return JSONResponse(
+            status_code=200,
+            content={
+                "message": "Reserva recuperada (idempotente)",
+                "booking_id": existing_booking.id,
+            },
         )
 
     tenant = current_tenant
@@ -283,11 +333,10 @@ async def create_booking(
 
     tenant_timezone = ZoneInfo(tenant.timezone)
     start_time = payload.start_time
-    end_time = payload.end_time
     if start_time.tzinfo is None:
         start_time = start_time.replace(tzinfo=tenant_timezone)
-    if end_time.tzinfo is None:
-        end_time = end_time.replace(tzinfo=tenant_timezone)
+
+    end_time = start_time + timedelta(minutes=service.duration_minutes)
 
     new_booking = Booking(
         tenant_id=payload.tenant_id,
@@ -299,20 +348,225 @@ async def create_booking(
         end_time=end_time,
         price_at_booking=service.price,
         idempotency_key=payload.idempotency_key,
+        status="pending",
     )
 
     session.add(new_booking)
     try:
-        await session.flush()
-        outbox_event = NotificationOutbox(
-            booking_id=new_booking.id,
-            notification_type="confirmation",
-            status="pending",
-        )
-        session.add(outbox_event)
         await session.commit()
     except IntegrityError:
         await session.rollback()
+        # Manejar race condition por idempotency_key
+        existing_booking = (await session.execute(existing_stmt)).scalar_one_or_none()
+        if existing_booking is not None:
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "message": "Reserva recuperada (idempotente)",
+                    "booking_id": existing_booking.id,
+                },
+            )
         raise HTTPException(status_code=409, detail="Slot ya reservado o superpuesto")
 
-    return {"message": "Reserva confirmada", "booking_id": new_booking.id}
+    return {"message": "Reserva creada", "booking_id": new_booking.id}
+
+
+# --- PUBLIC ENDPOINTS (SIN AUTENTICACIÓN) ---
+
+
+@app.get("/public/tenants/{identifier}", response_model=PublicTenantDetailResponse)
+async def get_public_tenant_detail(
+    identifier: str,
+    session: AsyncSession = Depends(get_db),
+):
+    """Devuelve la información pública del negocio y sus servicios activos (por ID o por slug)."""
+    stmt = select(Tenant)
+    if identifier.isdigit():
+        stmt = stmt.where(Tenant.id == int(identifier))
+    else:
+        stmt = stmt.where(Tenant.slug == identifier)
+
+    tenant = (await session.execute(stmt)).scalar_one_or_none()
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    services_stmt = select(Service).where(
+        and_(Service.tenant_id == tenant.id, Service.is_active.is_(True))
+    )
+    services = (await session.execute(services_stmt)).scalars().all()
+
+    return PublicTenantDetailResponse(
+        id=tenant.id,
+        name=tenant.name,
+        slug=tenant.slug,
+        timezone=tenant.timezone,
+        services=[
+            PublicServiceRead(
+                id=s.id,
+                name=s.name,
+                duration_minutes=s.duration_minutes,
+                price=float(s.price),
+            )
+            for s in services
+        ],
+    )
+
+
+@app.get("/public/available-slots", response_model=AvailableSlotsResponse)
+async def get_public_available_slots(
+    tenant_id: Annotated[int, Query(gt=0, description="ID del negocio")],
+    service_id: Annotated[int, Query(gt=0, description="ID del servicio")],
+    day: Annotated[date, Query(description="Fecha YYYY-MM-DD")],
+    staff_id: Annotated[Optional[int], Query(description="ID del profesional")] = None,
+    session: AsyncSession = Depends(get_db),
+):
+    """Devuelve los slots libres para un servicio/día (público sin API Key)."""
+    tenant = await session.get(Tenant, tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    tenant_timezone = ZoneInfo(
+        tenant.timezone if tenant.timezone else "America/Argentina/Buenos_Aires"
+    )
+    now_local = datetime.now(tenant_timezone)
+    today_local = now_local.date()
+
+    if day < today_local:
+        raise HTTPException(
+            status_code=400, detail="No se pueden consultar fechas pasadas"
+        )
+
+    service = await session.get(Service, service_id)
+    if not service or service.tenant_id != tenant_id:
+        raise HTTPException(status_code=404, detail="Service not found")
+
+    window_start = datetime.combine(day, time(9, 0), tzinfo=tenant_timezone)
+    window_end = datetime.combine(day, time(18, 0), tzinfo=tenant_timezone)
+
+    stmt = select(Booking).where(
+        and_(
+            Booking.tenant_id == tenant_id,
+            Booking.status.in_(["pending", "confirmed"]),
+            Booking.start_time < window_end,
+            Booking.end_time > window_start,
+        )
+    )
+
+    if staff_id:
+        stmt = stmt.where(Booking.staff_id == staff_id)
+
+    result = await session.execute(stmt)
+    bookings_db = result.scalars().all()
+
+    bookings_intervals = [
+        (
+            b.start_time.astimezone(tenant_timezone),
+            b.end_time.astimezone(tenant_timezone),
+        )
+        for b in bookings_db
+    ]
+
+    slots = calculate_available_slots(
+        window_start=window_start,
+        window_end=window_end,
+        bookings=bookings_intervals,
+        duration_min=service.duration_minutes,
+        granularity_min=30,
+    )
+
+    if day == today_local:
+        filtered_slots = []
+        for s in slots:
+            slot_h, slot_m = map(int, s.split(":"))
+            slot_dt = datetime.combine(
+                day, time(slot_h, slot_m), tzinfo=tenant_timezone
+            )
+            if slot_dt >= now_local:
+                filtered_slots.append(s)
+        slots = filtered_slots
+
+    return AvailableSlotsResponse(
+        date=day,
+        service_duration_min=service.duration_minutes,
+        timezone=tenant.timezone,
+        slots=slots,
+    )
+
+
+@app.post("/public/bookings", status_code=201)
+async def create_public_booking(
+    payload: BookingCreate,
+    session: AsyncSession = Depends(get_db),
+):
+    """
+    Crea una reserva en estado 'pending' desde el flujo público (sin API Key).
+    Es totalmente idempotente por idempotency_key.
+    """
+    tenant = await session.get(Tenant, payload.tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    existing_stmt = select(Booking).where(
+        and_(
+            Booking.tenant_id == payload.tenant_id,
+            Booking.idempotency_key == payload.idempotency_key,
+        )
+    )
+    existing_booking = (await session.execute(existing_stmt)).scalar_one_or_none()
+    if existing_booking is not None:
+        return JSONResponse(
+            status_code=200,
+            content={
+                "message": "Reserva recuperada (idempotente)",
+                "booking_id": existing_booking.id,
+            },
+        )
+
+    service = await session.get(Service, payload.service_id)
+    if not service or service.tenant_id != payload.tenant_id:
+        raise HTTPException(status_code=404, detail="Service not found for tenant")
+
+    if payload.staff_id is not None:
+        staff = await session.get(Staff, payload.staff_id)
+        if not staff or staff.tenant_id != payload.tenant_id:
+            raise HTTPException(status_code=404, detail="Staff not found for tenant")
+
+    tenant_timezone = ZoneInfo(
+        tenant.timezone if tenant.timezone else "America/Argentina/Buenos_Aires"
+    )
+    start_time = payload.start_time
+    if start_time.tzinfo is None:
+        start_time = start_time.replace(tzinfo=tenant_timezone)
+
+    end_time = start_time + timedelta(minutes=service.duration_minutes)
+
+    new_booking = Booking(
+        tenant_id=payload.tenant_id,
+        service_id=payload.service_id,
+        staff_id=payload.staff_id,
+        client_name=payload.client_name,
+        client_phone=payload.client_phone,
+        start_time=start_time,
+        end_time=end_time,
+        price_at_booking=service.price,
+        idempotency_key=payload.idempotency_key,
+        status="pending",
+    )
+
+    session.add(new_booking)
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        existing_booking = (await session.execute(existing_stmt)).scalar_one_or_none()
+        if existing_booking is not None:
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "message": "Reserva recuperada (idempotente)",
+                    "booking_id": existing_booking.id,
+                },
+            )
+        raise HTTPException(status_code=409, detail="Slot ya reservado o superpuesto")
+
+    return {"message": "Reserva creada", "booking_id": new_booking.id}

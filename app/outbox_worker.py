@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 def format_booking_datetime(dt, tenant_timezone: str) -> str:
     """
-    Formatea un datetime UTC al timezone del tenant en formato legible.
+    Formatea un datetime UTC al timezone del tenant (por defecto America/Argentina/Buenos_Aires) en formato legible.
     Ejemplo: '15/09/2026 a las 15:00'.
     """
     if dt.tzinfo is None:
@@ -20,7 +20,12 @@ def format_booking_datetime(dt, tenant_timezone: str) -> str:
 
         dt = dt.replace(tzinfo=_tz.utc)
 
-    local_dt = dt.astimezone(ZoneInfo(tenant_timezone))
+    tz_name = (
+        tenant_timezone
+        if (tenant_timezone and tenant_timezone != "UTC")
+        else "America/Argentina/Buenos_Aires"
+    )
+    local_dt = dt.astimezone(ZoneInfo(tz_name))
     return local_dt.strftime("%d/%m/%Y a las %H:%M")
 
 

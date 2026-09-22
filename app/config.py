@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     MP_ACCESS_TOKEN: str = ""
     MP_SECRET_KEY: str = ""
     META_VERIFY_TOKEN: str = ""
+    META_APP_SECRET: str = ""
     CORS_ORIGINS: List[str] = []
     SENTRY_DSN: str = ""
     ENVIRONMENT: str = "development"

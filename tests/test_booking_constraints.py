@@ -108,3 +108,103 @@ async def test_booking_same_tenant_same_time_no_staff_fails(db_session):
         await db_session.commit()
 
     assert "excl_overlapping_bookings" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_cancelled_booking_frees_up_slot(db_session):
+    """Test B3: Un turno cancelado libera el slot para una nueva reserva en el mismo horario."""
+    tenant = Tenant(name="Tenant D", timezone="UTC")
+    db_session.add(tenant)
+    await db_session.flush()
+
+    service = Service(
+        tenant_id=tenant.id, name="Servicio D", duration_minutes=60, price=100.0
+    )
+    db_session.add(service)
+    await db_session.flush()
+
+    start_time = datetime.now(timezone.utc)
+    end_time = start_time + timedelta(hours=1)
+
+    booking_cancelled = Booking(
+        tenant_id=tenant.id,
+        service_id=service.id,
+        staff_id=None,
+        client_name="Cliente Cancelado",
+        client_phone="111",
+        start_time=start_time,
+        end_time=end_time,
+        price_at_booking=100.0,
+        idempotency_key="key_cancelled",
+        status="cancelled",
+    )
+    db_session.add(booking_cancelled)
+    await db_session.commit()
+
+    booking_new = Booking(
+        tenant_id=tenant.id,
+        service_id=service.id,
+        staff_id=None,
+        client_name="Cliente Nuevo",
+        client_phone="222",
+        start_time=start_time,
+        end_time=end_time,
+        price_at_booking=100.0,
+        idempotency_key="key_new",
+        status="pending",
+    )
+    db_session.add(booking_new)
+    await db_session.commit()
+
+    assert booking_new.id is not None
+
+
+@pytest.mark.asyncio
+async def test_confirmed_booking_causes_overlap_conflict(db_session):
+    """Test B4: Un turno confirmado bloquea el horario para un nuevo turno en pending."""
+    tenant = Tenant(name="Tenant E", timezone="UTC")
+    db_session.add(tenant)
+    await db_session.flush()
+
+    service = Service(
+        tenant_id=tenant.id, name="Servicio E", duration_minutes=60, price=100.0
+    )
+    db_session.add(service)
+    await db_session.flush()
+
+    start_time = datetime.now(timezone.utc)
+    end_time = start_time + timedelta(hours=1)
+
+    booking_confirmed = Booking(
+        tenant_id=tenant.id,
+        service_id=service.id,
+        staff_id=None,
+        client_name="Cliente Confirmado",
+        client_phone="111",
+        start_time=start_time,
+        end_time=end_time,
+        price_at_booking=100.0,
+        idempotency_key="key_confirmed",
+        status="confirmed",
+    )
+    db_session.add(booking_confirmed)
+    await db_session.commit()
+
+    booking_overlapping = Booking(
+        tenant_id=tenant.id,
+        service_id=service.id,
+        staff_id=None,
+        client_name="Cliente Solapado",
+        client_phone="222",
+        start_time=start_time,
+        end_time=end_time,
+        price_at_booking=100.0,
+        idempotency_key="key_overlapping",
+        status="pending",
+    )
+    db_session.add(booking_overlapping)
+
+    with pytest.raises(IntegrityError) as exc_info:
+        await db_session.commit()
+
+    assert "excl_overlapping_bookings" in str(exc_info.value)

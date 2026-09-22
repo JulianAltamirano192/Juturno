@@ -1,7 +1,7 @@
 import pytest
 import hmac
 import hashlib
-from datetime import datetime, timedelta, date, timezone
+from datetime import datetime, timedelta, date, time, timezone
 from sqlalchemy import text
 
 from app.models import Tenant, Service, ApiKey, Booking
@@ -177,9 +177,12 @@ async def test_webhook_mp_idempotency(client, db_session, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_outbox_created_on_booking(client, db_session):
-    """Test: Verificar que al crear una reserva se genera automáticamente el registro 'pending' en la Outbox"""
-    tenant = Tenant(name="Tenant Outbox")
+async def test_outbox_created_only_on_approved_payment(client, db_session, monkeypatch):
+    """Test: Al crear reserva (pending) NO se genera outbox; solo se genera al aprobarse el pago por MP."""
+    secret = "test-webhook-secret"
+    monkeypatch.setattr(mp_webhooks.settings, "MP_SECRET_KEY", secret)
+
+    tenant = Tenant(name="Tenant Outbox Test")
     db_session.add(tenant)
     await db_session.flush()
 
@@ -204,12 +207,165 @@ async def test_outbox_created_on_booking(client, db_session):
 
     res = await client.post("/bookings", json=payload, headers=_auth_headers(raw_key))
     assert res.status_code == 201
+    booking_id = res.json()["booking_id"]
 
-    result = await db_session.execute(
+    # 1. Al crear la reserva (estado pending), NO debe haber nada en notification_outbox
+    result_before = await db_session.execute(
+        text("SELECT COUNT(*) FROM notification_outbox")
+    )
+    assert result_before.scalar_one() == 0
+
+    # 2. Simular pago aprobado por webhook MP
+    async def approved_payment_details(data_id: str):
+        return {
+            "status": "approved",
+            "external_reference": f"booking-{booking_id}",
+            "transaction_amount": 5000.0,
+            "payment_method_id": "pix",
+            "date_approved": datetime.now(timezone.utc).isoformat(),
+        }
+
+    monkeypatch.setattr(mp_webhooks, "get_payment_details", approved_payment_details)
+
+    ts = int(datetime.now(timezone.utc).timestamp())
+    data_id = "pay_outbox_100"
+    request_id = "req_outbox_100"
+    manifest = f"id:{data_id};request-id:{request_id};ts:{ts};"
+    hash_hmac = hmac.new(secret.encode(), manifest.encode(), hashlib.sha256).hexdigest()
+    signature = f"ts={ts},v1={hash_hmac}"
+
+    wh_payload = {
+        "id": "evt_outbox_test",
+        "action": "payment.updated",
+        "data": {"id": data_id},
+    }
+    wh_headers = {"x-signature": signature, "x-request-id": request_id}
+
+    res_wh = await client.post(
+        "/webhooks/mercadopago", json=wh_payload, headers=wh_headers
+    )
+    assert res_wh.status_code == 200
+
+    # 3. Ahora sí debe existir la notificación de confirmación en notification_outbox
+    result_after = await db_session.execute(
         text("SELECT status, notification_type FROM notification_outbox")
     )
-    rows = result.fetchall()
+    rows = result_after.fetchall()
 
     assert len(rows) == 1
     assert rows[0][0] == "pending"
     assert rows[0][1] == "confirmation"
+
+
+@pytest.mark.asyncio
+async def test_booking_end_time_derived_from_duration(client, db_session):
+    """Test: Crear reserva sin enviar end_time debe derivarlo de duration_minutes del servicio."""
+    tenant = Tenant(name="Tenant Derived EndTime", timezone="UTC")
+    db_session.add(tenant)
+    await db_session.flush()
+
+    # Servicio de 45 minutos
+    service = Service(
+        tenant_id=tenant.id, name="Corte + Barba", duration_minutes=45, price=2500.0
+    )
+    db_session.add(service)
+    await db_session.commit()
+
+    raw_key = await _create_api_key(db_session, tenant.id)
+
+    # El payload NO incluye end_time
+    payload = {
+        "tenant_id": tenant.id,
+        "service_id": service.id,
+        "client_name": "Marcos",
+        "client_phone": "11223344",
+        "start_time": "2026-11-10T10:00:00Z",
+        "idempotency_key": "key-derived-end-time-1",
+    }
+
+    res = await client.post("/bookings", json=payload, headers=_auth_headers(raw_key))
+    assert res.status_code == 201
+    booking_id = res.json()["booking_id"]
+
+    booking = await db_session.get(Booking, booking_id)
+    assert booking is not None
+    assert booking.start_time.isoformat().startswith("2026-11-10T10:00:00")
+    # end_time debe ser exactamente start_time + 45 min
+    assert booking.end_time.isoformat().startswith("2026-11-10T10:45:00")
+
+
+@pytest.mark.asyncio
+async def test_get_available_slots_today_filters_past_hours(client, db_session):
+    """Test: Al consultar slots para HOY, no se deben devolver horarios pasados."""
+    tenant = Tenant(
+        name="Tenant Today Slots", timezone="America/Argentina/Buenos_Aires"
+    )
+    db_session.add(tenant)
+    await db_session.flush()
+
+    service = Service(
+        tenant_id=tenant.id, name="Masaje", duration_minutes=30, price=3000.0
+    )
+    db_session.add(service)
+    await db_session.commit()
+
+    raw_key = await _create_api_key(db_session, tenant.id)
+
+    from zoneinfo import ZoneInfo
+
+    now_local = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires"))
+    today = now_local.date()
+
+    res = await client.get(
+        f"/bookings/available-slots?tenant_id={tenant.id}&service_id={service.id}&day={today}",
+        headers=_auth_headers(raw_key),
+    )
+    assert res.status_code == 200
+    slots = res.json()["slots"]
+
+    # Ningún slot devuelto debe ser anterior a la hora actual en hora local del tenant
+    for slot_str in slots:
+        slot_h, slot_m = map(int, slot_str.split(":"))
+        slot_dt = datetime.combine(
+            today,
+            time(slot_h, slot_m),
+            tzinfo=ZoneInfo("America/Argentina/Buenos_Aires"),
+        )
+        assert slot_dt >= now_local
+
+
+@pytest.mark.asyncio
+async def test_booking_creation_idempotency_retry_returns_200(client, db_session):
+    """Test: Reintentar la creación con el mismo idempotency_key devuelve 200 y el mismo booking_id."""
+    tenant = Tenant(name="Tenant Idempotency Booking", timezone="UTC")
+    db_session.add(tenant)
+    await db_session.flush()
+
+    service = Service(
+        tenant_id=tenant.id, name="Depilación", duration_minutes=30, price=1800.0
+    )
+    db_session.add(service)
+    await db_session.commit()
+
+    raw_key = await _create_api_key(db_session, tenant.id)
+
+    payload = {
+        "tenant_id": tenant.id,
+        "service_id": service.id,
+        "client_name": "Laura",
+        "client_phone": "15443322",
+        "start_time": "2026-12-20T11:00:00Z",
+        "idempotency_key": "unique-retry-key-777",
+    }
+
+    # Primer intento -> 201 Created
+    res1 = await client.post("/bookings", json=payload, headers=_auth_headers(raw_key))
+    assert res1.status_code == 201
+    booking_id_1 = res1.json()["booking_id"]
+
+    # Segundo intento (reintento exacto con la misma clave) -> 200 OK con el mismo booking_id
+    res2 = await client.post("/bookings", json=payload, headers=_auth_headers(raw_key))
+    assert res2.status_code == 200
+    booking_id_2 = res2.json()["booking_id"]
+
+    assert booking_id_1 == booking_id_2

@@ -1,6 +1,6 @@
 import logging
 from uuid import uuid4
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import redis.asyncio as redis
 from sqlalchemy import select, and_
 
@@ -33,7 +33,7 @@ async def process_reminders(async_session_maker):
     try:
         logger.info("Lock adquirido exitosamente. Buscando turnos para recordatorio...")
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         target_start = now + timedelta(hours=24)
         target_end = target_start + timedelta(minutes=5)
 

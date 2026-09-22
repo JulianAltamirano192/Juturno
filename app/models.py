@@ -17,6 +17,7 @@ class Tenant(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str = Field(index=True)
+    slug: Optional[str] = Field(default=None, index=True, unique=True)
     whatsapp_number: Optional[str] = None
     timezone: str = Field(default="UTC")
 
@@ -89,6 +90,7 @@ class Booking(SQLModel, table=True):
             (text("tstzrange(start_time, end_time)"), "&&"),
             name="excl_overlapping_bookings",
             using="gist",
+            where=text("status IN ('pending', 'confirmed')"),
         ),
     )
 
