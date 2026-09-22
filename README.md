@@ -2,16 +2,15 @@
 
 ![CI](https://github.com/JulianAltamirano192/Juturno/actions/workflows/ci.yml/badge.svg)
 
-SaaS multi-tenant de gestión de turnos con cobro de señas y notificaciones
-por WhatsApp.
+SaaS multi-tenant de gestión de turnos con cobro de señas y notificaciones por WhatsApp.
 
 ## Stack
 
 - **Backend**: FastAPI + SQLModel + Pydantic v2
-- **Base de datos**: PostgreSQL 16 (con `btree_gist` para anti-solapamiento)
+- **Base de datos**: PostgreSQL 16 (con `btree_gist` para anti‑solapamiento)
 - **Cache & locks**: Redis 7
 - **Scheduler**: APScheduler (dentro del proceso de la API)
-- **Pagos**: Mercado Pago (Checkout Pro)
+- **Pagos**: Mercado Pago (Checkout Pro) – ahora con generación automática de *preference* al crear un booking público y campo `deposit_amount` configurable en cada servicio.
 - **Notificaciones**: WhatsApp Business API (Meta)
 - **Observabilidad**: Sentry
 - **Infra local**: Docker Compose
@@ -28,8 +27,7 @@ Mercado Pago ────────┴──► MP Webhooks ──────
                                                └──► Mercado Pago API
 ```
 
-Para el detalle de componentes, flujos y decisiones de diseño, ver
-[`ARCHITECTURE.md`](ARCHITECTURE.md).
+Para el detalle de componentes, flujos y decisiones de diseño, ver [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 ## Requisitos
 
@@ -48,7 +46,7 @@ cd Juturno
 cp .env.example .env
 ```
 
-Editar `.env` y completar todas las variables (ver sección siguiente).
+Edita `.env` y completa todas las variables (ver sección siguiente).
 
 ### 2. Levantar servicios
 
@@ -99,18 +97,19 @@ curl http://localhost:8000/health
 ## Tests
 
 ```bash
-docker compose exec \
-  -e TEST_DATABASE_URL="postgresql+asyncpg://postgres:<pass>@db:5432/saas_test" \
-  api pytest -v
+# Ejecutar tests dentro del contenedor API (asegúrate de que la DB de tests exista)
+
+docker compose exec api pytest -v
 ```
 
-**Cobertura actual**: 20 tests
-- `test_auth.py` — autenticación multi-tenant (6)
-- `test_booking_constraints.py` — ExcludeConstraint cross-tenant (2)
+**Cobertura actual**: 41 tests
+- `test_auth.py` — autenticación multi‑tenant (6)
+- `test_booking_constraints.py` — ExcludeConstraint cross‑tenant (2)
 - `test_integration.py` — flujo de reserva + webhooks (4)
 - `test_mp_webhooks.py` — idempotencia, replay, timestamp (4)
 - `test_server_defaults.py` — defaults a nivel DB (3)
 - `test_slots.py` — cálculo de slots (1)
+- `test_public_endpoints.py` — endpoints públicos + integración MP (7)
 
 El CI corre estos tests automáticamente en cada push a `main`.
 
@@ -143,8 +142,7 @@ docker compose exec api alembic downgrade -1
 1. **`process_outbox`** — cada 60s, procesa notificaciones pendientes.
 2. **`process_reminders`** — cada 5 min, envía recordatorios 24h antes.
 
-Ambos usan un **lock distribuido en Redis** para evitar doble ejecución si
-corren varias instancias.
+Ambos usan un **lock distribuido en Redis** para evitar doble ejecución si corren varias instancias.
 
 ## Webhooks
 
@@ -157,13 +155,13 @@ corren varias instancias.
 ### Mercado Pago
 
 - **Ruta**: `POST /webhooks/mercadopago`
-- **Firma**: valida `x-signature` (HMAC-SHA256) con `MP_SECRET_KEY`
+- **Firma**: valida `x-signature` (HMAC‑SHA256) con `MP_SECRET_KEY`
 - **Replay protection**: rechaza timestamps > 5 min
 - **Idempotencia**: usa tabla `payment_events` para no procesar duplicados
 
 ## Desarrollo
 
-### Pre-commit hooks
+### Pre‑commit hooks
 
 El repo tiene hooks configurados (ruff, black, mypy). Para activarlos:
 
@@ -180,11 +178,11 @@ Los hooks corren automáticamente en cada commit y arreglan formato.
 app/
 ├── auth.py              # Autenticación por API key
 ├── cli.py               # CLI de gestión (crear/listar/revocar keys)
-├── config.py            # Settings (pydantic-settings)
+├── config.py            # Settings (pydantic‑settings)
 ├── database.py          # Engine y session factory
 ├── main.py              # App FastAPI + endpoints + lifespan
-├── models.py            # Modelos SQLModel
-├── mp_webhooks.py       # Webhooks de Mercado Pago
+├── models.py            # Modelos SQLModel (incluye `deposit_amount` y campos MP en `Payment`)
+├── mp_webhooks.py       # Webhooks de Mercado Pago + helper `create_mp_preference`
 ├── outbox_worker.py     # Procesa notification_outbox
 ├── scheduler.py         # Recordatorios 24h antes
 ├── services.py          # Lógica de cálculo de slots
