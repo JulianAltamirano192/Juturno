@@ -21,11 +21,11 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import redis.asyncio as aioredis
 
 from app.database import async_session_maker, get_db
-from app.models import Tenant, Service, Staff, Booking
+from app.models import Tenant, Service, Staff, Booking, Payment
 from app.services import calculate_available_slots
 from app.scheduler import process_reminders
 from app.outbox_worker import process_outbox
-from app.mp_webhooks import router as mp_router
+from app.mp_webhooks import router as mp_router, create_mp_preference
 from app.webhooks import router as whatsapp_router
 from app.config import settings
 from app.auth import get_current_tenant
@@ -182,6 +182,12 @@ class PublicTenantDetailResponse(BaseModel):
     slug: Optional[str] = None
     timezone: str
     services: List[PublicServiceRead]
+
+
+class PublicBookingResponse(BaseModel):
+    message: str
+    booking_id: int
+    payment_url: str
 
 
 # --- SCHEMAS PARA BOOKINGS ---
@@ -499,7 +505,10 @@ async def create_public_booking(
     session: AsyncSession = Depends(get_db),
 ):
     """
-    Crea una reserva en estado 'pending' desde el flujo público (sin API Key).
+    Crea una reserva en estado 'pending' desde el flujo público (sin API Key),
+    genera una preferencia de pago en Mercado Pago y devuelve el init_point.
+
+    Si la creación de la preferencia de MP falla, el booking se revierte.
     Es totalmente idempotente por idempotency_key.
     """
     tenant = await session.get(Tenant, payload.tenant_id)
@@ -514,11 +523,22 @@ async def create_public_booking(
     )
     existing_booking = (await session.execute(existing_stmt)).scalar_one_or_none()
     if existing_booking is not None:
+        # Buscar el Payment con la URL de checkout ya generada
+        payment_stmt = select(Payment).where(
+            and_(
+                Payment.booking_id == existing_booking.id,
+                Payment.method == "mercado_pago",
+                Payment.mp_checkout_url.is_not(None),
+            )
+        )
+        existing_payment = (await session.execute(payment_stmt)).scalar_one_or_none()
+        checkout_url = existing_payment.mp_checkout_url if existing_payment else ""
         return JSONResponse(
             status_code=200,
             content={
                 "message": "Reserva recuperada (idempotente)",
                 "booking_id": existing_booking.id,
+                "payment_url": checkout_url,
             },
         )
 
@@ -540,6 +560,12 @@ async def create_public_booking(
 
     end_time = start_time + timedelta(minutes=service.duration_minutes)
 
+    # Calcular monto de seña: deposit_amount explícito o 30% del precio total
+    if service.deposit_amount is not None:
+        deposit = float(service.deposit_amount)
+    else:
+        deposit = round(float(service.price) * 0.30, 2)
+
     new_booking = Booking(
         tenant_id=payload.tenant_id,
         service_id=payload.service_id,
@@ -555,18 +581,59 @@ async def create_public_booking(
 
     session.add(new_booking)
     try:
-        await session.commit()
+        # flush para obtener el id sin commitear aún
+        await session.flush()
     except IntegrityError:
         await session.rollback()
         existing_booking = (await session.execute(existing_stmt)).scalar_one_or_none()
         if existing_booking is not None:
+            payment_stmt = select(Payment).where(
+                and_(
+                    Payment.booking_id == existing_booking.id,
+                    Payment.method == "mercado_pago",
+                    Payment.mp_checkout_url.is_not(None),
+                )
+            )
+            existing_payment = (
+                await session.execute(payment_stmt)
+            ).scalar_one_or_none()
+            checkout_url = existing_payment.mp_checkout_url if existing_payment else ""
             return JSONResponse(
                 status_code=200,
                 content={
                     "message": "Reserva recuperada (idempotente)",
                     "booking_id": existing_booking.id,
+                    "payment_url": checkout_url,
                 },
             )
         raise HTTPException(status_code=409, detail="Slot ya reservado o superpuesto")
 
-    return {"message": "Reserva creada", "booking_id": new_booking.id}
+    # Crear preferencia de MP — si falla hacemos rollback y el booking no queda en DB
+    try:
+        mp_result = await create_mp_preference(
+            booking_id=new_booking.id,
+            amount=deposit,
+            client_name=payload.client_name,
+        )
+    except HTTPException:
+        await session.rollback()
+        raise
+
+    # Registrar el Payment pendiente con el preference_id y checkout_url
+    new_payment = Payment(
+        booking_id=new_booking.id,
+        amount=deposit,
+        method="mercado_pago",
+        status="pending",
+        mp_preference_id=mp_result["preference_id"],
+        mp_checkout_url=mp_result["init_point"],
+    )
+    session.add(new_payment)
+
+    await session.commit()
+
+    return PublicBookingResponse(
+        message="Reserva creada",
+        booking_id=new_booking.id,
+        payment_url=mp_result["init_point"],
+    )

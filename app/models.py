@@ -51,6 +51,11 @@ class Service(SQLModel, table=True):
     name: str
     duration_minutes: int
     price: Decimal = Field(sa_column=Column(Numeric(10, 2), nullable=False))
+    deposit_amount: Optional[Decimal] = Field(
+        default=None,
+        sa_column=Column(Numeric(10, 2), nullable=True),
+        description="Monto de seña. Si es None, se usa el 30% del precio total.",
+    )
     is_active: bool = Field(default=True, index=True)
 
     tenant: Optional[Tenant] = Relationship(back_populates="services")
@@ -156,6 +161,8 @@ class Payment(SQLModel, table=True):
     booking_id: int = Field(foreign_key="booking.id", index=True, ondelete="CASCADE")
     amount: Decimal = Field(sa_column=Column(Numeric(10, 2), nullable=False))
     mp_payment_id: Optional[str] = Field(default=None, index=True)
+    mp_preference_id: Optional[str] = Field(default=None, index=True)
+    mp_checkout_url: Optional[str] = Field(default=None)
     method: str
     status: str = Field(index=True)
     paid_at: Optional[datetime] = Field(

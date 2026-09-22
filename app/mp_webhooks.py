@@ -46,6 +46,62 @@ async def get_payment_details(data_id: str) -> Optional[Dict[str, Any]]:
     return payment_response.json()
 
 
+async def create_mp_preference(
+    booking_id: int,
+    amount: float,
+    client_name: str,
+    notification_url: str = "https://api.juturno.com/webhooks/mercadopago",
+) -> Dict[str, str]:
+    """
+    Crea una preferencia de pago en Mercado Pago y devuelve
+    {"preference_id": ..., "init_point": ..., "sandbox_init_point": ...}.
+
+    Lanza HTTPException 502 si la API de MP responde con error,
+    para que el caller pueda hacer rollback del booking.
+    """
+    body = {
+        "items": [
+            {
+                "title": f"Reserva #{booking_id}",
+                "quantity": 1,
+                "unit_price": amount,
+                "currency_id": "ARS",
+            }
+        ],
+        "external_reference": f"booking-{booking_id}",
+        "notification_url": notification_url,
+        "payer": {"name": client_name},
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.post(
+                "https://api.mercadopago.com/checkout/preferences",
+                headers={
+                    "Authorization": f"Bearer {settings.MP_ACCESS_TOKEN}",
+                    "Content-Type": "application/json",
+                },
+                json=body,
+            )
+    except httpx.TimeoutException as exc:
+        raise HTTPException(
+            status_code=502, detail="Timeout creando preferencia en Mercado Pago"
+        ) from exc
+
+    if not response.is_success:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Mercado Pago rechazó la preferencia: {response.status_code}",
+        )
+
+    data = response.json()
+    return {
+        "preference_id": data["id"],
+        "init_point": data["init_point"],
+        "sandbox_init_point": data.get("sandbox_init_point", data["init_point"]),
+    }
+
+
 # ─────────────────────────────────────────────────────────────────
 # Verificación de firma y timestamp
 # ─────────────────────────────────────────────────────────────────
