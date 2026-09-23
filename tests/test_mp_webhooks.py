@@ -2,7 +2,8 @@ import pytest
 import hmac
 import hashlib
 from datetime import datetime, timezone, timedelta
-from app.models import Booking, Tenant, Service
+from fastapi import HTTPException
+from app.models import Booking, Payment, Tenant, Service
 from sqlalchemy import text
 from app import mp_webhooks
 
@@ -295,3 +296,268 @@ async def test_webhook_different_event_ids_same_payment_no_duplication(
     # Verificar estado del booking
     await db_session.refresh(booking)
     assert booking.status == "confirmed"
+
+
+# ---------------------------------------------------------------------------
+# Cobertura de caminos del webhook no cubiertos por los tests anteriores
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_webhook_invalid_signature_rejected(client, db_session, monkeypatch):
+    """
+    Test B1: Firma HMAC con secret incorrecto debe rechazarse con 401
+    y NO registrar el evento (falla antes del gate de idempotencia).
+    """
+    secret = "test-webhook-secret"
+    monkeypatch.setattr(mp_webhooks.settings, "MP_SECRET_KEY", secret)
+
+    ts = int(datetime.now(timezone.utc).timestamp())
+    data_id = "pay_bad_sig"
+    request_id = "req_bad_sig"
+
+    # Firmamos con OTRO secret: el HMAC no va a coincidir con settings.MP_SECRET_KEY
+    signature = _sign_webhook(data_id, request_id, ts, "otro-secret-incorrecto")
+
+    payload = {
+        "id": "evt_invalid_sig",
+        "action": "payment.updated",
+        "data": {"id": data_id},
+    }
+    headers = {"x-signature": signature, "x-request-id": request_id}
+
+    res = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
+    assert res.status_code == 401
+    assert res.json()["detail"] == "Firma de Mercado Pago inválida"
+
+    # El evento no debe quedar registrado: el rechazo es previo al gate de idempotencia
+    result = await db_session.execute(
+        text("SELECT COUNT(*) FROM payment_events WHERE event_id='evt_invalid_sig'")
+    )
+    assert result.scalar_one() == 0
+
+
+@pytest.mark.asyncio
+async def test_webhook_missing_signature_headers_rejected(
+    client, db_session, monkeypatch
+):
+    """
+    Test B2: Request sin headers x-signature / x-request-id debe rechazarse con 401.
+    Sin firma no hay autenticidad verificable: fail closed.
+    """
+    monkeypatch.setattr(mp_webhooks.settings, "MP_SECRET_KEY", "test-webhook-secret")
+
+    payload = {
+        "id": "evt_no_headers",
+        "action": "payment.updated",
+        "data": {"id": "pay_x"},
+    }
+
+    res = await client.post("/webhooks/mercadopago", json=payload)
+    assert res.status_code == 401
+    assert res.json()["detail"] == "Firma de Mercado Pago inválida"
+
+
+@pytest.mark.asyncio
+async def test_webhook_without_data_id_ignored(client, db_session, monkeypatch):
+    """
+    Test B3: Payload sin data_id extraíble (sin data.id ni id ni query params)
+    debe salir limpio con EVENT_IGNORED_NO_DATA_ID, sin registrar el evento.
+    """
+    secret = "test-webhook-secret"
+    monkeypatch.setattr(mp_webhooks.settings, "MP_SECRET_KEY", secret)
+
+    ts = int(datetime.now(timezone.utc).timestamp())
+    # data_id vacío: el manifest firma id vacío
+    signature = _sign_webhook("", "req_no_data", ts, secret)
+
+    # Sin "id" ni "data": no hay nada extraíble
+    payload = {"action": "payment.updated"}
+    headers = {"x-signature": signature, "x-request-id": "req_no_data"}
+
+    res = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
+    assert res.status_code == 200
+    assert res.text == "EVENT_IGNORED_NO_DATA_ID"
+
+    # No debe quedar ningún evento registrado (la tabla parte vacía en cada test)
+    result = await db_session.execute(text("SELECT COUNT(*) FROM payment_events"))
+    assert result.scalar_one() == 0
+
+
+@pytest.mark.asyncio
+async def test_webhook_payment_not_found_on_mp(client, db_session, monkeypatch):
+    """
+    Test B4: MP responde 404 para el pago (ID del simulador o evento viejo)
+    -> PAYMENT_NOT_FOUND_ON_MP, evento marcado 'processed'.
+    """
+    secret = "test-webhook-secret"
+    monkeypatch.setattr(mp_webhooks.settings, "MP_SECRET_KEY", secret)
+
+    async def mock_get_payment_details(data_id: str):
+        return None  # get_payment_details devuelve None si MP responde 404
+
+    monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_get_payment_details)
+
+    ts = int(datetime.now(timezone.utc).timestamp())
+    data_id = "pay_ghost_404"
+    request_id = "req_ghost"
+    signature = _sign_webhook(data_id, request_id, ts, secret)
+
+    payload = {
+        "id": "evt_not_found",
+        "action": "payment.updated",
+        "data": {"id": data_id},
+    }
+    headers = {"x-signature": signature, "x-request-id": request_id}
+
+    res = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
+    assert res.status_code == 200
+    assert res.text == "PAYMENT_NOT_FOUND_ON_MP"
+
+    # El evento igual queda 'processed': MP no debe reintentarlo eternamente
+    result = await db_session.execute(
+        text("SELECT status FROM payment_events WHERE event_id='evt_not_found'")
+    )
+    assert result.scalar_one() == "processed"
+
+
+@pytest.mark.asyncio
+async def test_webhook_payment_without_booking_link_ignored(
+    client, db_session, monkeypatch
+):
+    """
+    Test B5: external_reference sin prefijo 'booking-' (pago no vinculado a Juturno)
+    -> NO_BOOKING_LINKED, evento 'processed', sin confirmar nada.
+    """
+    secret = "test-webhook-secret"
+    monkeypatch.setattr(mp_webhooks.settings, "MP_SECRET_KEY", secret)
+
+    async def mock_get_payment_details(data_id: str):
+        return _make_payment_details("approved", "orden-externa-777")
+
+    monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_get_payment_details)
+
+    ts = int(datetime.now(timezone.utc).timestamp())
+    data_id = "pay_unlinked_1"
+    request_id = "req_unlinked"
+    signature = _sign_webhook(data_id, request_id, ts, secret)
+
+    payload = {
+        "id": "evt_unlinked",
+        "action": "payment.updated",
+        "data": {"id": data_id},
+    }
+    headers = {"x-signature": signature, "x-request-id": request_id}
+
+    res = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
+    assert res.status_code == 200
+    assert res.text == "NO_BOOKING_LINKED"
+
+    result = await db_session.execute(
+        text("SELECT status FROM payment_events WHERE event_id='evt_unlinked'")
+    )
+    assert result.scalar_one() == "processed"
+
+
+@pytest.mark.asyncio
+async def test_webhook_updates_existing_pending_payment(
+    client, db_session, monkeypatch
+):
+    """
+    Test B6: Payment ya registrado en estado 'pending' que el webhook trae 'approved'
+    -> actualiza status y paid_at, confirma el booking y genera el outbox.
+    Cubre la rama de actualización (no la de auto-creación de Payment).
+    """
+    secret = "test-webhook-secret"
+    monkeypatch.setattr(mp_webhooks.settings, "MP_SECRET_KEY", secret)
+
+    booking = await _create_booking(db_session, "book_update_pending_pay")
+
+    # Payment preexistente en pending, como queda tras la reserva pública
+    payment = Payment(
+        booking_id=booking.id,
+        amount=30.0,
+        mp_payment_id="pay_update_1",
+        method="mercado_pago",
+        status="pending",
+    )
+    db_session.add(payment)
+    await db_session.commit()
+
+    async def mock_get_payment_details(data_id: str):
+        return _make_payment_details("approved", f"booking-{booking.id}")
+
+    monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_get_payment_details)
+
+    ts = int(datetime.now(timezone.utc).timestamp())
+    data_id = "pay_update_1"
+    request_id = "req_update"
+    signature = _sign_webhook(data_id, request_id, ts, secret)
+
+    payload = {
+        "id": "evt_update_pending",
+        "action": "payment.updated",
+        "data": {"id": data_id},
+    }
+    headers = {"x-signature": signature, "x-request-id": request_id}
+
+    res = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
+    assert res.status_code == 200
+    assert res.text == "EVENT_PROCESSED"
+
+    # El Payment se actualizó a approved con paid_at seteado
+    result = await db_session.execute(
+        text("SELECT status, paid_at FROM payment WHERE mp_payment_id='pay_update_1'")
+    )
+    row = result.one()
+    assert row[0] == "approved"
+    assert row[1] is not None
+
+    # El booking pasó a confirmed y generó exactamente un outbox de confirmación
+    await db_session.refresh(booking)
+    assert booking.status == "confirmed"
+
+    outbox_count = await db_session.execute(
+        text(
+            "SELECT COUNT(*) FROM notification_outbox "
+            f"WHERE booking_id={booking.id} AND notification_type='confirmation'"
+        )
+    )
+    assert outbox_count.scalar_one() == 1
+
+
+@pytest.mark.asyncio
+async def test_webhook_mp_timeout_marks_event_failed(client, db_session, monkeypatch):
+    """
+    Test B7: get_payment_details lanza HTTPException (timeout 504)
+    -> el evento queda 'failed' y el 504 se propaga para que MP reintente.
+    Cubre la rama except HTTPException (distinta de la Exception genérica).
+    """
+    secret = "test-webhook-secret"
+    monkeypatch.setattr(mp_webhooks.settings, "MP_SECRET_KEY", secret)
+
+    async def mock_get_payment_details(data_id: str):
+        raise HTTPException(status_code=504, detail="Timeout consultando Mercado Pago")
+
+    monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_get_payment_details)
+
+    ts = int(datetime.now(timezone.utc).timestamp())
+    data_id = "pay_timeout"
+    request_id = "req_timeout"
+    signature = _sign_webhook(data_id, request_id, ts, secret)
+
+    payload = {
+        "id": "evt_timeout",
+        "action": "payment.updated",
+        "data": {"id": data_id},
+    }
+    headers = {"x-signature": signature, "x-request-id": request_id}
+
+    res = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
+    assert res.status_code == 504
+
+    # El evento queda 'failed' para que el reintento de MP lo reprocese
+    result = await db_session.execute(
+        text("SELECT status FROM payment_events WHERE event_id='evt_timeout'")
+    )
+    assert result.scalar_one() == "failed"
