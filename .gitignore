@@ -58,6 +58,9 @@ report_fixes.md
 # Antigravity agents (contiene credenciales)
 .agents/
 
+# Skills de OpenCode locales (no viajan con el repo)
+.opencode/
+
 # Backups (no versionar)
 backups/
 
