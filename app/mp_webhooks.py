@@ -51,10 +51,15 @@ async def create_mp_preference(
     amount: float,
     client_name: str,
     notification_url: str = "https://api.juturno.com/webhooks/mercadopago",
+    back_url: Optional[str] = None,
 ) -> Dict[str, str]:
     """
     Crea una preferencia de pago en Mercado Pago y devuelve
     {"preference_id": ..., "init_point": ..., "sandbox_init_point": ...}.
+
+    Si se pasa back_url, configura back_urls (success/failure/pending)
+    y auto_return para que MP redirija al cliente de vuelta a la página
+    de reserva tras el pago.
 
     Lanza HTTPException 502 si la API de MP responde con error,
     para que el caller pueda hacer rollback del booking.
@@ -72,6 +77,15 @@ async def create_mp_preference(
         "notification_url": notification_url,
         "payer": {"name": client_name},
     }
+
+    if back_url:
+        separator = "&" if "?" in back_url else "?"
+        body["back_urls"] = {
+            "success": back_url,
+            "failure": f"{back_url}{separator}result=failure",
+            "pending": f"{back_url}{separator}result=pending",
+        }
+        body["auto_return"] = "approved"
 
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:

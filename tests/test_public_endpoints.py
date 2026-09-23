@@ -288,3 +288,97 @@ async def test_create_public_booking_rolls_back_if_mp_fails(client, db_session):
     stmt = select(Booking).where(Booking.idempotency_key == "pub-booking-mp-fail-01")
     booking = (await db_session.execute(stmt)).scalar_one_or_none()
     assert booking is None
+
+
+# ---------------------------------------------------------------------------
+# Seña en el endpoint público de tenant
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_public_tenant_detail_includes_deposit_amount_fallback(
+    client, db_session
+):
+    """PublicServiceRead calcula deposit_amount con el fallback del 30% del precio."""
+    tenant = Tenant(name="Kinesiología Sur", timezone="UTC")
+    db_session.add(tenant)
+    await db_session.flush()
+
+    service = Service(
+        tenant_id=tenant.id, name="Sesión", duration_minutes=45, price=10000.0
+    )
+    db_session.add(service)
+    await db_session.commit()
+
+    res = await client.get(f"/public/tenants/{tenant.id}")
+    assert res.status_code == 200
+    assert res.json()["services"][0]["deposit_amount"] == 3000.0
+
+
+@pytest.mark.asyncio
+async def test_public_tenant_detail_includes_deposit_amount_explicit(
+    client, db_session
+):
+    """Si el servicio tiene deposit_amount definido, el endpoint devuelve ese valor."""
+    tenant = Tenant(name="Estética Norte", timezone="UTC")
+    db_session.add(tenant)
+    await db_session.flush()
+
+    service = Service(
+        tenant_id=tenant.id,
+        name="Limpieza Facial",
+        duration_minutes=60,
+        price=9000.0,
+        deposit_amount=1500.0,
+    )
+    db_session.add(service)
+    await db_session.commit()
+
+    res = await client.get(f"/public/tenants/{tenant.id}")
+    assert res.status_code == 200
+    assert res.json()["services"][0]["deposit_amount"] == 1500.0
+
+
+# ---------------------------------------------------------------------------
+# Página pública /t/{slug}
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_public_booking_page_renders_html(client, db_session):
+    """GET /t/{slug} renderiza la página pública con tenant, servicios y seña."""
+    tenant = Tenant(
+        name="Barbería Central",
+        slug="barberia-central",
+        timezone="America/Argentina/Buenos_Aires",
+    )
+    db_session.add(tenant)
+    await db_session.flush()
+
+    service = Service(
+        tenant_id=tenant.id,
+        name="Corte Clásico",
+        duration_minutes=30,
+        price=4000.0,
+        is_active=True,
+    )
+    db_session.add(service)
+    await db_session.commit()
+
+    res = await client.get("/t/barberia-central")
+    assert res.status_code == 200
+    assert res.headers["content-type"].startswith("text/html")
+    assert "Barbería Central" in res.text
+    # tojson escapa los no-ASCII: "Clásico" viaja como \u00e1 y el cliente lo parsea
+    assert "Corte Cl\\u00e1sico" in res.text
+    # La seña con fallback del 30% ($1.200) viaja embebida al cliente
+    assert "1200.0" in res.text
+
+
+@pytest.mark.asyncio
+async def test_public_booking_page_unknown_slug_returns_404_html(client, db_session):
+    """GET /t/{slug} inexistente devuelve 404 con HTML (es una URL para humanos)."""
+    res = await client.get("/t/negocio-inexistente")
+    assert res.status_code == 404
+    assert res.headers["content-type"].startswith("text/html")
+    assert "No encontramos ese negocio" in res.text

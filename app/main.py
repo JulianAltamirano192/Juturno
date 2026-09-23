@@ -4,15 +4,17 @@ from typing import Optional, List, Annotated
 from contextlib import asynccontextmanager
 from zoneinfo import ZoneInfo
 import logging
+from pathlib import Path
 
 import sentry_sdk
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
 from sentry_sdk.integrations.httpx import HttpxIntegration
 
-from fastapi import FastAPI, Depends, HTTPException, Query
+from fastapi import FastAPI, Depends, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, text
@@ -102,6 +104,9 @@ app.add_middleware(
 app.include_router(mp_router)
 app.include_router(whatsapp_router)
 
+# Plantillas para la página pública de reserva (/t/{slug})
+templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+
 
 # --- HEALTHCHECK ---
 
@@ -174,6 +179,9 @@ class PublicServiceRead(BaseModel):
     name: str
     duration_minutes: int
     price: float
+    deposit_amount: float = Field(
+        description="Seña efectiva: deposit_amount o 30% del precio"
+    )
 
 
 class PublicTenantDetailResponse(BaseModel):
@@ -412,6 +420,11 @@ async def get_public_tenant_detail(
                 name=s.name,
                 duration_minutes=s.duration_minutes,
                 price=float(s.price),
+                deposit_amount=(
+                    float(s.deposit_amount)
+                    if s.deposit_amount is not None
+                    else round(float(s.price) * 0.30, 2)
+                ),
             )
             for s in services
         ],
@@ -614,6 +627,10 @@ async def create_public_booking(
             booking_id=new_booking.id,
             amount=deposit,
             client_name=payload.client_name,
+            back_url=(
+                f"{settings.PUBLIC_BASE_URL}/t/{tenant.slug}"
+                f"?booking={new_booking.id}"
+            ),
         )
     except HTTPException:
         await session.rollback()
@@ -636,4 +653,74 @@ async def create_public_booking(
         message="Reserva creada",
         booking_id=new_booking.id,
         payment_url=mp_result["init_point"],
+    )
+
+
+# --- PÁGINA PÚBLICA DE RESERVA ---
+
+
+@app.get("/t/{slug}", response_class=HTMLResponse)
+async def public_booking_page(
+    slug: str,
+    request: Request,
+    session: AsyncSession = Depends(get_db),
+):
+    """
+    Página pública de reserva (mobile-first) de un negocio.
+
+    Renderiza el tenant y sus servicios activos; los horarios y la creación
+    de la reserva se consumen desde el cliente vía los endpoints /public/*.
+    """
+    tenant = (
+        await session.execute(select(Tenant).where(Tenant.slug == slug))
+    ).scalar_one_or_none()
+    if not tenant:
+        return HTMLResponse(
+            "<!doctype html><html lang='es'><head><meta charset='utf-8'>"
+            "<meta name='viewport' content='width=device-width, initial-scale=1'>"
+            "<title>No encontramos ese negocio</title></head>"
+            '<body style="font-family:system-ui,sans-serif;text-align:center;'
+            'padding:48px 24px;color:#111827">'
+            "<h1 style='font-size:1.25rem;margin-bottom:12px'>No encontramos ese negocio</h1>"
+            "<p style='color:#6b7280'>Revisá el enlace o contactá al negocio directamente.</p>"
+            "</body></html>",
+            status_code=404,
+        )
+
+    services = (
+        (
+            await session.execute(
+                select(Service).where(
+                    and_(Service.tenant_id == tenant.id, Service.is_active.is_(True))
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    services_data = [
+        {
+            "id": s.id,
+            "name": s.name,
+            "duration_minutes": s.duration_minutes,
+            "price": float(s.price),
+            "deposit_amount": (
+                float(s.deposit_amount)
+                if s.deposit_amount is not None
+                else round(float(s.price) * 0.30, 2)
+            ),
+        }
+        for s in services
+    ]
+
+    return templates.TemplateResponse(
+        request,
+        "public_booking.html",
+        {
+            "tenant_name": tenant.name,
+            "tenant_id": tenant.id,
+            "timezone": tenant.timezone or "America/Argentina/Buenos_Aires",
+            "services": services_data,
+        },
     )

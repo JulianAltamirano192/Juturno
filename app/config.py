@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     CORS_ORIGINS: List[str] = []
     SENTRY_DSN: str = ""
     ENVIRONMENT: str = "development"
+    # URL pública donde vive la página de reserva (se usa para back_urls de MP)
+    PUBLIC_BASE_URL: str = "https://juturno.com"
 
     class Config:
         env_file = ".env"

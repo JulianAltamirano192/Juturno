@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#2563eb">
+<title>Reservar turno en {{ tenant_name }}</title>
+<style>
+  :root{
+    --primary:#2563eb; --primary-dark:#1d4ed8;
+    --bg:#f4f6fa; --card:#ffffff;
+    --text:#0f172a; --muted:#64748b; --border:#e2e8f0;
+    --danger-bg:#fef2f2; --danger:#b91c1c; --ok:#16a34a;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{-webkit-text-size-adjust:100%}
+  body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased}
+  .wrap{max-width:480px;margin:0 auto;padding:16px 16px 96px;min-height:100vh}
+  header{padding:12px 4px 4px}
+  .back{display:inline-block;background:none;border:none;color:var(--primary);font-size:.95rem;font-weight:600;padding:8px 0 8px;margin-left:-4px;cursor:pointer}
+  h1{font-size:1.45rem;font-weight:800;line-height:1.2}
+  .sub{color:var(--muted);font-size:.95rem;margin-top:4px}
+  .banner{margin:14px 0 0;background:var(--danger-bg);color:var(--danger);border-radius:12px;padding:12px 14px;font-size:.92rem;line-height:1.4}
+  .card{background:var(--card);border-radius:16px;padding:16px;margin-top:14px;box-shadow:0 1px 3px rgba(15,23,42,.07)}
+  .step-title{font-size:1.05rem;font-weight:700;margin-top:18px;padding:0 4px}
+  .chip{display:inline-block;background:#e8effd;color:var(--primary-dark);font-size:.82rem;font-weight:600;border-radius:999px;padding:4px 12px;margin:10px 4px 0}
+  .service-row{display:flex;justify-content:space-between;align-items:center;width:100%;background:var(--card);border:none;border-radius:16px;padding:16px;margin-top:12px;box-shadow:0 1px 3px rgba(15,23,42,.07);cursor:pointer;text-align:left;font:inherit;color:inherit}
+  .service-row:active{background:#f8fafc}
+  .service-name{display:block;font-weight:700;font-size:1rem}
+  .service-dep{display:block;color:var(--muted);font-size:.85rem;margin-top:2px}
+  .service-price{text-align:right}
+  .price{display:block;font-weight:800}
+  .dur{display:block;color:var(--muted);font-size:.82rem;margin-top:2px}
+  .days{display:flex;gap:8px;overflow-x:auto;padding:14px 4px 4px;scrollbar-width:none}
+  .days::-webkit-scrollbar{display:none}
+  .day{flex:0 0 64px;background:var(--card);border:2px solid var(--border);border-radius:14px;padding:10px 4px;cursor:pointer;text-align:center;font:inherit;color:inherit}
+  .day .wd{display:block;font-size:.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:.03em}
+  .day .dn{display:block;font-size:1.25rem;font-weight:800;margin-top:2px}
+  .day .mo{display:block;font-size:.72rem;color:var(--muted)}
+  .day.sel{background:var(--primary);border-color:var(--primary);color:#fff}
+  .day.sel .wd,.day.sel .mo{color:#dbeafe}
+  .slots{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;padding:14px 4px 4px}
+  .slot{background:var(--card);border:2px solid var(--border);border-radius:12px;padding:12px 0;cursor:pointer;text-align:center;font-weight:700;font-size:.95rem;font-family:inherit;color:inherit}
+  .slot.sel{background:var(--primary);border-color:var(--primary);color:#fff}
+  .muted-box{color:var(--muted);text-align:center;padding:28px 16px;font-size:.95rem;line-height:1.5}
+  .mini{display:block;margin:16px auto 0;background:var(--card);border:none;border-radius:12px;padding:12px 20px;font-weight:700;color:var(--primary);cursor:pointer;font-size:.95rem}
+  label{display:block;font-size:.85rem;font-weight:600;color:var(--muted);margin:14px 0 6px}
+  input{width:100%;font-size:16px;padding:13px 14px;border:2px solid var(--border);border-radius:12px;font-family:inherit;color:inherit;background:var(--card)}
+  input:focus{outline:none;border-color:var(--primary)}
+  .hint{color:var(--muted);font-size:.82rem;margin-top:14px;line-height:1.5}
+  .summary .row{display:flex;justify-content:space-between;font-size:.95rem;padding:4px 0}
+  .summary .row span:last-child{font-weight:700}
+  .cta-wrap{position:fixed;bottom:0;left:0;right:0;background:linear-gradient(to top,var(--bg) 60%,transparent);padding:12px 16px calc(12px + env(safe-area-inset-bottom))}
+  .cta-inner{max-width:448px;margin:0 auto}
+  .cta{display:block;width:100%;background:var(--primary);color:#fff;border:none;border-radius:14px;padding:16px;font-size:1rem;font-weight:800;cursor:pointer;font-family:inherit}
+  .cta:disabled{background:#93b4f5;cursor:default}
+  .cta:active:not(:disabled){background:var(--primary-dark)}
+  .result{text-align:center;padding:32px 20px}
+  .icon{width:64px;height:64px;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 16px}
+  .icon.ok{background:#dcfce7}
+  .icon.bad{background:var(--danger-bg)}
+  .icon.wait{background:#dbeafe}
+  .result h2{font-size:1.2rem;margin-bottom:8px}
+  .result p{color:var(--muted);font-size:.95rem;line-height:1.55}
+  .result .cta{margin-top:20px}
+  .pulse{color:var(--muted);text-align:center;padding:28px 16px;font-size:.95rem;animation:blink 1.2s ease-in-out infinite}
+  @keyframes blink{50%{opacity:.45}}
+  :focus-visible{outline:3px solid #93b4f5;outline-offset:2px;border-radius:8px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <button id="back-btn" class="back" type="button" hidden>&#8249; Volver</button>
+    <h1>{{ tenant_name }}</h1>
+    <p class="sub" id="subtitle">Reservá tu turno online</p>
+  </header>
+  <div id="banner" class="banner" hidden></div>
+  <main id="app"></main>
+  <div class="cta-wrap" id="cta-wrap" hidden>
+    <div class="cta-inner">
+      <button id="cta" class="cta" type="button" disabled>Reservar y pagar seña</button>
+    </div>
+  </div>
+</div>
+<noscript><p style="text-align:center;padding:24px">Para reservar necesitás tener JavaScript activado. Si no podés, contactate con el negocio por WhatsApp.</p></noscript>
+<script>
+const APP = {
+  tenantId: {{ tenant_id }},
+  tenantName: {{ tenant_name | tojson }},
+  services: {{ services | tojson }},
+};
+
+const state = { step: "service", service: null, day: null, slot: null, slots: null };
+
+const app = document.getElementById("app");
+const backBtn = document.getElementById("back-btn");
+const subtitle = document.getElementById("subtitle");
+const banner = document.getElementById("banner");
+const ctaWrap = document.getElementById("cta-wrap");
+const cta = document.getElementById("cta");
+
+// ---------- helpers ----------
+function esc(s) {
+  const map = { "&": "amp", "<": "lt", ">": "gt", '"': "quot", "'": "apos" };
+  return String(s).replace(/[&<>"']/g, (c) => "&" + map[c] + ";");
+}
+function fmtMoney(n) { return "$ " + Number(n).toLocaleString("es-AR", { maximumFractionDigits: 2 }); }
+function localISO(d) {
+  const p = (x) => String(x).padStart(2, "0");
+  return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate());
+}
+function fmtDateLong(iso) {
+  const s = new Date(iso + "T12:00:00").toLocaleDateString("es-AR", { weekday: "long", day: "numeric", month: "long" });
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+function uuid() {
+  return (crypto.randomUUID) ? crypto.randomUUID()
+    : "bk-" + Date.now() + "-" + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+}
+function showBanner(msg) { banner.textContent = msg; banner.hidden = false; }
+function hideBanner() { banner.hidden = true; }
+function setBusy(on, label) {
+  cta.disabled = on;
+  cta.textContent = label || "Reservar y pagar seña";
+}
+
+// ---------- render ----------
+function render() {
+  hideBanner();
+  if (state.step === "service") renderService();
+  else if (state.step === "day") renderDay();
+  else if (state.step === "slot") renderSlot();
+  else if (state.step === "form") renderForm();
+  backBtn.hidden = state.step === "service";
+  ctaWrap.hidden = state.step !== "form";
+  window.scrollTo(0, 0);
+}
+
+function serviceChip() {
+  return '<div class="chip">' + esc(state.service.name) + " · " + state.service.duration_minutes + " min</div>";
+}
+
+function renderService() {
+  subtitle.textContent = "Reservá tu turno online";
+  let html = '<p class="step-title">Elegí un servicio</p>';
+  if (!APP.services.length) {
+    html += '<div class="card muted-box">Este negocio todavía no publicó servicios disponibles.</div>';
+    app.innerHTML = html;
+    return;
+  }
+  APP.services.forEach((s, i) => {
+    html += '<button type="button" class="service-row" onclick="selectService(' + i + ')">'
+      + '<span><span class="service-name">' + esc(s.name) + '</span>'
+      + '<span class="service-dep">Seña ' + fmtMoney(s.deposit_amount) + "</span></span>"
+      + '<span class="service-price"><span class="price">' + fmtMoney(s.price) + "</span>"
+      + '<span class="dur">' + s.duration_minutes + " min</span></span></button>";
+  });
+  app.innerHTML = html;
+}
+
+function renderDay() {
+  subtitle.textContent = "Paso 2 de 4 · Elegí el día";
+  const today = new Date();
+  let html = '<p class="step-title">¿Qué día te queda mejor?</p>' + serviceChip() + '<div class="days">';
+  for (let i = 0; i < 14; i++) {
+    const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() + i);
+    const wd = i === 0 ? "Hoy" : i === 1 ? "Mañ" : d.toLocaleDateString("es-AR", { weekday: "short" }).replace(".", "");
+    html += '<button type="button" class="day' + (state.day === localISO(d) ? " sel" : "") + '" onclick="selectDay(\'' + localISO(d) + '\')">'
+      + '<span class="wd">' + wd + '</span><span class="dn">' + d.getDate() + "</span>"
+      + '<span class="mo">' + d.toLocaleDateString("es-AR", { month: "short" }).replace(".", "") + "</span></button>";
+  }
+  app.innerHTML = html + "</div>";
+}
+
+function renderSlot() {
+  subtitle.textContent = "Paso 3 de 4 · Elegí el horario";
+  let html = '<p class="step-title">' + fmtDateLong(state.day) + "</p>" + serviceChip();
+  if (state.slots === null) {
+    html += '<div class="pulse">Buscando horarios disponibles…</div>';
+  } else if (state.slots === "error") {
+    html += '<div class="muted-box">No pudimos cargar los horarios.<br>Revisá tu conexión.</div>'
+      + '<button type="button" class="mini" onclick="loadSlots()">Reintentar</button>';
+  } else if (!state.slots.length) {
+    html += '<div class="muted-box">No quedan horarios libres este día.<br>Elegí otro día, por favor.</div>';
+  } else {
+    html += '<div class="slots">';
+    state.slots.forEach((t) => {
+      html += '<button type="button" class="slot' + (state.slot === t ? " sel" : "") + '" onclick="selectSlot(\'' + t + '\')">' + t + "</button>";
+    });
+    html += "</div>";
+  }
+  app.innerHTML = html;
+}
+
+function renderForm() {
+  subtitle.textContent = "Paso 4 de 4 · Tus datos";
+  app.innerHTML =
+    '<div class="card summary">'
+    + '<div class="row"><span>' + esc(state.service.name) + "</span><span>" + fmtMoney(state.service.price) + "</span></div>"
+    + '<div class="row"><span>' + fmtDateLong(state.day) + "</span><span>" + state.slot + " hs</span></div>"
+    + '<div class="row"><span>Seña online</span><span>' + fmtMoney(state.service.deposit_amount) + "</span></div>"
+    + "</div>"
+    + '<div class="card">'
+    + '<label for="f-name">Tu nombre</label>'
+    + '<input id="f-name" type="text" autocomplete="name" placeholder="Ej.: María González">'
+    + '<label for="f-phone">Tu WhatsApp</label>'
+    + '<input id="f-phone" type="tel" inputmode="numeric" autocomplete="tel" placeholder="Ej.: 5491123456789">'
+    + '<p class="hint">Se abona una seña de ' + fmtMoney(state.service.deposit_amount)
+    + " para reservar el turno. Te confirmamos por WhatsApp.</p>"
+    + "</div>";
+  validateForm();
+}
+
+function validateForm() {
+  const name = document.getElementById("f-name");
+  const phone = document.getElementById("f-phone");
+  const ok = () => {
+    const digits = phone.value.replace(/\D/g, "");
+    cta.disabled = !(name.value.trim().length >= 2 && digits.length >= 8);
+  };
+  name.addEventListener("input", ok);
+  phone.addEventListener("input", ok);
+}
+
+// ---------- acciones ----------
+function selectService(i) {
+  state.service = APP.services[i];
+  state.day = null;
+  state.step = "day";
+  render();
+}
+
+function selectDay(iso) {
+  state.day = iso;
+  state.slot = null;
+  state.step = "slot";
+  render();
+  loadSlots();
+}
+
+function selectSlot(t) {
+  state.slot = t;
+  state.step = "form";
+  render();
+}
+
+async function loadSlots() {
+  state.slots = null;
+  renderSlot();
+  try {
+    const params = new URLSearchParams({
+      tenant_id: APP.tenantId,
+      service_id: state.service.id,
+      day: state.day,
+    });
+    const res = await fetch("/public/available-slots?" + params);
+    if (!res.ok) throw new Error("http " + res.status);
+    const data = await res.json();
+    state.slots = data.slots || [];
+  } catch (e) {
+    state.slots = "error";
+  }
+  renderSlot();
+}
+
+async function submitBooking() {
+  const name = document.getElementById("f-name").value.trim();
+  const phone = document.getElementById("f-phone").value.replace(/\D/g, "");
+  if (name.length < 2 || phone.length < 8) return;
+
+  // Clave idempotente: un mismo turno reintentado nunca genera dos reservas
+  const key = "juturno:booking:" + APP.tenantId + ":" + state.service.id + ":" + state.day + ":" + state.slot;
+  let idem = sessionStorage.getItem(key);
+  if (!idem) { idem = uuid(); sessionStorage.setItem(key, idem); }
+
+  setBusy(true, "Reservando…");
+  try {
+    const res = await fetch("/public/bookings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        tenant_id: APP.tenantId,
+        service_id: state.service.id,
+        client_name: name,
+        client_phone: phone,
+        start_time: state.day + "T" + state.slot + ":00",
+        idempotency_key: idem,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if ((res.status === 201 || res.status === 200) && data.payment_url) {
+      setBusy(true, "Te llevamos al pago…");
+      location.href = data.payment_url;
+      return;
+    }
+    setBusy();
+    if (res.status === 409) {
+      showBanner("Ese horario se acaba de ocupar. Elegí otro, por favor.");
+      state.slot = null;
+      state.step = "slot";
+      render();
+      loadSlots();
+    } else if (res.status === 502 || res.status === 504) {
+      showBanner("El procesador de pagos no responde. Tocá de nuevo en unos segundos.");
+    } else if (res.status === 400) {
+      showBanner(data.detail || "Revisá tus datos e intentá de nuevo.");
+    } else {
+      showBanner("No pudimos crear la reserva (" + res.status + "). Intentá de nuevo.");
+    }
+  } catch (e) {
+    setBusy();
+    showBanner("Sin conexión. Revisá tu internet y probá otra vez.");
+  }
+}
+
+function goBack() {
+  if (state.step === "day") state.step = "service";
+  else if (state.step === "slot") state.step = "day";
+  else if (state.step === "form") state.step = "slot";
+  render();
+}
+
+// ---------- pantallas post-pago (estáticas, sin consultar la API) ----------
+function showResult(kind) {
+  backBtn.hidden = true;
+  ctaWrap.hidden = true;
+  const icons = {
+    ok: '<svg width="30" height="30" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="#16a34a" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    bad: '<svg width="30" height="30" viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="#b91c1c" stroke-width="3" stroke-linecap="round"/></svg>',
+    wait: '<svg width="30" height="30" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="#2563eb" stroke-width="3"/><path d="M12 7v5l3 3" stroke="#2563eb" stroke-width="3" stroke-linecap="round"/></svg>',
+  };
+  let icon, title, text, btn;
+  if (kind === "failure") {
+    icon = "bad"; title = "El pago no se completó";
+    text = "No se cobró nada. Podés volver a intentarlo cuando quieras.";
+    btn = "Volver a reservar";
+  } else if (kind === "pending") {
+    icon = "wait"; title = "El pago está en proceso";
+    text = "En cuanto se acredite la seña, el negocio te confirma por WhatsApp.";
+    btn = "Entendido";
+  } else {
+    icon = "ok"; title = "Reserva registrada";
+    text = "Recibimos tu pago. En breve te confirmamos por WhatsApp.";
+    btn = "Hacer otra reserva";
+  }
+  subtitle.textContent = "Reserva #" + (new URLSearchParams(location.search).get("booking") || "");
+  app.innerHTML = '<div class="card result">'
+    + '<div class="icon ' + icon + '">' + icons[icon] + "</div>"
+    + "<h2>" + title + "</h2><p>" + text + "</p>"
+    + '<button type="button" class="cta" onclick="startOver()">' + btn + "</button></div>";
+}
+
+function startOver() { location.replace(location.pathname); }
+
+// ---------- init ----------
+backBtn.addEventListener("click", goBack);
+cta.addEventListener("click", submitBooking);
+
+const params = new URLSearchParams(location.search);
+if (params.has("booking")) {
+  const r = params.get("result");
+  showResult(r === "failure" ? "failure" : r === "pending" ? "pending" : "success");
+} else {
+  render();
+}
+</script>
+</body>
+</html>
