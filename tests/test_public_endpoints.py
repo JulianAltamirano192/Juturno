@@ -14,6 +14,8 @@ FAKE_MP_RESULT = {
     "preference_id": "fake-pref-id-123",
     "init_point": "https://www.mercadopago.com.ar/checkout/v1/redirect?pref_id=fake-pref-id-123",
     "sandbox_init_point": "https://sandbox.mercadopago.com.ar/checkout/v1/redirect?pref_id=fake-pref-id-123",
+    # Contrato real de create_mp_preference con MP_SANDBOX=true (por defecto)
+    "checkout_url": "https://sandbox.mercadopago.com.ar/checkout/v1/redirect?pref_id=fake-pref-id-123",
 }
 
 MP_PATCH = "app.main.create_mp_preference"
@@ -151,7 +153,7 @@ async def test_create_public_booking_returns_payment_url(client, db_session):
     assert res.status_code == 201
     data = res.json()
     assert "booking_id" in data
-    assert data["payment_url"] == FAKE_MP_RESULT["init_point"]
+    assert data["payment_url"] == FAKE_MP_RESULT["checkout_url"]
 
     booking_id = data["booking_id"]
     booking = await db_session.get(Booking, booking_id)
@@ -167,7 +169,7 @@ async def test_create_public_booking_returns_payment_url(client, db_session):
     assert payment.method == "mercado_pago"
     assert payment.status == "pending"
     assert payment.mp_preference_id == FAKE_MP_RESULT["preference_id"]
-    assert payment.mp_checkout_url == FAKE_MP_RESULT["init_point"]
+    assert payment.mp_checkout_url == FAKE_MP_RESULT["checkout_url"]
     assert float(payment.amount) == round(6000.0 * 0.30, 2)
 
 
@@ -245,7 +247,7 @@ async def test_create_public_booking_idempotent_returns_same_url(client, db_sess
     assert res2.status_code == 200
     data2 = res2.json()
     assert data2["booking_id"] == data1["booking_id"]
-    assert data2["payment_url"] == FAKE_MP_RESULT["init_point"]
+    assert data2["payment_url"] == FAKE_MP_RESULT["checkout_url"]
     mock_mp2.assert_not_awaited()
 
 

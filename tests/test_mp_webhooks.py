@@ -561,3 +561,47 @@ async def test_webhook_mp_timeout_marks_event_failed(client, db_session, monkeyp
         text("SELECT status FROM payment_events WHERE event_id='evt_timeout'")
     )
     assert result.scalar_one() == "failed"
+
+
+# ---------------------------------------------------------------------------
+# create_mp_preference: selección de URL de checkout según MP_SANDBOX
+# ---------------------------------------------------------------------------
+
+FAKE_PREFERENCE_RESPONSE = {
+    "id": "pref-123",
+    "init_point": "https://www.mercadopago.com.ar/checkout/v1/redirect?pref_id=pref-123",
+    "sandbox_init_point": "https://sandbox.mercadopago.com.ar/checkout/v1/redirect?pref_id=pref-123",
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "mp_sandbox, expected_url_key",
+    [(True, "sandbox_init_point"), (False, "init_point")],
+)
+async def test_create_mp_preference_selects_checkout_url_by_mode(
+    monkeypatch, mp_sandbox, expected_url_key
+):
+    """
+    Con credenciales de prueba (MP_SANDBOX=true) el checkout debe usar
+    sandbox_init_point; con producción (false), init_point. Mandar al
+    cliente a la URL del ambiente equivocado hace el pago imposible.
+    """
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    monkeypatch.setattr(mp_webhooks.settings, "MP_SANDBOX", mp_sandbox)
+
+    fake_response = MagicMock()
+    fake_response.is_success = True
+    fake_response.json.return_value = FAKE_PREFERENCE_RESPONSE
+
+    client_mock = AsyncMock()
+    client_mock.post.return_value = fake_response
+    client_mock.__aenter__.return_value = client_mock
+
+    with patch("app.mp_webhooks.httpx.AsyncClient", return_value=client_mock):
+        result = await mp_webhooks.create_mp_preference(
+            booking_id=1, amount=30.0, client_name="Test"
+        )
+
+    assert result["checkout_url"] == FAKE_PREFERENCE_RESPONSE[expected_url_key]

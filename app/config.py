@@ -10,6 +10,9 @@ class Settings(BaseSettings):
     WHATSAPP_PHONE_NUMBER_ID: str = ""
     MP_ACCESS_TOKEN: str = ""
     MP_SECRET_KEY: str = ""
+    # true = credenciales de prueba: el checkout usa sandbox_init_point.
+    # Pasar a false al migrar a credenciales de producción de MP.
+    MP_SANDBOX: bool = True
     META_VERIFY_TOKEN: str = ""
     META_APP_SECRET: str = ""
     CORS_ORIGINS: List[str] = []

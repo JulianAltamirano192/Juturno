@@ -55,7 +55,14 @@ async def create_mp_preference(
 ) -> Dict[str, str]:
     """
     Crea una preferencia de pago en Mercado Pago y devuelve
-    {"preference_id": ..., "init_point": ..., "sandbox_init_point": ...}.
+    {"preference_id": ..., "init_point": ..., "sandbox_init_point": ...,
+     "checkout_url": ...}.
+
+    "checkout_url" es la URL que debe abrir el cliente para pagar:
+    sandbox_init_point si MP_SANDBOX=true (credenciales de prueba)
+    o init_point si MP_SANDBOX=false (credenciales de producción).
+    Enviar al cliente la URL del ambiente equivocado hace que el pago
+    sea imposible.
 
     Si se pasa back_url, configura back_urls (success/failure/pending)
     y auto_return para que MP redirija al cliente de vuelta a la página
@@ -109,10 +116,13 @@ async def create_mp_preference(
         )
 
     data = response.json()
+    init_point = data["init_point"]
+    sandbox_init_point = data.get("sandbox_init_point", init_point)
     return {
         "preference_id": data["id"],
-        "init_point": data["init_point"],
-        "sandbox_init_point": data.get("sandbox_init_point", data["init_point"]),
+        "init_point": init_point,
+        "sandbox_init_point": sandbox_init_point,
+        "checkout_url": sandbox_init_point if settings.MP_SANDBOX else init_point,
     }
 
 

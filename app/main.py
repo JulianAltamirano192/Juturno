@@ -519,7 +519,7 @@ async def create_public_booking(
 ):
     """
     Crea una reserva en estado 'pending' desde el flujo público (sin API Key),
-    genera una preferencia de pago en Mercado Pago y devuelve el init_point.
+    genera una preferencia de pago en Mercado Pago y devuelve la URL de checkout.
 
     Si la creación de la preferencia de MP falla, el booking se revierte.
     Es totalmente idempotente por idempotency_key.
@@ -643,7 +643,7 @@ async def create_public_booking(
         method="mercado_pago",
         status="pending",
         mp_preference_id=mp_result["preference_id"],
-        mp_checkout_url=mp_result["init_point"],
+        mp_checkout_url=mp_result["checkout_url"],
     )
     session.add(new_payment)
 
@@ -652,7 +652,7 @@ async def create_public_booking(
     return PublicBookingResponse(
         message="Reserva creada",
         booking_id=new_booking.id,
-        payment_url=mp_result["init_point"],
+        payment_url=mp_result["checkout_url"],
     )
 
 
