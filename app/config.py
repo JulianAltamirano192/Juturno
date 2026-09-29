@@ -10,6 +10,14 @@ class Settings(BaseSettings):
     WHATSAPP_PHONE_NUMBER_ID: str = ""
     MP_ACCESS_TOKEN: str = ""
     MP_SECRET_KEY: str = ""
+    # OAuth marketplace: credenciales de la aplicación registrada en MP
+    # Developers (modelo de integración Checkout Pro + OAuth).
+    MP_MARKETPLACE_CLIENT_ID: str = ""
+    MP_MARKETPLACE_CLIENT_SECRET: str = ""
+    MP_MARKETPLACE_REDIRECT_URL: str = "https://api.juturno.com/mp/connect/callback"
+    # Clave Fernet para cifrar en reposo los tokens OAuth de los tenants.
+    # Se genera una vez: Fernet.generate_key() y vive solo en env.
+    MP_TOKEN_ENCRYPTION_KEY: str = ""
     # true = credenciales de prueba: el checkout usa sandbox_init_point.
     # Pasar a false al migrar a credenciales de producción de MP.
     MP_SANDBOX: bool = True

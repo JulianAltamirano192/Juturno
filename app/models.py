@@ -28,6 +28,34 @@ class Tenant(SQLModel, table=True):
             "la reserva expire y libere el horario. NULL = sin expiración."
         ),
     )
+    # Credenciales de Mercado Pago conectadas vía OAuth (D-012).
+    # Los tokens se guardan CIFRADOS con Fernet (app/mp_crypto.py) —
+    # ningún token sensible se persiste en texto plano.
+    mp_user_id: Optional[str] = Field(
+        default=None,
+        description="ID de la cuenta de MP conectada (collector_id).",
+    )
+    mp_public_key: Optional[str] = Field(
+        default=None,
+        description="Public key de la cuenta de MP (uso futuro p/ checkout).",
+    )
+    mp_alias: Optional[str] = Field(
+        default=None,
+        description="Alias de la cuenta de MP, informativo (de /users/me).",
+    )
+    mp_access_token_enc: Optional[str] = Field(
+        default=None,
+        description="Access token OAuth de MP, cifrado con Fernet.",
+    )
+    mp_refresh_token_enc: Optional[str] = Field(
+        default=None,
+        description="Refresh token OAuth de MP, cifrado con Fernet.",
+    )
+    mp_token_expires_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+        description="Cuándo vence el access token (MP: ~180 días).",
+    )
 
     services: List["Service"] = Relationship(
         back_populates="tenant",
