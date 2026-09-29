@@ -81,7 +81,7 @@ async def test_webhook_idempotency_retry(client, db_session, monkeypatch):
 
     call_count = 0
 
-    async def mock_get_payment_details(data_id: str):
+    async def mock_get_payment_details(data_id: str, access_token: str = None):
         nonlocal call_count
         call_count += 1
         if call_count == 1:
@@ -140,7 +140,7 @@ async def test_webhook_idempotency_processed(client, db_session, monkeypatch):
 
     booking = await _create_booking(db_session, "book_idx_2")
 
-    async def mock_get_payment_details(data_id: str):
+    async def mock_get_payment_details(data_id: str, access_token: str = None):
         return _make_payment_details("approved", f"booking-{booking.id}")
 
     monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_get_payment_details)
@@ -204,7 +204,7 @@ async def test_webhook_valid_timestamp(client, db_session, monkeypatch):
 
     booking = await _create_booking(db_session, "book_idx_3")
 
-    async def mock_get_payment_details(data_id: str):
+    async def mock_get_payment_details(data_id: str, access_token: str = None):
         return _make_payment_details("pending", f"booking-{booking.id}")
 
     monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_get_payment_details)
@@ -243,7 +243,7 @@ async def test_webhook_different_event_ids_same_payment_no_duplication(
 
     booking = await _create_booking(db_session, "book_idx_dup_test")
 
-    async def mock_get_payment_details(data_id: str):
+    async def mock_get_payment_details(data_id: str, access_token: str = None):
         return _make_payment_details("approved", f"booking-{booking.id}")
 
     monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_get_payment_details)
@@ -393,7 +393,7 @@ async def test_webhook_payment_not_found_on_mp(client, db_session, monkeypatch):
     secret = "test-webhook-secret"
     monkeypatch.setattr(mp_webhooks.settings, "MP_SECRET_KEY", secret)
 
-    async def mock_get_payment_details(data_id: str):
+    async def mock_get_payment_details(data_id: str, access_token: str = None):
         return None  # get_payment_details devuelve None si MP responde 404
 
     monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_get_payment_details)
@@ -432,7 +432,7 @@ async def test_webhook_payment_without_booking_link_ignored(
     secret = "test-webhook-secret"
     monkeypatch.setattr(mp_webhooks.settings, "MP_SECRET_KEY", secret)
 
-    async def mock_get_payment_details(data_id: str):
+    async def mock_get_payment_details(data_id: str, access_token: str = None):
         return _make_payment_details("approved", "orden-externa-777")
 
     monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_get_payment_details)
@@ -484,7 +484,7 @@ async def test_webhook_updates_existing_pending_payment(
     db_session.add(payment)
     await db_session.commit()
 
-    async def mock_get_payment_details(data_id: str):
+    async def mock_get_payment_details(data_id: str, access_token: str = None):
         return _make_payment_details("approved", f"booking-{booking.id}")
 
     monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_get_payment_details)
@@ -536,7 +536,7 @@ async def test_webhook_mp_timeout_marks_event_failed(client, db_session, monkeyp
     secret = "test-webhook-secret"
     monkeypatch.setattr(mp_webhooks.settings, "MP_SECRET_KEY", secret)
 
-    async def mock_get_payment_details(data_id: str):
+    async def mock_get_payment_details(data_id: str, access_token: str = None):
         raise HTTPException(status_code=504, detail="Timeout consultando Mercado Pago")
 
     monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_get_payment_details)
@@ -629,7 +629,7 @@ async def test_webhook_approved_late_payment_reconfirms_expired(
     db_session.add(booking)
     await db_session.commit()
 
-    async def mock_get_payment_details(data_id: str):
+    async def mock_get_payment_details(data_id: str, access_token: str = None):
         return _make_payment_details("approved", f"booking-{booking.id}")
 
     monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_get_payment_details)
@@ -693,7 +693,7 @@ async def test_webhook_approved_late_payment_slot_taken_keeps_expired(
     db_session.add_all([booking, overlapping])
     await db_session.commit()
 
-    async def mock_get_payment_details(data_id: str):
+    async def mock_get_payment_details(data_id: str, access_token: str = None):
         return _make_payment_details("approved", f"booking-{booking.id}")
 
     monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_get_payment_details)

@@ -144,7 +144,7 @@ async def test_webhook_mp_idempotency(client, db_session, monkeypatch):
     await db_session.commit()
     await db_session.refresh(booking)
 
-    async def approved_payment_details(data_id: str):
+    async def approved_payment_details(data_id: str, access_token: str = None):
         return {
             "status": "approved",
             "external_reference": f"booking-{booking.id}",
@@ -216,7 +216,7 @@ async def test_outbox_created_only_on_approved_payment(client, db_session, monke
     assert result_before.scalar_one() == 0
 
     # 2. Simular pago aprobado por webhook MP
-    async def approved_payment_details(data_id: str):
+    async def approved_payment_details(data_id: str, access_token: str = None):
         return {
             "status": "approved",
             "external_reference": f"booking-{booking_id}",

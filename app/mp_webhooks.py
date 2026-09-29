@@ -8,9 +8,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import select, and_, func
 
-from app.models import ProcessedWebhookEvent, Payment, Booking, NotificationOutbox
+from app.models import (
+    ProcessedWebhookEvent,
+    Payment,
+    Booking,
+    NotificationOutbox,
+    Tenant,
+)
 from app.database import get_db
 from app.config import settings
+from app.mp_crypto import decrypt_token
 
 router = APIRouter()
 
@@ -290,6 +297,46 @@ async def _slot_still_free(session: AsyncSession, booking: Booking) -> bool:
 
 
 # ─────────────────────────────────────────────────────────────────
+# Resolución de token de cobro para el webhook (D-012)
+# ─────────────────────────────────────────────────────────────────
+
+
+async def _resolve_token_for_payment(
+    session: AsyncSession, payload: Dict[str, Any]
+) -> Optional[str]:
+    """
+    Determina con qué token consultar a MP este pago (webhook recibido).
+
+    El payload de MP trae "user_id" = la cuenta de MP que recibió el pago.
+    Si ese user_id coincide con el mp_user_id de un tenant conectado,
+    el dinero está en ESA cuenta → se usa su token OAuth (descifrado).
+
+    Si no hay user_id o no matchea ningún tenant (puede ser un pago de la
+    cuenta de la plataforma, o un tenant viejo sin conectar), se cae al
+    token global de MP — el comportamiento de la Fase 1.
+
+    Si el token existe pero no se puede descifrar (clave rota), la excepción
+    de MPTokenCryptoError se propaga: MP reintentará el webhook.
+    """
+    mp_user_id = payload.get("user_id") or payload.get("data", {}).get("user_id")
+    if not mp_user_id:
+        return None  # caller usa el fallback
+
+    tenant = (
+        await session.execute(
+            select(Tenant).where(Tenant.mp_user_id == str(mp_user_id))
+        )
+    ).scalar_one_or_none()
+
+    if tenant is not None and tenant.mp_access_token_enc:
+        return decrypt_token(tenant.mp_access_token_enc)
+
+    # Tenant encontrado sin credenciales (conexión cortada), o no hay
+    # tenant para este user_id (pago de la plataforma, u otro collector)
+    return None
+
+
+# ─────────────────────────────────────────────────────────────────
 # Endpoint del webhook
 # ─────────────────────────────────────────────────────────────────
 
@@ -347,7 +394,10 @@ async def mercadopago_webhook(
 
     # 3. Procesamiento del pago
     try:
-        details = await get_payment_details(data_id)
+        # D-012: si el pago aterrizó en la cuenta de un tenant conectado,
+        # MP solo deja leerlo con el token de ESA cuenta.
+        token = await _resolve_token_for_payment(session, payload)
+        details = await get_payment_details(data_id, access_token=token)
 
         if details is None:
             # MP no encuentra el pago. Puede ser un ID del simulador o un evento viejo.
