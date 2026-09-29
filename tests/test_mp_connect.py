@@ -1,0 +1,185 @@
+"""
+Tests del flujo OAuth de Mercado Pago (Tarea 2 del plan MP por tenant).
+
+Red: todas las llamadas a MP se monkeypatchean. Redis es real (corre en
+el stack local) — el state se guarda y se consume de verdad.
+"""
+
+import pytest
+from cryptography.fernet import Fernet
+from sqlalchemy import text
+
+from app import mp_connect
+from app.auth import hash_api_key
+from app.models import ApiKey, Tenant
+from app.mp_crypto import decrypt_token
+
+TEST_FERNET_KEY = Fernet.generate_key().decode()
+FAKE_TOKEN_RESPONSE = {
+    "access_token": "APP_USR-access-oauth-del-vendedor",
+    "refresh_token": "TG-refresh-oauth-del-vendedor",
+    "expires_in": 15552000,  # 180 días, como documenta MP
+    "user_id": 1234567890,
+    "token_type": "Bearer",
+    "scope": "offline_access read write",
+}
+FAKE_USER_PROFILE = {"id": 1234567890, "nickname": "negocio.demo"}
+
+
+@pytest.fixture(autouse=True)
+def _mp_oauth_settings(monkeypatch):
+    """Config OAuth de MP válida + clave Fernet para cifrar tokens."""
+    monkeypatch.setattr(
+        mp_connect.settings, "MP_MARKETPLACE_CLIENT_ID", "1234567890123456"
+    )
+    monkeypatch.setattr(
+        mp_connect.settings, "MP_MARKETPLACE_CLIENT_SECRET", "app-secret"
+    )
+    monkeypatch.setattr(
+        mp_connect.settings,
+        "MP_MARKETPLACE_REDIRECT_URL",
+        "https://api.juturno.com/mp/connect/callback",
+    )
+    monkeypatch.setattr(mp_connect.settings, "MP_TOKEN_ENCRYPTION_KEY", TEST_FERNET_KEY)
+
+
+async def _tenant_with_api_key(db_session):
+    tenant = Tenant(name="Negocio Demo", slug="demo", timezone="UTC")
+    db_session.add(tenant)
+    await db_session.flush()
+    raw_key = f"test-key-tenant-{tenant.id}"
+    db_session.add(ApiKey(tenant_id=tenant.id, key_hash=hash_api_key(raw_key)))
+    await db_session.commit()
+    return tenant, {"X-Tenant-API-Key": raw_key}
+
+
+def _patch_mp_exchange(monkeypatch, token_resp=None, profile=None):
+    async def fake_exchange(code: str):
+        return token_resp if token_resp is not None else FAKE_TOKEN_RESPONSE
+
+    async def fake_profile(access_token: str):
+        return (
+            (
+                str(FAKE_USER_PROFILE["id"]),
+                FAKE_USER_PROFILE["nickname"],
+            )
+            if profile is None
+            else profile
+        )
+
+    monkeypatch.setattr(mp_connect, "_exchange_code_for_tokens", fake_exchange)
+    monkeypatch.setattr(mp_connect, "_fetch_mp_profile", fake_profile)
+
+
+# ---------------------------------------------------------------------------
+# GET /mp/connect/start
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_connect_start_requires_api_key(client):
+    res = await client.get("/mp/connect/start")
+    assert res.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_connect_start_returns_authorization_url(client, db_session):
+    tenant, headers = await _tenant_with_api_key(db_session)
+
+    res = await client.get("/mp/connect/start", headers=headers)
+    assert res.status_code == 200
+
+    url = res.json()["authorization_url"]
+    assert url.startswith("https://auth.mercadopago.com/authorization?")
+    assert "client_id=1234567890123456" in url
+    assert "response_type=code" in url
+    assert "state=" in url
+    # El redirect_uri coincide exactamente con el registrado en MP
+    assert "redirect_uri=https%3A%2F%2Fapi.juturno.com%2Fmp%2Fconnect%2Fcallback" in url
+
+
+# ---------------------------------------------------------------------------
+# GET /mp/connect/callback
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_callback_completes_connection(client, db_session, monkeypatch):
+    """Flujo feliz: state válido → canje mockeado → credenciales cifradas."""
+    tenant, headers = await _tenant_with_api_key(db_session)
+    _patch_mp_exchange(monkeypatch)
+
+    start = await client.get("/mp/connect/start", headers=headers)
+    url = start.json()["authorization_url"]
+    state = next(
+        p.split("=", 1)[1]
+        for p in url.partition("?")[2].split("&")
+        if p.startswith("state=")
+    )
+
+    res = await client.get(
+        "/mp/connect/callback", params={"code": "TG-code-ok", "state": state}
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["connected"] is True
+    assert body["mp_user_id"] == "1234567890"
+    assert body["mp_alias"] == "negocio.demo"
+    assert "access_token" not in body and "refresh_token" not in body
+
+    # En DB: ciphertext, no texto plano, y expiración seteada
+    raw = await db_session.execute(
+        text(
+            "SELECT mp_user_id, mp_alias, mp_access_token_enc, "
+            "mp_refresh_token_enc, mp_token_expires_at "
+            "FROM tenant WHERE id = :tid"
+        ).bindparams(tid=tenant.id)
+    )
+    row = raw.one()
+    assert "oauth-del-vendedor" not in row.mp_access_token_enc
+    assert decrypt_token(row.mp_access_token_enc) == FAKE_TOKEN_RESPONSE["access_token"]
+    assert (
+        decrypt_token(row.mp_refresh_token_enc) == FAKE_TOKEN_RESPONSE["refresh_token"]
+    )
+    assert row.mp_token_expires_at is not None
+
+
+@pytest.mark.asyncio
+async def test_callback_rejects_invalid_state(client):
+    res = await client.get(
+        "/mp/connect/callback",
+        params={"code": "TG-code", "state": "state-inventado"},
+    )
+    assert res.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_callback_state_is_single_use(client, db_session, monkeypatch):
+    """Un state consumido no sirve ni para el mismo code ni otro."""
+    tenant, headers = await _tenant_with_api_key(db_session)
+    _patch_mp_exchange(monkeypatch)
+
+    start = await client.get("/mp/connect/start", headers=headers)
+    state = start.json()["authorization_url"].split("state=", 1)[1].split("&")[0]
+
+    url = f"/mp/connect/callback?code=TG-code&state={state}"
+    assert (await client.get(url)).status_code == 200
+    # Segundo uso del mismo state → rechazado
+    assert (await client.get(url)).status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_callback_handles_mp_cancellation(client):
+    """El dueño canceló en la pantalla de MP: ?error=access_denied."""
+    res = await client.get("/mp/connect/callback", params={"error": "access_denied"})
+    assert res.status_code == 400
+    assert "access_denied" in res.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_missing_mp_config_blocks_start(client, db_session, monkeypatch):
+    tenant, headers = await _tenant_with_api_key(db_session)
+    monkeypatch.setattr(mp_connect.settings, "MP_MARKETPLACE_CLIENT_ID", "")
+
+    res = await client.get("/mp/connect/start", headers=headers)
+    assert res.status_code == 503

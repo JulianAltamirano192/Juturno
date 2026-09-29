@@ -28,6 +28,7 @@ from app.services import calculate_available_slots
 from app.scheduler import process_reminders, process_deposit_expiration
 from app.outbox_worker import process_outbox
 from app.mp_webhooks import router as mp_router, create_mp_preference
+from app.mp_connect import router as mp_connect_router
 from app.phone import InvalidPhoneError, normalize_whatsapp_phone
 from app.webhooks import router as whatsapp_router
 from app.config import settings
@@ -111,6 +112,7 @@ app.add_middleware(
 )
 
 app.include_router(mp_router)
+app.include_router(mp_connect_router)
 app.include_router(whatsapp_router)
 
 # Plantillas para la página pública de reserva (/t/{slug})
