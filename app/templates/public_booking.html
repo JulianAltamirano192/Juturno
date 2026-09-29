@@ -305,6 +305,8 @@ async function submitBooking() {
       showBanner("El procesador de pagos no responde. Tocá de nuevo en unos segundos.");
     } else if (res.status === 400) {
       showBanner(data.detail || "Revisá tus datos e intentá de nuevo.");
+    } else if (typeof data.detail === "string" && data.detail) {
+      showBanner(data.detail);
     } else {
       showBanner("No pudimos crear la reserva (" + res.status + "). Intentá de nuevo.");
     }

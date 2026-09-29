@@ -384,3 +384,80 @@ async def test_public_booking_page_unknown_slug_returns_404_html(client, db_sess
     assert res.status_code == 404
     assert res.headers["content-type"].startswith("text/html")
     assert "No encontramos ese negocio" in res.text
+
+
+# ---------------------------------------------------------------------------
+# Normalización del teléfono del cliente
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_public_booking_normalizes_local_phone(client, db_session):
+    """
+    El cliente escribe su teléfono en formato local (03584 166288), como
+    hace la mayoría, y el booking debe quedar guardado normalizado al
+    formato que exige WhatsApp (5493584166288).
+    """
+    tenant = Tenant(name="Barbería Local", timezone="UTC")
+    db_session.add(tenant)
+    await db_session.flush()
+
+    service = Service(
+        tenant_id=tenant.id, name="Corte", duration_minutes=30, price=5000.0
+    )
+    db_session.add(service)
+    await db_session.commit()
+
+    payload = {
+        "tenant_id": tenant.id,
+        "service_id": service.id,
+        "client_name": "Ana",
+        "client_phone": "03584 166288",
+        "start_time": "2026-11-20T13:00:00Z",
+        "idempotency_key": "pub-booking-phone-norm-01",
+    }
+
+    with patch(MP_PATCH, new=AsyncMock(return_value=FAKE_MP_RESULT)):
+        res = await client.post("/public/bookings", json=payload)
+
+    assert res.status_code == 201
+    booking = await db_session.get(Booking, res.json()["booking_id"])
+    assert booking.client_phone == "5493584166288"
+
+
+@pytest.mark.asyncio
+async def test_create_public_booking_rejects_bad_phone(client, db_session):
+    """
+    Un teléfono irreconocible debe rechazarse con 422 antes de crear
+    nada y sin llamar a MP: mejor que el cliente lo corrija en pantalla
+    que confirmar una reserva cuyo WhatsApp nunca va a llegar.
+    """
+    tenant = Tenant(name="Barbería Phone", timezone="UTC")
+    db_session.add(tenant)
+    await db_session.flush()
+
+    service = Service(
+        tenant_id=tenant.id, name="Corte", duration_minutes=30, price=5000.0
+    )
+    db_session.add(service)
+    await db_session.commit()
+
+    payload = {
+        "tenant_id": tenant.id,
+        "service_id": service.id,
+        "client_name": "Ana",
+        "client_phone": "1234",
+        "start_time": "2026-11-21T13:00:00Z",
+        "idempotency_key": "pub-booking-phone-bad-01",
+    }
+
+    with patch(MP_PATCH, new=AsyncMock(return_value=FAKE_MP_RESULT)) as mock_mp:
+        res = await client.post("/public/bookings", json=payload)
+
+    assert res.status_code == 422
+    assert "WhatsApp" in res.json()["detail"]
+    mock_mp.assert_not_awaited()
+
+    stmt = select(Booking).where(Booking.idempotency_key == "pub-booking-phone-bad-01")
+    booking = (await db_session.execute(stmt)).scalar_one_or_none()
+    assert booking is None

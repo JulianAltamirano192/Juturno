@@ -278,7 +278,7 @@ async def test_booking_end_time_derived_from_duration(client, db_session):
         "tenant_id": tenant.id,
         "service_id": service.id,
         "client_name": "Marcos",
-        "client_phone": "11223344",
+        "client_phone": "1155667788",
         "start_time": "2026-11-10T10:00:00Z",
         "idempotency_key": "key-derived-end-time-1",
     }
@@ -353,7 +353,7 @@ async def test_booking_creation_idempotency_retry_returns_200(client, db_session
         "tenant_id": tenant.id,
         "service_id": service.id,
         "client_name": "Laura",
-        "client_phone": "15443322",
+        "client_phone": "3584665544",
         "start_time": "2026-12-20T11:00:00Z",
         "idempotency_key": "unique-retry-key-777",
     }

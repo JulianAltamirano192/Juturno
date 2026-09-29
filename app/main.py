@@ -28,6 +28,7 @@ from app.services import calculate_available_slots
 from app.scheduler import process_reminders
 from app.outbox_worker import process_outbox
 from app.mp_webhooks import router as mp_router, create_mp_preference
+from app.phone import InvalidPhoneError, normalize_whatsapp_phone
 from app.webhooks import router as whatsapp_router
 from app.config import settings
 from app.auth import get_current_tenant
@@ -314,6 +315,17 @@ async def create_booking(
     Es totalmente idempotente por idempotency_key (devuelve 200 + booking existente si se reintenta).
     Devuelve 409 si el slot ya está ocupado (ExcludeConstraint) por otra reserva distinta.
     """
+    try:
+        client_phone = normalize_whatsapp_phone(payload.client_phone)
+    except InvalidPhoneError:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "El teléfono del cliente no es válido: se espera un celular "
+                "argentino con característica, ej: +54 9 11 5555 5555."
+            ),
+        )
+
     if payload.tenant_id != current_tenant.id:
         raise HTTPException(status_code=404, detail="Tenant not found")
 
@@ -357,7 +369,7 @@ async def create_booking(
         service_id=payload.service_id,
         staff_id=payload.staff_id,
         client_name=payload.client_name,
-        client_phone=payload.client_phone,
+        client_phone=client_phone,
         start_time=start_time,
         end_time=end_time,
         price_at_booking=service.price,
@@ -524,6 +536,17 @@ async def create_public_booking(
     Si la creación de la preferencia de MP falla, el booking se revierte.
     Es totalmente idempotente por idempotency_key.
     """
+    try:
+        client_phone = normalize_whatsapp_phone(payload.client_phone)
+    except InvalidPhoneError:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "El WhatsApp no parece completo. Ingresá tu número con "
+                "característica, por ejemplo: +54 9 11 5555 5555."
+            ),
+        )
+
     tenant = await session.get(Tenant, payload.tenant_id)
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
@@ -584,7 +607,7 @@ async def create_public_booking(
         service_id=payload.service_id,
         staff_id=payload.staff_id,
         client_name=payload.client_name,
-        client_phone=payload.client_phone,
+        client_phone=client_phone,
         start_time=start_time,
         end_time=end_time,
         price_at_booking=service.price,
