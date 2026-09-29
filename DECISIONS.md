@@ -292,6 +292,44 @@ y que no acumulen archivos eternamente en el disco.
 
 ---
 
+## D-012: Cuenta Mercado Pago por tenant (OAuth) con dinero directo al propietario
+
+**Fecha**: Septiembre 2026
+
+**Contexto**: Hoy todas las preferencias de pago se crean con el `MP_ACCESS_TOKEN` de la
+plataforma, por lo que las señas de todos los tenants entran a la cuenta del operador del
+SaaS. Con dinero real esto genera tres problemas: (1) recibir sistemáticamente dinero de
+terceros viola los términos de MP, que puede retener fondos o cerrar la cuenta; (2) ese
+dinero factura a nombre del operador (exposición fiscal en IVA/Ingresos Brutos); (3) el
+operador retiene fondos que económicamente pertenecen al negocio, sin acuerdo que lo
+ampare. Los reclamos y chargebacks de clientes ajenos además caen en el operador.
+
+**Decisión**: Cada tenant conecta su propia cuenta de Mercado Pago vía OAuth (flujo
+authorization code). El `access_token` y `refresh_token` se guardan cifrados (Fernet) por
+tenant y toda preferencia de pago se crea con el token del tenant: el dinero aterriza
+directo en la cuenta del propietario. Regla de fallback: con `MP_SANDBOX=true` un tenant
+sin conectar usa la cuenta de la plataforma (dinero de prueba, irrelevante); con
+`MP_SANDBOX=false` un tenant sin conectar no puede cobrar: la reserva pública se rechaza
+hasta que conecte su cuenta. Conectar MP pasa a ser requisito de alta del negocio.
+
+**Alternativas**:
+- **Un solo token de la plataforma para todos** (status quo): el problema que motiva la decisión. Solo viable con dinero de prueba.
+- **Split payments / marketplace de MP**: la plata pasa igualmente por la plataforma (mismo problema fiscal y de términos), y es un producto pensado para plataformas constituidas. Desproporcionado.
+- **Alias por tenant con transferencia manual**: el checkout de MP no admite apuntar a un alias arbitrario; implicaría validar pagos manuales, un flujo distinto al actual.
+- **Token pegado a mano por cada tenant (sin OAuth)**: funciona, pero exige que el dueño copie credenciales sensibles. OAuth es el mecanismo oficial y renueva sin volver a pedir permiso.
+
+**Consecuencias**:
+- **Ventaja** — El dinero de cada negocio entra directo a su cuenta: la plataforma no toca fondos de terceros por diseño.
+- **Ventaja** — El riesgo legal/fiscal del cobro agregado desaparece en lugar de gestionarse.
+- **Ventaja** — El alias del negocio queda disponible informativamente (vía `/users/me` al conectar) sin exponer credenciales.
+- **Riesgo** — La consulta de pagos en el webhook depende de resolver el token correcto: el payload trae `user_id` (cuenta vendedora) que se matchea contra `tenant.mp_user_id`; sin match, fallback al token de la plataforma. Ítem a validar experimentalmente en el E2E.
+- **Riesgo** — Los tokens OAuth vencen (180 días) y se renuevan on-demand con `refresh_token`; si un tenant revoca el acceso, sus pagos quedan bloqueados en producción (comportamiento correcto, pero hay que comunicarlo al dueño).
+- **Deuda** — Renovación proactiva por scheduler (hoy solo on-demand), página de conexión con botón (dashboard, Fase 2), pagos por alias manual (fuera de alcance).
+
+Plan de implementación aprobado: [`PLAN_MP_POR_TENANT.md`](PLAN_MP_POR_TENANT.md).
+
+---
+
 ## Roadmap de deuda técnica
 
 Ordenado por impacto/urgencia estimada:
