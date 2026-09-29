@@ -6,7 +6,7 @@ import httpx
 from fastapi import APIRouter, Request, Header, Depends, Response, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy import select
+from sqlalchemy import select, and_, func
 
 from app.models import ProcessedWebhookEvent, Payment, Booking, NotificationOutbox
 from app.database import get_db
@@ -257,6 +257,26 @@ def _parse_mp_datetime(value: Optional[str]) -> Optional[datetime]:
         return None
 
 
+async def _slot_still_free(session: AsyncSession, booking: Booking) -> bool:
+    """
+    True si ningún otro booking pending/confirmed pisa el horario.
+    Misma semántica que el ExcludeConstraint excl_overlapping_bookings
+    (mismo tenant, mismo staff vía COALESCE, solapamiento de rangos).
+    """
+    staff_key = booking.staff_id if booking.staff_id is not None else -1
+    stmt = select(Booking).where(
+        and_(
+            Booking.tenant_id == booking.tenant_id,
+            Booking.id != booking.id,
+            Booking.status.in_(("pending", "confirmed")),
+            func.coalesce(Booking.staff_id, -1) == staff_key,
+            Booking.start_time < booking.end_time,
+            Booking.end_time > booking.start_time,
+        )
+    )
+    return (await session.execute(stmt)).scalars().first() is None
+
+
 # ─────────────────────────────────────────────────────────────────
 # Endpoint del webhook
 # ─────────────────────────────────────────────────────────────────
@@ -377,6 +397,16 @@ async def mercadopago_webhook(
 
                 # Solo cambiar estado a confirmed si estaba en pending
                 if booking.status == "pending":
+                    booking.status = "confirmed"
+                    session.add(booking)
+
+                # Pago aprobado tardío sobre una reserva ya expirada (pagó la
+                # seña después del límite): se re-confirma solo si nadie más
+                # tomó el horario. Si fue tomado, la reserva queda expirada y
+                # el depósito queda en manos del negocio para su devolución.
+                elif booking.status == "expired" and await _slot_still_free(
+                    session, booking
+                ):
                     booking.status = "confirmed"
                     session.add(booking)
 

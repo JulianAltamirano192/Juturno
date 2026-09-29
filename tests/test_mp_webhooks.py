@@ -605,3 +605,123 @@ async def test_create_mp_preference_selects_checkout_url_by_mode(
         )
 
     assert result["checkout_url"] == FAKE_PREFERENCE_RESPONSE[expected_url_key]
+
+
+# ---------------------------------------------------------------------------
+# Pago aprobado tardío sobre reserva expirada
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_webhook_approved_late_payment_reconfirms_expired(
+    client, db_session, monkeypatch
+):
+    """
+    Test B8: pago aprobado que llega DESPUÉS de que la reserva venció por
+    falta de seña → si el horario sigue libre, se re-confirma y se encola
+    el WhatsApp de confirmación.
+    """
+    secret = "test-webhook-secret"
+    monkeypatch.setattr(mp_webhooks.settings, "MP_SECRET_KEY", secret)
+
+    booking = await _create_booking(db_session, "late-payment-ok")
+    booking.status = "expired"
+    db_session.add(booking)
+    await db_session.commit()
+
+    async def mock_get_payment_details(data_id: str):
+        return _make_payment_details("approved", f"booking-{booking.id}")
+
+    monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_get_payment_details)
+
+    ts = int(datetime.now(timezone.utc).timestamp())
+    data_id = f"pay-late-{booking.id}"
+    request_id = "req_late_ok"
+    signature = _sign_webhook(data_id, request_id, ts, secret)
+
+    payload = {
+        "id": f"evt-late-ok-{booking.id}",
+        "action": "payment.updated",
+        "data": {"id": data_id},
+    }
+    headers = {"x-signature": signature, "x-request-id": request_id}
+
+    res = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
+    assert res.status_code == 200
+    assert res.text == "EVENT_PROCESSED"
+
+    await db_session.refresh(booking)
+    assert booking.status == "confirmed"
+
+    # El WhatsApp de confirmación quedó encolado
+    result = await db_session.execute(
+        text(
+            "SELECT status FROM notification_outbox "
+            "WHERE booking_id = :bid AND notification_type = 'confirmation'"
+        ).bindparams(bid=booking.id)
+    )
+    assert result.scalar_one() == "pending"
+
+
+@pytest.mark.asyncio
+async def test_webhook_approved_late_payment_slot_taken_keeps_expired(
+    client, db_session, monkeypatch
+):
+    """
+    Test B9: pago aprobado tardío pero el horario fue tomado por otra
+    reserva confirmada → la reserva vencida queda 'expired' y no se
+    encola ningún WhatsApp.
+    """
+    secret = "test-webhook-secret"
+    monkeypatch.setattr(mp_webhooks.settings, "MP_SECRET_KEY", secret)
+
+    booking = await _create_booking(db_session, "late-payment-taken")
+    booking.status = "expired"
+
+    # Otra reserva confirmada ocupa exactamente el mismo horario
+    overlapping = Booking(
+        tenant_id=booking.tenant_id,
+        service_id=booking.service_id,
+        client_name="Otro Cliente",
+        client_phone="5491100000000",
+        start_time=booking.start_time,
+        end_time=booking.end_time,
+        price_at_booking=100.0,
+        idempotency_key="overlapping-confirmed",
+        status="confirmed",
+    )
+    db_session.add_all([booking, overlapping])
+    await db_session.commit()
+
+    async def mock_get_payment_details(data_id: str):
+        return _make_payment_details("approved", f"booking-{booking.id}")
+
+    monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_get_payment_details)
+
+    ts = int(datetime.now(timezone.utc).timestamp())
+    data_id = f"pay-late-taken-{booking.id}"
+    request_id = "req_late_taken"
+    signature = _sign_webhook(data_id, request_id, ts, secret)
+
+    payload = {
+        "id": f"evt-late-taken-{booking.id}",
+        "action": "payment.updated",
+        "data": {"id": data_id},
+    }
+    headers = {"x-signature": signature, "x-request-id": request_id}
+
+    res = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
+    assert res.status_code == 200
+    assert res.text == "EVENT_PROCESSED"
+
+    await db_session.refresh(booking)
+    assert booking.status == "expired"
+
+    # Nada encolado para esta reserva
+    result = await db_session.execute(
+        text(
+            "SELECT COUNT(*) FROM notification_outbox "
+            "WHERE booking_id = :bid AND notification_type = 'confirmation'"
+        ).bindparams(bid=booking.id)
+    )
+    assert result.scalar_one() == 0

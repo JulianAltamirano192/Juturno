@@ -25,7 +25,7 @@ import redis.asyncio as aioredis
 from app.database import async_session_maker, get_db
 from app.models import Tenant, Service, Staff, Booking, Payment
 from app.services import calculate_available_slots
-from app.scheduler import process_reminders
+from app.scheduler import process_reminders, process_deposit_expiration
 from app.outbox_worker import process_outbox
 from app.mp_webhooks import router as mp_router, create_mp_preference
 from app.phone import InvalidPhoneError, normalize_whatsapp_phone
@@ -80,6 +80,14 @@ async def lifespan(app: FastAPI):
         minutes=1,
         args=[async_session_maker],
         id="outbox_job",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        process_deposit_expiration,
+        "interval",
+        minutes=1,
+        args=[async_session_maker],
+        id="deposit_expiration_job",
         replace_existing=True,
     )
     scheduler.start()
@@ -398,6 +406,40 @@ async def create_booking(
 
 
 # --- PUBLIC ENDPOINTS (SIN AUTENTICACIÓN) ---
+
+
+class TenantSettingsUpdate(BaseModel):
+    """Campos de configuración que el tenant puede actualizar de sí mismo."""
+
+    deposit_expiration_minutes: Optional[int] = Field(default=None, ge=1)
+
+
+@app.patch("/tenants/me")
+async def update_tenant_settings(
+    payload: TenantSettingsUpdate,
+    current_tenant: Tenant = Depends(get_current_tenant),
+    session: AsyncSession = Depends(get_db),
+):
+    """
+    Actualiza la configuración del tenant autenticado (API key).
+
+    deposit_expiration_minutes: minutos que tiene el cliente para pagar la
+    seña antes de que la reserva expire y libere el horario.
+    null desactiva la expiración para este tenant.
+    """
+    updates = payload.model_dump(exclude_unset=True)
+    if "deposit_expiration_minutes" in updates:
+        current_tenant.deposit_expiration_minutes = updates[
+            "deposit_expiration_minutes"
+        ]
+        session.add(current_tenant)
+        await session.commit()
+        await session.refresh(current_tenant)
+
+    return {
+        "tenant_id": current_tenant.id,
+        "deposit_expiration_minutes": current_tenant.deposit_expiration_minutes,
+    }
 
 
 @app.get("/public/tenants/{identifier}", response_model=PublicTenantDetailResponse)

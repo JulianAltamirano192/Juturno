@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Optional, List, Any
 from sqlmodel import SQLModel, Field, Relationship, Column, JSON
-from sqlalchemy import DateTime, Numeric, UniqueConstraint
+from sqlalchemy import DateTime, Integer, Numeric, UniqueConstraint
 from sqlalchemy.dialects.postgresql import ExcludeConstraint
 from sqlalchemy import text
 
@@ -20,6 +20,14 @@ class Tenant(SQLModel, table=True):
     slug: Optional[str] = Field(default=None, index=True, unique=True)
     whatsapp_number: Optional[str] = None
     timezone: str = Field(default="UTC")
+    deposit_expiration_minutes: Optional[int] = Field(
+        default=15,
+        sa_column=Column(Integer(), nullable=True),
+        description=(
+            "Minutos que tiene el cliente para pagar la seña antes de que "
+            "la reserva expire y libere el horario. NULL = sin expiración."
+        ),
+    )
 
     services: List["Service"] = Relationship(
         back_populates="tenant",
