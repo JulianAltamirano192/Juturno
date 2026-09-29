@@ -33,7 +33,7 @@ from app.auth import get_current_tenant
 from app.config import settings
 from app.database import get_db
 from app.models import Tenant
-from app.mp_crypto import encrypt_token
+from app.mp_crypto import decrypt_token, encrypt_token
 
 router = APIRouter(tags=["mercadopago-oauth"])
 
@@ -141,6 +141,34 @@ async def _fetch_mp_profile(
         return (str(user_id) if user_id is not None else None, data.get("nickname"))
     except (httpx.HTTPError, ValueError):
         return None, None
+
+
+# ─────────────────────────────────────────────────────────────────
+# Resolución de token de cobro (regla de dinero de D-012)
+# ─────────────────────────────────────────────────────────────────
+
+# Mensaje que ve el cliente si el negocio no puede cobrar en producción.
+ERR_PAGO_NO_CONFIGURADO = (
+    "Este negocio todavía no configuró su cuenta de Mercado Pago. "
+    "Avisale al local para que conecte su cuenta y vuelvas a reservar."
+)
+
+
+def resolve_mp_access_token(tenant: Tenant) -> Optional[str]:
+    """
+    Token OAuth con el que cobra este tenant, según la regla de D-012:
+
+      - Tenant con cuenta conectada → su access_token (descifrado). Fallas
+        de cifrado propagan MPTokenCryptoError (clave rota → 502 arriba).
+      - Sandbox + sin cuenta → token de la plataforma (plata de prueba).
+      - Producción + sin cuenta → None: el negocio aún no puede cobrar;
+        el caller responde 422 ERR_PAGO_NO_CONFIGURADO sin crear la reserva.
+    """
+    if tenant.mp_access_token_enc:
+        return decrypt_token(tenant.mp_access_token_enc)
+    if settings.MP_SANDBOX:
+        return settings.MP_ACCESS_TOKEN
+    return None
 
 
 # ─────────────────────────────────────────────────────────────────

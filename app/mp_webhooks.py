@@ -23,17 +23,24 @@ _WEBHOOK_TS_TOLERANCE = 300  # 5 minutos
 # ─────────────────────────────────────────────────────────────────
 
 
-async def get_payment_details(data_id: str) -> Optional[Dict[str, Any]]:
+async def get_payment_details(
+    data_id: str, access_token: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
     """
     Consulta la API de MP y devuelve el JSON completo del pago.
     Devuelve None si MP responde 404 (pago no existe en su sistema).
     Lanza HTTPException 504 si hay timeout.
+
+    access_token: token OAuth del tenant dueño de la reserva. Si no viene
+    se usa el de la plataforma (tenants sin cuenta conectada — ver D-012).
     """
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             payment_response = await client.get(
                 f"https://api.mercadopago.com/v1/payments/{data_id}",
-                headers={"Authorization": f"Bearer {settings.MP_ACCESS_TOKEN}"},
+                headers={
+                    "Authorization": f"Bearer {access_token or settings.MP_ACCESS_TOKEN}"
+                },
             )
     except httpx.TimeoutException as exc:
         raise HTTPException(
@@ -52,11 +59,16 @@ async def create_mp_preference(
     client_name: str,
     notification_url: str = "https://api.juturno.com/webhooks/mercadopago",
     back_url: Optional[str] = None,
+    access_token: Optional[str] = None,
 ) -> Dict[str, str]:
     """
     Crea una preferencia de pago en Mercado Pago y devuelve
     {"preference_id": ..., "init_point": ..., "sandbox_init_point": ...,
      "checkout_url": ...}.
+
+    access_token: token OAuth del tenant dueño de la reserva — el dinero
+    aterriza en SU cuenta. Si no viene, se usa el de la plataforma (solo
+    válido en sandbox según la regla de cobro de D-012).
 
     "checkout_url" es la URL que debe abrir el cliente para pagar:
     sandbox_init_point si MP_SANDBOX=true (credenciales de prueba)
@@ -99,7 +111,7 @@ async def create_mp_preference(
             response = await client.post(
                 "https://api.mercadopago.com/checkout/preferences",
                 headers={
-                    "Authorization": f"Bearer {settings.MP_ACCESS_TOKEN}",
+                    "Authorization": f"Bearer {access_token or settings.MP_ACCESS_TOKEN}",
                     "Content-Type": "application/json",
                 },
                 json=body,

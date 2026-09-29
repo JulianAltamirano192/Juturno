@@ -28,7 +28,12 @@ from app.services import calculate_available_slots
 from app.scheduler import process_reminders, process_deposit_expiration
 from app.outbox_worker import process_outbox
 from app.mp_webhooks import router as mp_router, create_mp_preference
-from app.mp_connect import router as mp_connect_router
+from app.mp_connect import (
+    router as mp_connect_router,
+    resolve_mp_access_token,
+    ERR_PAGO_NO_CONFIGURADO,
+)
+from app.mp_crypto import MPTokenCryptoError
 from app.phone import InvalidPhoneError, normalize_whatsapp_phone
 from app.webhooks import router as whatsapp_router
 from app.config import settings
@@ -55,6 +60,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
+logger = logging.getLogger(__name__)
 
 
 # --- SCHEDULER + LIFESPAN ---
@@ -688,6 +694,24 @@ async def create_public_booking(
             )
         raise HTTPException(status_code=409, detail="Slot ya reservado o superpuesto")
 
+    # Regla de cobro (D-012): el dinero va a la cuenta del tenant.
+    # En producción, un negocio sin MP conectado NO puede recibir seña —
+    # se rechaza ANTES de crear booking/preference para no dejar
+    # reservas pending huérfanas de un cobro imposible.
+    try:
+        mp_access_token = resolve_mp_access_token(tenant)
+    except MPTokenCryptoError as exc:
+        logger.error(f"No se pudo descifrar el token MP del tenant {tenant.id}: {exc}")
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "Error al procesar el cobro del negocio; contactá "
+                "al administrador de la plataforma."
+            ),
+        ) from exc
+    if mp_access_token is None:
+        raise HTTPException(status_code=422, detail=ERR_PAGO_NO_CONFIGURADO)
+
     # Crear preferencia de MP — si falla hacemos rollback y el booking no queda en DB
     try:
         mp_result = await create_mp_preference(
@@ -698,6 +722,7 @@ async def create_public_booking(
                 f"{settings.PUBLIC_BASE_URL}/t/{tenant.slug}"
                 f"?booking={new_booking.id}"
             ),
+            access_token=mp_access_token,
         )
     except HTTPException:
         await session.rollback()
