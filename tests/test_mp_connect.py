@@ -12,7 +12,7 @@ from sqlalchemy import text
 from app import mp_connect
 from app.auth import hash_api_key
 from app.models import ApiKey, Tenant
-from app.mp_crypto import decrypt_token
+from app.mp_crypto import decrypt_token, encrypt_token
 
 TEST_FERNET_KEY = Fernet.generate_key().decode()
 FAKE_TOKEN_RESPONSE = {
@@ -183,3 +183,83 @@ async def test_missing_mp_config_blocks_start(client, db_session, monkeypatch):
 
     res = await client.get("/mp/connect/start", headers=headers)
     assert res.status_code == 503
+
+
+# ---------------------------------------------------------------------------
+# Estado y desconexión (Tarea 7)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_mp_not_connected(client, db_session):
+    tenant, headers = await _tenant_with_api_key(db_session)
+
+    res = await client.get("/tenants/me/mp", headers=headers)
+    assert res.status_code == 200
+    assert res.json() == {
+        "connected": False,
+        "mp_user_id": None,
+        "mp_alias": None,
+        "mp_token_expires_at": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_get_mp_connected_shows_metadata_without_tokens(
+    client, db_session, monkeypatch
+):
+    """El estado expone user_id/alias/expiración, nunca los tokens."""
+    tenant, headers = await _tenant_with_api_key(db_session)
+    tenant.mp_user_id = "1234567890"
+    tenant.mp_alias = "negocio.demo"
+    tenant.mp_access_token_enc = encrypt_token("APP_USR-access-del-vendedor")
+    tenant.mp_refresh_token_enc = encrypt_token("TG-refresh-del-vendedor")
+    db_session.add(tenant)
+    await db_session.commit()
+
+    res = await client.get("/tenants/me/mp", headers=headers)
+    assert res.status_code == 200
+    body = res.json()
+    assert body["connected"] is True
+    assert body["mp_user_id"] == "1234567890"
+    assert body["mp_alias"] == "negocio.demo"
+    # Garantía: los tokens no viajan en la respuesta, ni cifrados
+    body_str = str(body).lower()
+    assert "access" not in body_str and "refresh" not in body_str
+
+
+@pytest.mark.asyncio
+async def test_delete_mp_clears_connection(client, db_session):
+    tenant, headers = await _tenant_with_api_key(db_session)
+    tenant.mp_user_id = "99999"
+    tenant.mp_alias = "demo.bye"
+    tenant.mp_access_token_enc = encrypt_token("APP_USR-token-a-borrar")
+    db_session.add(tenant)
+    await db_session.commit()
+
+    res = await client.delete("/tenants/me/mp", headers=headers)
+    assert res.status_code == 200
+    assert res.json()["disconnected"] is True
+
+    await db_session.refresh(tenant)
+    assert tenant.mp_access_token_enc is None
+    assert tenant.mp_refresh_token_enc is None
+    assert tenant.mp_user_id is None
+    assert tenant.mp_alias is None
+
+    follow_up = await client.get("/tenants/me/mp", headers=headers)
+    assert follow_up.json()["connected"] is False
+
+
+@pytest.mark.asyncio
+async def test_delete_mp_is_idempotent_when_never_connected(client, db_session):
+    tenant, headers = await _tenant_with_api_key(db_session)
+    # Nunca conectó, pero el DELETE no falla
+    res = await client.delete("/tenants/me/mp", headers=headers)
+    assert res.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_get_and_delete_require_api_key(client):
+    assert (await client.get("/tenants/me/mp")).status_code == 401
+    assert (await client.delete("/tenants/me/mp")).status_code == 401

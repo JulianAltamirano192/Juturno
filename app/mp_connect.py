@@ -347,3 +347,53 @@ async def mp_connect_callback(
             else None
         ),
     }
+
+
+# ─────────────────────────────────────────────────────────────────
+# Estado y desconexión (Tarea 7)
+# ─────────────────────────────────────────────────────────────────
+
+
+@router.get("/tenants/me/mp")
+async def get_my_mp_connection(
+    current_tenant: Tenant = Depends(get_current_tenant),
+):
+    """
+    Estado de la cuenta MP del tenant autenticado. Solo expone datos de
+    lectura — nunca access_token ni refresh_token, ni siquiera cifrados.
+    """
+    connected = current_tenant.mp_access_token_enc is not None
+    return {
+        "connected": connected,
+        "mp_user_id": current_tenant.mp_user_id if connected else None,
+        "mp_alias": current_tenant.mp_alias if connected else None,
+        "mp_token_expires_at": (
+            current_tenant.mp_token_expires_at.isoformat()
+            if connected and current_tenant.mp_token_expires_at
+            else None
+        ),
+    }
+
+
+@router.delete("/tenants/me/mp")
+async def disconnect_my_mp_connection(
+    current_tenant: Tenant = Depends(get_current_tenant),
+    session: AsyncSession = Depends(get_db),
+):
+    """
+    Desconecta la cuenta MP del tenant: borra credenciales y metadata.
+    Es idempotente (borrar dos veces no falla).
+
+    Tras desconectarse, la regla D-012 le bloquea el cobro en producción
+    hasta que vuelva a conectarse por OAuth.
+    """
+    current_tenant.mp_user_id = None
+    current_tenant.mp_alias = None
+    current_tenant.mp_public_key = None
+    current_tenant.mp_access_token_enc = None
+    current_tenant.mp_refresh_token_enc = None
+    current_tenant.mp_token_expires_at = None
+    session.add(current_tenant)
+    await session.commit()
+
+    return {"disconnected": True}
