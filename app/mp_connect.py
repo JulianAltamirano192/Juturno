@@ -172,6 +172,68 @@ def resolve_mp_access_token(tenant: Tenant) -> Optional[str]:
 
 
 # ─────────────────────────────────────────────────────────────────
+# Renovación de tokens OAuth (Tarea 6)
+# ─────────────────────────────────────────────────────────────────
+
+# MP renueva con anticipación: si quedan menos de estos días para el
+# vencimiento (~180 días de vida), el job pide un access_token nuevo.
+REFRESH_AHEAD_DAYS = 30
+
+
+async def refresh_tenant_mp_token(session: AsyncSession, tenant: Tenant) -> bool:
+    """
+    Renueva el access_token OAuth del tenant con su refresh_token.
+    Devuelve True si el tenant quedó con token nuevo persistido.
+
+    MP ROTA el par completo: access_token Y refresh_token — ambos se
+    reemplazan cifrados y se recalcula mp_token_expires_at.
+
+    Fallas NO lanzan excepción: devuelve False (MP rechazó el refresh,
+    p.ej. el dueño revocó el acceso). La reconexión es manual.
+    """
+    if not tenant.mp_refresh_token_enc:
+        return False
+
+    body = {
+        "client_id": settings.MP_MARKETPLACE_CLIENT_ID,
+        "client_secret": settings.MP_MARKETPLACE_CLIENT_SECRET,
+        "grant_type": "refresh_token",
+        "refresh_token": decrypt_token(tenant.mp_refresh_token_enc),
+        "test_token": "true" if settings.MP_SANDBOX else "false",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(_MP_TOKEN_URL, json=body)
+    except httpx.TimeoutException:
+        return False
+
+    if not resp.is_success:
+        return False
+
+    data = resp.json()
+    new_access = data.get("access_token")
+    new_refresh = data.get("refresh_token")
+    if not new_access:
+        return False
+
+    tenant.mp_access_token_enc = encrypt_token(new_access)
+    if new_refresh:
+        # El refresh token viejo queda inválido ante MP una vez usado
+        tenant.mp_refresh_token_enc = encrypt_token(new_refresh)
+
+    expires_in = data.get("expires_in")
+    if expires_in:
+        tenant.mp_token_expires_at = datetime.now(timezone.utc) + timedelta(
+            seconds=int(expires_in)
+        )
+
+    session.add(tenant)
+    await session.commit()
+    return True
+
+
+# ─────────────────────────────────────────────────────────────────
 # Endpoints
 # ─────────────────────────────────────────────────────────────────
 

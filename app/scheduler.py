@@ -5,6 +5,7 @@ import redis.asyncio as redis
 from sqlalchemy import select, and_
 
 from app.models import Booking, Tenant, NotificationOutbox
+from app.mp_connect import refresh_tenant_mp_token, REFRESH_AHEAD_DAYS
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -123,6 +124,66 @@ async def process_deposit_expiration(async_session_maker):
                 logger.info(
                     f"Se expiraron {expired_count} reservas por seña no pagada."
                 )
+    finally:
+        if await redis_client.get(lock_key) == lock_value:
+            await redis_client.delete(lock_key)
+
+
+async def process_mp_token_refresh(async_session_maker):
+    """
+    Job diario que renueva los access_token OAuth de Mercado Pago de los
+    tenants cuyo token vence en menos de REFRESH_AHEAD_DAYS días. MP los
+    emite con vida de ~180 días; con renovación proactiva el dueño del
+    negocio no tiene que reconectar su cuenta manualmente.
+
+    Mismo patrón de lock distribuido en Redis que los demás jobs.
+    """
+    lock_key = "mp-token-refresh-job-lock"
+    lock_value = uuid4().hex
+
+    lock_acquired = await redis_client.set(lock_key, lock_value, nx=True, ex=30)
+    if not lock_acquired:
+        logger.debug(
+            "Lock de refresh de tokens MP ocupado por otra instancia. Omitiendo."
+        )
+        return
+
+    try:
+        # Solo tenants con refresh token y vencimiento dentro de la ventana.
+        # Se recolectan solo IDs: cada renovación usa su propia sesión
+        # (refresh_tenant_mp_token commitea, y el commit expiraría los demás
+        # objetos si compartiéramos sesión entre tenants).
+        threshold = datetime.now(timezone.utc) + timedelta(days=REFRESH_AHEAD_DAYS)
+        async with async_session_maker() as session:
+            stmt = select(Tenant.id).where(
+                and_(
+                    Tenant.mp_refresh_token_enc.is_not(None),
+                    Tenant.mp_token_expires_at.is_not(None),
+                    Tenant.mp_token_expires_at <= threshold,
+                )
+            )
+            tenant_ids = (await session.execute(stmt)).scalars().all()
+
+        if not tenant_ids:
+            return
+
+        refreshed = 0
+        failed = 0
+        for tenant_id in tenant_ids:
+            async with async_session_maker() as session:
+                tenant = await session.get(Tenant, tenant_id)
+                if tenant is None:
+                    continue
+                ok = await refresh_tenant_mp_token(session, tenant)
+                if ok:
+                    refreshed += 1
+                else:
+                    failed += 1
+
+        logger.info(
+            f"Refresh de tokens MP: {refreshed} renovados, {failed} fallidos "
+            "(reconexión manual)."
+        )
     finally:
         if await redis_client.get(lock_key) == lock_value:
             await redis_client.delete(lock_key)

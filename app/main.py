@@ -25,7 +25,11 @@ import redis.asyncio as aioredis
 from app.database import async_session_maker, get_db
 from app.models import Tenant, Service, Staff, Booking, Payment
 from app.services import calculate_available_slots
-from app.scheduler import process_reminders, process_deposit_expiration
+from app.scheduler import (
+    process_reminders,
+    process_deposit_expiration,
+    process_mp_token_refresh,
+)
 from app.outbox_worker import process_outbox
 from app.mp_webhooks import router as mp_router, create_mp_preference
 from app.mp_connect import (
@@ -95,6 +99,14 @@ async def lifespan(app: FastAPI):
         minutes=1,
         args=[async_session_maker],
         id="deposit_expiration_job",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        process_mp_token_refresh,
+        "interval",
+        minutes=1440,
+        args=[async_session_maker],
+        id="mp_token_refresh_job",
         replace_existing=True,
     )
     scheduler.start()
