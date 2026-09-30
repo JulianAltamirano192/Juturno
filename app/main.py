@@ -1409,6 +1409,8 @@ async def panel_services_toggle(
     return RedirectResponse(
         url="/panel/services", status_code=status.HTTP_303_SEE_OTHER
     )
+
+
 # --- PANEL STAFF ---
 
 
@@ -1496,9 +1498,7 @@ async def panel_staff_new_submit(
     )
     session.add(new_staff)
     await session.commit()
-    return RedirectResponse(
-        url="/panel/staff", status_code=status.HTTP_303_SEE_OTHER
-    )
+    return RedirectResponse(url="/panel/staff", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @app.get("/panel/staff/{staff_id}/edit", response_class=HTMLResponse)
@@ -1571,9 +1571,7 @@ async def panel_staff_edit_submit(
     staff.name = data["name"]
     session.add(staff)
     await session.commit()
-    return RedirectResponse(
-        url="/panel/staff", status_code=status.HTTP_303_SEE_OTHER
-    )
+    return RedirectResponse(url="/panel/staff", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @app.post("/panel/staff/{staff_id}/toggle", response_class=HTMLResponse)
@@ -1591,9 +1589,7 @@ async def panel_staff_toggle(
     staff.is_active = not staff.is_active
     session.add(staff)
     await session.commit()
-    return RedirectResponse(
-        url="/panel/staff", status_code=status.HTTP_303_SEE_OTHER
-    )
+    return RedirectResponse(url="/panel/staff", status_code=status.HTTP_303_SEE_OTHER)
 
 
 # --- PANEL BUSINESS HOURS (horarios del negocio) ---
@@ -1601,7 +1597,7 @@ async def panel_staff_toggle(
 
 def _parse_business_hours_form(form: dict) -> tuple[dict, dict]:
     """Parsea y valida el formulario de horarios de atención.
-    
+
     Returns (data, errors). Si errors está vacío, data es usable para DB.
     """
     errors: dict = {}
@@ -1663,7 +1659,15 @@ async def panel_business_hours_list(
     )
     business_hours = (await session.execute(stmt)).scalars().all()
 
-    day_names = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
+    day_names = [
+        "Lunes",
+        "Martes",
+        "Miércoles",
+        "Jueves",
+        "Viernes",
+        "Sábado",
+        "Domingo",
+    ]
 
     response = templates.TemplateResponse(
         request,
@@ -1724,7 +1728,10 @@ async def panel_business_hours_new_submit(
         if data.get("start_time") and data.get("end_time"):
             for existing_bh in existing:
                 # Verificar solapamiento: [start1, end1) ∩ [start2, end2) ≠ ∅
-                if not (data["end_time"] <= existing_bh.start_time or data["start_time"] >= existing_bh.end_time):
+                if not (
+                    data["end_time"] <= existing_bh.start_time
+                    or data["start_time"] >= existing_bh.end_time
+                ):
                     errors["overlap"] = (
                         f"Este horario se solapa con uno existente "
                         f"({existing_bh.start_time.strftime('%H:%M')}–{existing_bh.end_time.strftime('%H:%M')})."
@@ -1842,7 +1849,10 @@ async def panel_business_hours_edit_submit(
         )
         existing = (await session.execute(stmt)).scalars().all()
         for existing_bh in existing:
-            if not (data["end_time"] <= existing_bh.start_time or data["start_time"] >= existing_bh.end_time):
+            if not (
+                data["end_time"] <= existing_bh.start_time
+                or data["start_time"] >= existing_bh.end_time
+            ):
                 errors["overlap"] = (
                     f"Este horario se solapa con uno existente "
                     f"({existing_bh.start_time.strftime('%H:%M')}–{existing_bh.end_time.strftime('%H:%M')})."
@@ -1914,3 +1924,127 @@ async def panel_business_hours_delete(
         url="/panel/horarios", status_code=status.HTTP_303_SEE_OTHER
     )
 
+
+# ---------------------------------------------------------------------------
+# Panel: Agenda (vista de turnos por día)
+# ---------------------------------------------------------------------------
+
+_AGENDA_STATUS_LABELS = {
+    "pending": "Pendiente de pago",
+    "confirmed": "Confirmado",
+    "expired": "Expirado",
+    "cancelled": "Cancelado",
+    "no_show": "No se presentó",
+}
+
+
+def _format_agenda_day_label(d: date) -> str:
+    """Ej: 'lunes 29 de septiembre de 2026'."""
+    weekday_names = [
+        "lunes",
+        "martes",
+        "miércoles",
+        "jueves",
+        "viernes",
+        "sábado",
+        "domingo",
+    ]
+    month_names = [
+        "enero",
+        "febrero",
+        "marzo",
+        "abril",
+        "mayo",
+        "junio",
+        "julio",
+        "agosto",
+        "septiembre",
+        "octubre",
+        "noviembre",
+        "diciembre",
+    ]
+    return f"{weekday_names[d.weekday()]} {d.day} de {month_names[d.month - 1]} de {d.year}"
+
+
+@app.get("/panel/agenda", response_class=HTMLResponse)
+async def panel_agenda(
+    request: Request,
+    day: Annotated[Optional[str], Query()] = None,
+    tenant: Tenant = Depends(get_current_tenant_from_session),
+    session: AsyncSession = Depends(get_db),
+):
+    """
+    Vista de agenda por día: todos los turnos del tenant que tocan el día
+    dado, ordenados por horario de inicio. Las horas se muestran en la
+    zona horaria del tenant (Booking.start_time está en UTC en la DB).
+
+    El filtro es por solapamiento (start < fin del día AND end > inicio
+    del día) — el mismo patrón que usan los endpoints de slots — para que
+    un turno que empieza 23:30 del día anterior y termina 00:30 de hoy
+    aparezca también en la vista de hoy.
+    """
+    tenant_tz = ZoneInfo(
+        tenant.timezone if tenant.timezone else "America/Argentina/Buenos_Aires"
+    )
+    today_local = datetime.now(tenant_tz).date()
+
+    target_day = today_local
+    if day:
+        try:
+            target_day = date.fromisoformat(day)
+        except ValueError:
+            # ?day= inválido o mal formateado → cae a hoy en lugar de 422
+            target_day = today_local
+
+    # Rango del día en el timezone del tenant → compara contra los
+    # timestamptz (UTC) de la DB sin errores de conversión.
+    day_start = datetime.combine(target_day, time(0, 0), tzinfo=tenant_tz)
+    day_end = day_start + timedelta(days=1)
+
+    stmt = (
+        select(Booking, Service)
+        .join(Service, Booking.service_id == Service.id)
+        .where(
+            # Solapamiento con el día mostrado: incluye turnos que
+            # empiezan el día anterior pero llegan hasta hoy.
+            and_(
+                Booking.tenant_id == tenant.id,
+                Booking.start_time < day_end,
+                Booking.end_time > day_start,
+            )
+        )
+        .order_by(Booking.start_time)
+    )
+    rows = (await session.execute(stmt)).all()
+
+    agenda_items = [
+        {
+            "booking_id": b.id,
+            "client_name": b.client_name,
+            "client_phone": b.client_phone,
+            "service_name": s.name,
+            "start_local": b.start_time.astimezone(tenant_tz).strftime("%H:%M"),
+            "end_local": b.end_time.astimezone(tenant_tz).strftime("%H:%M"),
+            "status": b.status,
+            "status_label": _AGENDA_STATUS_LABELS.get(b.status, b.status),
+        }
+        for b, s in rows
+    ]
+
+    csrf_token = generate_csrf_token()
+    response = templates.TemplateResponse(
+        request,
+        "agenda.html",
+        {
+            "tenant": tenant,
+            "csrf_token": csrf_token,
+            "target_day": target_day,
+            "day_label": _format_agenda_day_label(target_day),
+            "prev_day": (target_day - timedelta(days=1)).isoformat(),
+            "next_day": (target_day + timedelta(days=1)).isoformat(),
+            "is_today": target_day == today_local,
+            "agenda_items": agenda_items,
+        },
+    )
+    set_csrf_cookie(response, csrf_token)
+    return response

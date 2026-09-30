@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+
+{% block title %}Agenda - {{ tenant.name }}{% endblock %}
+
+{% block dash_content %}
+<style>
+  .agenda-nav{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:20px}
+  .agenda-nav a{padding:8px 14px;border:1px solid var(--border);border-radius:8px;font-size:.85rem;font-weight:600;color:var(--text);text-decoration:none;white-space:nowrap}
+  .agenda-nav a:hover{background:#f8fafc}
+  .agenda-date{font-size:1.05rem;font-weight:800;text-align:center;flex:1;text-transform:capitalize}
+  .btn-today{background:var(--primary-bg);color:var(--primary);border-color:transparent!important}
+  table{width:100%;border-collapse:collapse;font-size:.92rem}
+  th{text-align:left;padding:10px 12px;font-size:.78rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;border-bottom:2px solid var(--border)}
+  td{padding:12px;border-bottom:1px solid var(--border);vertical-align:middle}
+  tr:last-child td{border-bottom:none}
+  .time-cell{font-family:monospace;font-size:.9rem;white-space:nowrap}
+  .client-cell strong{display:block}
+  .client-cell small{color:var(--muted);font-size:.8rem}
+  .badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:.75rem;font-weight:700;white-space:nowrap}
+  .badge-confirmed{background:var(--ok-bg);color:var(--ok)}
+  .badge-pending{background:#fffbeb;color:#b45309}
+  .badge-expired{background:#f1f5f9;color:var(--muted)}
+  .badge-cancelled{background:var(--danger-bg);color:var(--danger)}
+  .badge-no_show{background:#fef2f2;color:#b91c1c}
+  .empty-state{text-align:center;padding:48px 0;color:var(--muted)}
+</style>
+
+<div class="card">
+  <div class="agenda-nav">
+    <a href="/panel/agenda?day={{ prev_day }}">← Anterior</a>
+    <span class="agenda-date">{{ day_label }}</span>
+    <div style="display:flex;gap:8px">
+      {% if not is_today %}
+      <a href="/panel/agenda" class="btn-today">Hoy</a>
+      {% endif %}
+      <a href="/panel/agenda?day={{ next_day }}">Siguiente →</a>
+    </div>
+  </div>
+
+  {% if agenda_items %}
+  <table>
+    <thead>
+      <tr>
+        <th>Horario</th>
+        <th>Cliente</th>
+        <th>Servicio</th>
+        <th>Estado</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in agenda_items %}
+      <tr>
+        <td class="time-cell">{{ item.start_local }}–{{ item.end_local }}</td>
+        <td class="client-cell">
+          <strong>{{ item.client_name }}</strong>
+          <small>{{ item.client_phone }}</small>
+        </td>
+        <td>{{ item.service_name }}</td>
+        <td><span class="badge badge-{{ item.status }}">{{ item.status_label }}</span></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty-state">
+    <p>No hay turnos para este día.</p>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
