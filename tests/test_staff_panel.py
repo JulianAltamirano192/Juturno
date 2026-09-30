@@ -1,13 +1,12 @@
 """Tests de integración para el CRUD de personal del panel."""
+
 import pytest
 from httpx import AsyncClient, ASGITransport
-from decimal import Decimal
 
 from app.main import app
 from app.models import Tenant, Staff
 from app.session import create_session_token
 from app.csrf import generate_csrf_token
-from app.config import settings
 from tests.conftest import TestingSessionLocal
 
 
@@ -39,7 +38,9 @@ async def make_tenant_with_staff(session):
 
 @pytest.mark.asyncio
 async def test_staff_list_requires_session():
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.get("/panel/staff", follow_redirects=False)
     assert resp.status_code == 303
     assert "/login" in resp.headers["location"]
@@ -51,7 +52,9 @@ async def test_staff_list_with_valid_session():
         tenant, staff = await make_tenant_with_staff(session)
 
     cookie = make_session_cookie(tenant)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         client.cookies.set("juturno_session", cookie)
         resp = await client.get("/panel/staff")
     assert resp.status_code == 200
@@ -76,7 +79,9 @@ async def test_create_staff_valid():
     cookie = make_session_cookie(tenant)
     csrf = generate_csrf_token()
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         client.cookies.set("juturno_session", cookie)
         client.cookies.set("csrf_token", csrf)
         resp = await client.post(
@@ -93,6 +98,7 @@ async def test_create_staff_valid():
     # Verificar en DB
     async with TestingSessionLocal() as session:
         from sqlalchemy import select
+
         stmt = select(Staff).where(Staff.name == "María González")
         new_staff = (await session.execute(stmt)).scalar_one_or_none()
         assert new_staff is not None
@@ -117,7 +123,9 @@ async def test_create_staff_missing_name_shows_error():
     cookie = make_session_cookie(tenant)
     csrf = generate_csrf_token()
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         client.cookies.set("juturno_session", cookie)
         client.cookies.set("csrf_token", csrf)
         resp = await client.post(
@@ -139,7 +147,9 @@ async def test_edit_staff():
     cookie = make_session_cookie(tenant)
     csrf = generate_csrf_token()
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         client.cookies.set("juturno_session", cookie)
         client.cookies.set("csrf_token", csrf)
         resp = await client.post(
@@ -167,7 +177,9 @@ async def test_toggle_staff():
     cookie = make_session_cookie(tenant)
     csrf = generate_csrf_token()
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         client.cookies.set("juturno_session", cookie)
         client.cookies.set("csrf_token", csrf)
         resp = await client.post(
@@ -182,7 +194,9 @@ async def test_toggle_staff():
     assert toggled.is_active is False
 
     # Toggle back
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         client.cookies.set("juturno_session", cookie)
         client.cookies.set("csrf_token", csrf)
         resp = await client.post(
@@ -231,7 +245,9 @@ async def test_edit_staff_of_other_tenant_returns_404():
     cookie = make_session_cookie(tenant_a)
     csrf = generate_csrf_token()
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         client.cookies.set("juturno_session", cookie)
         client.cookies.set("csrf_token", csrf)
         resp = await client.post(

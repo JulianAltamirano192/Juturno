@@ -1,13 +1,13 @@
 """Tests de integración para el CRUD de horarios de atención del panel."""
+
 import pytest
 from httpx import AsyncClient, ASGITransport
 from datetime import time
 
 from app.main import app
-from app.models import Tenant, BusinessHours, Staff
+from app.models import Tenant, BusinessHours
 from app.session import create_session_token
 from app.csrf import generate_csrf_token
-from app.config import settings
 from tests.conftest import TestingSessionLocal
 
 
@@ -15,7 +15,9 @@ def make_session_cookie(tenant):
     return create_session_token(tenant.id, tenant.session_version)
 
 
-async def _tenant_with_business_hours(session, day_of_week=0, start="09:00", end="18:00"):
+async def _tenant_with_business_hours(
+    session, day_of_week=0, start="09:00", end="18:00"
+):
     tenant = Tenant(
         name=f"Biz BH {int(__import__('time').time() * 1000)}",
         slug=f"biz-bh-{int(__import__('time').time() * 1000)}",
@@ -41,6 +43,7 @@ async def _tenant_with_business_hours(session, day_of_week=0, start="09:00", end
 
 def make_session_cookie(tenant):
     from app.session import create_session_token
+
     return create_session_token(tenant.id, tenant.session_version)
 
 
@@ -51,7 +54,9 @@ def make_session_cookie(tenant):
 
 @pytest.mark.asyncio
 async def test_bh_list_requires_session():
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.get("/panel/horarios", follow_redirects=False)
     assert resp.status_code == 303
     assert "/login" in resp.headers["location"]
@@ -63,7 +68,9 @@ async def test_bh_list_with_valid_session():
         tenant, bh = await _tenant_with_business_hours(session)
 
     cookie = make_session_cookie(tenant)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         client.cookies.set("juturno_session", cookie)
         resp = await client.get("/panel/horarios")
     assert resp.status_code == 200
@@ -90,7 +97,9 @@ async def test_create_bh_valid():
     cookie = make_session_cookie(tenant)
     csrf = generate_csrf_token()
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         client.cookies.set("juturno_session", cookie)
         client.cookies.set("csrf_token", csrf)
         resp = await client.post(
@@ -109,6 +118,7 @@ async def test_create_bh_valid():
     # Verificar en DB
     async with TestingSessionLocal() as session:
         from sqlalchemy import select
+
         stmt = select(BusinessHours).where(BusinessHours.tenant_id == tenant.id)
         bh = (await session.execute(stmt)).scalar_one_or_none()
         assert bh is not None
@@ -135,7 +145,9 @@ async def test_create_bh_invalid_times_shows_error():
     cookie = make_session_cookie(tenant)
     csrf = generate_csrf_token()
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         client.cookies.set("juturno_session", cookie)
         client.cookies.set("csrf_token", csrf)
         # start_time >= end_time
@@ -169,7 +181,9 @@ async def test_create_bh_missing_fields_shows_error():
     cookie = make_session_cookie(tenant)
     csrf = generate_csrf_token()
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         client.cookies.set("juturno_session", cookie)
         client.cookies.set("csrf_token", csrf)
         resp = await client.post(
@@ -212,7 +226,9 @@ async def test_create_bh_overlap_same_day_rejected():
     cookie = make_session_cookie(tenant)
     csrf = generate_csrf_token()
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         client.cookies.set("juturno_session", cookie)
         client.cookies.set("csrf_token", csrf)
         # Intento crear 11:00-14:00 lunes (se solapa con 09:00-12:00)
@@ -256,7 +272,9 @@ async def test_create_bh_no_overlap_allowed():
     cookie = make_session_cookie(tenant)
     csrf = generate_csrf_token()
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         client.cookies.set("juturno_session", cookie)
         client.cookies.set("csrf_token", csrf)
         # 12:00-14:00 toca exactamente el final del existente -> permitido
@@ -282,7 +300,9 @@ async def test_edit_bh():
     cookie = make_session_cookie(tenant)
     csrf = generate_csrf_token()
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         client.cookies.set("juturno_session", cookie)
         client.cookies.set("csrf_token", csrf)
         resp = await client.post(
@@ -313,7 +333,9 @@ async def test_delete_bh():
     cookie = make_session_cookie(tenant)
     csrf = generate_csrf_token()
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         client.cookies.set("juturno_session", cookie)
         client.cookies.set("csrf_token", csrf)
         resp = await client.post(
@@ -363,7 +385,9 @@ async def test_edit_bh_of_other_tenant_returns_404():
     cookie = make_session_cookie(tenant_a)
     csrf = generate_csrf_token()
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         client.cookies.set("juturno_session", cookie)
         client.cookies.set("csrf_token", csrf)
         resp = await client.post(

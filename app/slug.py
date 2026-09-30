@@ -38,13 +38,13 @@ async def generate_unique_slug(
     suffix = 2
 
     while True:
-        query = select(Tenant.id).where(Tenant.slug == candidate)
+        query = select(Tenant).where(Tenant.slug == candidate)
         if exclude_tenant_id is not None:
             query = query.where(Tenant.id != exclude_tenant_id)
         result = await session.execute(query)
-        existing_id = result.scalar_one_or_none()
+        existing = result.scalar_one_or_none()
 
-        if existing_id is None:
+        if existing is None:
             return candidate
 
         candidate = f"{base_slug}-{suffix}"
