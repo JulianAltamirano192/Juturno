@@ -126,6 +126,7 @@ class Staff(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     tenant_id: int = Field(foreign_key="tenant.id", index=True, ondelete="CASCADE")
     name: str
+    is_active: bool = Field(default=True, index=True)
 
     tenant: Optional[Tenant] = Relationship(back_populates="staff_members")
     bookings: List["Booking"] = Relationship(back_populates="staff")

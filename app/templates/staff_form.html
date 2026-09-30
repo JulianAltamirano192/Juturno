@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+
+{% block title %}{% if staff %}Editar personal{% else %}Nuevo miembro{% endif %} - {{ tenant.name }}{% endblock %}
+
+{% block dash_content %}
+<style>
+  .back-link{display:inline-flex;align-items:center;gap:6px;color:var(--muted);font-size:.88rem;font-weight:600;text-decoration:none;margin-bottom:20px}
+  .back-link:hover{color:var(--text)}
+  .field-error{font-size:.78rem;color:var(--danger);margin-top:4px;font-weight:600}
+  input.has-error{border-color:var(--danger)}
+</style>
+
+<a href="/panel/staff" class="back-link">← Volver al personal</a>
+
+<div class="card">
+  <h1>{% if staff %}Editar miembro{% else %}Nuevo miembro{% endif %}</h1>
+
+  <form method="POST" action="{% if staff %}/panel/staff/{{ staff.id }}/edit{% else %}/panel/staff/new{% endif %}" style="margin-top:24px">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+    <div class="field">
+      <label for="name">Nombre</label>
+      <input type="text" id="name" name="name" value="{{ form.get('name', '') }}" placeholder="Ej: Juan Pérez" class="{% if errors.name %}has-error{% endif %}">
+      {% if errors.name %}<div class="field-error">{{ errors.name }}</div>{% endif %}
+    </div>
+
+    <button type="submit" class="btn-submit">{% if staff %}Guardar cambios{% else %}Crear miembro{% endif %}</button>
+  </form>
+</div>
+{% endblock %}

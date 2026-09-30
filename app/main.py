@@ -24,7 +24,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import redis.asyncio as aioredis
 
 from app.database import async_session_maker, get_db
-from app.models import Tenant, Service, Staff, Booking, Payment
+from app.models import Tenant, Service, Staff, Booking, Payment, BusinessHours
 from app.services import (
     calculate_available_slots,
     effective_deposit,
@@ -1409,3 +1409,508 @@ async def panel_services_toggle(
     return RedirectResponse(
         url="/panel/services", status_code=status.HTTP_303_SEE_OTHER
     )
+# --- PANEL STAFF ---
+
+
+@app.get("/panel/staff", response_class=HTMLResponse)
+async def panel_staff_list(
+    request: Request,
+    tenant: Tenant = Depends(get_current_tenant_from_session),
+    session: AsyncSession = Depends(get_db),
+):
+    csrf_token = generate_csrf_token()
+    stmt = select(Staff).where(Staff.tenant_id == tenant.id).order_by(Staff.id)
+    staff_members = (await session.execute(stmt)).scalars().all()
+    response = templates.TemplateResponse(
+        request,
+        "staff_list.html",
+        {
+            "tenant": tenant,
+            "csrf_token": csrf_token,
+            "staff_members": staff_members,
+        },
+    )
+    set_csrf_cookie(response, csrf_token)
+    return response
+
+
+@app.get("/panel/staff/new", response_class=HTMLResponse)
+async def panel_staff_new_form(
+    request: Request,
+    tenant: Tenant = Depends(get_current_tenant_from_session),
+):
+    csrf_token = generate_csrf_token()
+    response = templates.TemplateResponse(
+        request,
+        "staff_form.html",
+        {
+            "tenant": tenant,
+            "csrf_token": csrf_token,
+            "staff": None,
+            "form": {},
+            "errors": {},
+        },
+    )
+    set_csrf_cookie(response, csrf_token)
+    return response
+
+
+@app.post("/panel/staff/new", response_class=HTMLResponse)
+async def panel_staff_new_submit(
+    request: Request,
+    tenant: Tenant = Depends(get_current_tenant_from_session),
+    session: AsyncSession = Depends(get_db),
+):
+    await validate_csrf(request)
+    form = dict(await request.form())
+    errors = {}
+    data = {}
+
+    name = form.get("name", "").strip()
+    if not name:
+        errors["name"] = "El nombre es obligatorio."
+    else:
+        data["name"] = name
+
+    csrf_token = generate_csrf_token()
+
+    if errors:
+        response = templates.TemplateResponse(
+            request,
+            "staff_form.html",
+            {
+                "tenant": tenant,
+                "csrf_token": csrf_token,
+                "staff": None,
+                "form": form,
+                "errors": errors,
+            },
+        )
+        set_csrf_cookie(response, csrf_token)
+        return response
+
+    new_staff = Staff(
+        tenant_id=tenant.id,
+        name=data["name"],
+        is_active=True,
+    )
+    session.add(new_staff)
+    await session.commit()
+    return RedirectResponse(
+        url="/panel/staff", status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
+@app.get("/panel/staff/{staff_id}/edit", response_class=HTMLResponse)
+async def panel_staff_edit_form(
+    request: Request,
+    staff_id: int,
+    tenant: Tenant = Depends(get_current_tenant_from_session),
+    session: AsyncSession = Depends(get_db),
+):
+    staff = await session.get(Staff, staff_id)
+    if not staff or staff.tenant_id != tenant.id:
+        raise HTTPException(status_code=404, detail="Miembro no encontrado")
+
+    csrf_token = generate_csrf_token()
+    form = {"name": staff.name}
+    response = templates.TemplateResponse(
+        request,
+        "staff_form.html",
+        {
+            "tenant": tenant,
+            "csrf_token": csrf_token,
+            "staff": staff,
+            "form": form,
+            "errors": {},
+        },
+    )
+    set_csrf_cookie(response, csrf_token)
+    return response
+
+
+@app.post("/panel/staff/{staff_id}/edit", response_class=HTMLResponse)
+async def panel_staff_edit_submit(
+    request: Request,
+    staff_id: int,
+    tenant: Tenant = Depends(get_current_tenant_from_session),
+    session: AsyncSession = Depends(get_db),
+):
+    staff = await session.get(Staff, staff_id)
+    if not staff or staff.tenant_id != tenant.id:
+        raise HTTPException(status_code=404, detail="Miembro no encontrado")
+
+    await validate_csrf(request)
+    form = dict(await request.form())
+    errors = {}
+    data = {}
+
+    name = form.get("name", "").strip()
+    if not name:
+        errors["name"] = "El nombre es obligatorio."
+    else:
+        data["name"] = name
+
+    csrf_token = generate_csrf_token()
+
+    if errors:
+        response = templates.TemplateResponse(
+            request,
+            "staff_form.html",
+            {
+                "tenant": tenant,
+                "csrf_token": csrf_token,
+                "staff": staff,
+                "form": form,
+                "errors": errors,
+            },
+        )
+        set_csrf_cookie(response, csrf_token)
+        return response
+
+    staff.name = data["name"]
+    session.add(staff)
+    await session.commit()
+    return RedirectResponse(
+        url="/panel/staff", status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
+@app.post("/panel/staff/{staff_id}/toggle", response_class=HTMLResponse)
+async def panel_staff_toggle(
+    request: Request,
+    staff_id: int,
+    tenant: Tenant = Depends(get_current_tenant_from_session),
+    session: AsyncSession = Depends(get_db),
+):
+    staff = await session.get(Staff, staff_id)
+    if not staff or staff.tenant_id != tenant.id:
+        raise HTTPException(status_code=404, detail="Miembro no encontrado")
+
+    await validate_csrf(request)
+    staff.is_active = not staff.is_active
+    session.add(staff)
+    await session.commit()
+    return RedirectResponse(
+        url="/panel/staff", status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
+# --- PANEL BUSINESS HOURS (horarios del negocio) ---
+
+
+def _parse_business_hours_form(form: dict) -> tuple[dict, dict]:
+    """Parsea y valida el formulario de horarios de atención.
+    
+    Returns (data, errors). Si errors está vacío, data es usable para DB.
+    """
+    errors: dict = {}
+    data: dict = {}
+
+    # day_of_week
+    try:
+        dow = int(form.get("day_of_week", ""))
+        if not 0 <= dow <= 6:
+            raise ValueError
+        data["day_of_week"] = dow
+    except (ValueError, TypeError):
+        errors["day_of_week"] = "Seleccioná un día de la semana válido."
+
+    # start_time
+    start_raw = form.get("start_time", "").strip()
+    if not start_raw:
+        errors["start_time"] = "La hora de apertura es obligatoria."
+    else:
+        try:
+            data["start_time"] = time.fromisoformat(start_raw)
+        except ValueError:
+            errors["start_time"] = "Formato de hora inválido (use HH:MM)."
+
+    # end_time
+    end_raw = form.get("end_time", "").strip()
+    if not end_raw:
+        errors["end_time"] = "La hora de cierre es obligatoria."
+    else:
+        try:
+            data["end_time"] = time.fromisoformat(end_raw)
+        except ValueError:
+            errors["end_time"] = "Formato de hora inválido (use HH:MM)."
+
+    # Validación cruzada: start < end
+    if "start_time" in data and "end_time" in data:
+        if data["start_time"] >= data["end_time"]:
+            errors["order"] = "La hora de apertura debe ser anterior a la de cierre."
+
+    return data, errors
+
+
+@app.get("/panel/horarios", response_class=HTMLResponse)
+async def panel_business_hours_list(
+    request: Request,
+    tenant: Tenant = Depends(get_current_tenant_from_session),
+    session: AsyncSession = Depends(get_db),
+):
+    csrf_token = generate_csrf_token()
+    stmt = (
+        select(BusinessHours)
+        .where(
+            and_(
+                BusinessHours.tenant_id == tenant.id,
+                BusinessHours.staff_id.is_(None),
+            )
+        )
+        .order_by(BusinessHours.day_of_week, BusinessHours.start_time)
+    )
+    business_hours = (await session.execute(stmt)).scalars().all()
+
+    day_names = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
+
+    response = templates.TemplateResponse(
+        request,
+        "business_hours_list.html",
+        {
+            "tenant": tenant,
+            "csrf_token": csrf_token,
+            "business_hours": business_hours,
+            "day_names": day_names,
+        },
+    )
+    set_csrf_cookie(response, csrf_token)
+    return response
+
+
+@app.get("/panel/horarios/new", response_class=HTMLResponse)
+async def panel_business_hours_new_form(
+    request: Request,
+    tenant: Tenant = Depends(get_current_tenant_from_session),
+):
+    csrf_token = generate_csrf_token()
+    response = templates.TemplateResponse(
+        request,
+        "business_hours_form.html",
+        {
+            "tenant": tenant,
+            "csrf_token": csrf_token,
+            "bh": None,
+            "form": {},
+            "errors": {},
+            "form_errors": [],
+        },
+    )
+    set_csrf_cookie(response, csrf_token)
+    return response
+
+
+@app.post("/panel/horarios/new", response_class=HTMLResponse)
+async def panel_business_hours_new_submit(
+    request: Request,
+    tenant: Tenant = Depends(get_current_tenant_from_session),
+    session: AsyncSession = Depends(get_db),
+):
+    await validate_csrf(request)
+    form = dict(await request.form())
+    data, errors = _parse_business_hours_form(form)
+
+    # Verificar solapamiento con horarios existentes del mismo día
+    if "day_of_week" in data:
+        stmt = select(BusinessHours).where(
+            and_(
+                BusinessHours.tenant_id == tenant.id,
+                BusinessHours.staff_id.is_(None),
+                BusinessHours.day_of_week == data["day_of_week"],
+            )
+        )
+        existing = (await session.execute(stmt)).scalars().all()
+        if data.get("start_time") and data.get("end_time"):
+            for existing_bh in existing:
+                # Verificar solapamiento: [start1, end1) ∩ [start2, end2) ≠ ∅
+                if not (data["end_time"] <= existing_bh.start_time or data["start_time"] >= existing_bh.end_time):
+                    errors["overlap"] = (
+                        f"Este horario se solapa con uno existente "
+                        f"({existing_bh.start_time.strftime('%H:%M')}–{existing_bh.end_time.strftime('%H:%M')})."
+                    )
+                    break
+
+    csrf_token = generate_csrf_token()
+
+    if errors:
+        response = templates.TemplateResponse(
+            request,
+            "business_hours_form.html",
+            {
+                "tenant": tenant,
+                "csrf_token": csrf_token,
+                "bh": None,
+                "form": form,
+                "errors": errors,
+                "form_errors": list(errors.values()),
+            },
+        )
+        set_csrf_cookie(response, csrf_token)
+        return response
+
+    new_bh = BusinessHours(
+        tenant_id=tenant.id,
+        staff_id=None,
+        day_of_week=data["day_of_week"],
+        start_time=data["start_time"],
+        end_time=data["end_time"],
+    )
+    session.add(new_bh)
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        errors["overlap"] = "Ya existe un horario para este día."
+        response = templates.TemplateResponse(
+            request,
+            "business_hours_form.html",
+            {
+                "tenant": tenant,
+                "csrf_token": csrf_token,
+                "bh": None,
+                "form": form,
+                "errors": errors,
+                "form_errors": list(errors.values()),
+            },
+        )
+        set_csrf_cookie(response, csrf_token)
+        return response
+
+    return RedirectResponse(
+        url="/panel/horarios", status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
+@app.get("/panel/horarios/{bh_id}/edit", response_class=HTMLResponse)
+async def panel_business_hours_edit_form(
+    request: Request,
+    bh_id: int,
+    tenant: Tenant = Depends(get_current_tenant_from_session),
+    session: AsyncSession = Depends(get_db),
+):
+    bh = await session.get(BusinessHours, bh_id)
+    if not bh or bh.tenant_id != tenant.id or bh.staff_id is not None:
+        raise HTTPException(status_code=404, detail="Horario no encontrado")
+
+    csrf_token = generate_csrf_token()
+    form = {
+        "day_of_week": str(bh.day_of_week),
+        "start_time": bh.start_time.strftime("%H:%M"),
+        "end_time": bh.end_time.strftime("%H:%M"),
+    }
+    response = templates.TemplateResponse(
+        request,
+        "business_hours_form.html",
+        {
+            "tenant": tenant,
+            "csrf_token": csrf_token,
+            "bh": bh,
+            "form": form,
+            "errors": {},
+            "form_errors": [],
+        },
+    )
+    set_csrf_cookie(response, csrf_token)
+    return response
+
+
+@app.post("/panel/horarios/{bh_id}/edit", response_class=HTMLResponse)
+async def panel_business_hours_edit_submit(
+    request: Request,
+    bh_id: int,
+    tenant: Tenant = Depends(get_current_tenant_from_session),
+    session: AsyncSession = Depends(get_db),
+):
+    bh = await session.get(BusinessHours, bh_id)
+    if not bh or bh.tenant_id != tenant.id or bh.staff_id is not None:
+        raise HTTPException(status_code=404, detail="Horario no encontrado")
+
+    await validate_csrf(request)
+    form = dict(await request.form())
+    data, errors = _parse_business_hours_form(form)
+
+    # Verificar solapamiento con otros horarios del mismo día (excluyendo el actual)
+    if "day_of_week" in data and "start_time" in data and "end_time" in data:
+        stmt = select(BusinessHours).where(
+            and_(
+                BusinessHours.tenant_id == tenant.id,
+                BusinessHours.staff_id.is_(None),
+                BusinessHours.day_of_week == data["day_of_week"],
+                BusinessHours.id != bh.id,
+            )
+        )
+        existing = (await session.execute(stmt)).scalars().all()
+        for existing_bh in existing:
+            if not (data["end_time"] <= existing_bh.start_time or data["start_time"] >= existing_bh.end_time):
+                errors["overlap"] = (
+                    f"Este horario se solapa con uno existente "
+                    f"({existing_bh.start_time.strftime('%H:%M')}–{existing_bh.end_time.strftime('%H:%M')})."
+                )
+                break
+
+    csrf_token = generate_csrf_token()
+
+    if errors:
+        response = templates.TemplateResponse(
+            request,
+            "business_hours_form.html",
+            {
+                "tenant": tenant,
+                "csrf_token": csrf_token,
+                "bh": bh,
+                "form": form,
+                "errors": errors,
+                "form_errors": list(errors.values()),
+            },
+        )
+        set_csrf_cookie(response, csrf_token)
+        return response
+
+    bh.day_of_week = data["day_of_week"]
+    bh.start_time = data["start_time"]
+    bh.end_time = data["end_time"]
+    session.add(bh)
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        errors["overlap"] = "Ya existe un horario para este día."
+        response = templates.TemplateResponse(
+            request,
+            "business_hours_form.html",
+            {
+                "tenant": tenant,
+                "csrf_token": csrf_token,
+                "bh": bh,
+                "form": form,
+                "errors": errors,
+                "form_errors": list(errors.values()),
+            },
+        )
+        set_csrf_cookie(response, csrf_token)
+        return response
+
+    return RedirectResponse(
+        url="/panel/horarios", status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
+@app.post("/panel/horarios/{bh_id}/delete", response_class=HTMLResponse)
+async def panel_business_hours_delete(
+    request: Request,
+    bh_id: int,
+    tenant: Tenant = Depends(get_current_tenant_from_session),
+    session: AsyncSession = Depends(get_db),
+):
+    bh = await session.get(BusinessHours, bh_id)
+    if not bh or bh.tenant_id != tenant.id or bh.staff_id is not None:
+        raise HTTPException(status_code=404, detail="Horario no encontrado")
+
+    await validate_csrf(request)
+    await session.delete(bh)
+    await session.commit()
+    return RedirectResponse(
+        url="/panel/horarios", status_code=status.HTTP_303_SEE_OTHER
+    )
+

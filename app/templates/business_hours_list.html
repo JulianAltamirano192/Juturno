@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+
+{% block title %}Horarios de atención - {{ tenant.name }}{% endblock %}
+
+{% block dash_content %}
+<style>
+  .section-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px}
+  .btn-primary{background:var(--primary);color:#fff;border:none;border-radius:10px;padding:10px 18px;font-size:.9rem;font-weight:700;cursor:pointer;text-decoration:none;font-family:inherit;display:inline-block}
+  .btn-primary:hover{background:var(--primary-dark)}
+  table{width:100%;border-collapse:collapse;font-size:.92rem}
+  th{text-align:left;padding:10px 12px;font-size:.78rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;border-bottom:2px solid var(--border)}
+  td{padding:12px;border-bottom:1px solid var(--border);vertical-align:middle}
+  tr:last-child td{border-bottom:none}
+  .badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:.75rem;font-weight:700}
+  .badge-active{background:var(--ok-bg);color:var(--ok)}
+  .actions{display:flex;gap:8px;flex-wrap:wrap}
+  .btn-sm{padding:6px 12px;border-radius:8px;font-size:.8rem;font-weight:600;cursor:pointer;text-decoration:none;display:inline-block;font-family:inherit}
+  .btn-outline{background:none;border:1px solid var(--border);color:var(--text)}
+  .btn-outline:hover{background:#f8fafc}
+  .btn-danger{background:none;border:1px solid var(--danger);color:var(--danger)}
+  .btn-danger:hover{background:var(--danger-bg);color:var(--danger)}
+  .empty-state{text-align:center;padding:48px 0;color:var(--muted)}
+  .day-badge{display:inline-block;padding:2px 8px;border-radius:6px;font-size:.7rem;font-weight:700;background:var(--primary-bg);color:var(--primary);font-weight:700}
+  .time-range{font-family:monospace;font-size:.85rem;color:var(--text)}
+</style>
+
+<div class="card">
+  <div class="section-header">
+    <h1>Horarios de atención del negocio</h1>
+    <a href="/panel/horarios/new" class="btn-primary">+ Agregar horario</a>
+  </div>
+
+  <p style="color:var(--muted);font-size:.85rem;margin-bottom:16px">
+    Estos horarios definen la disponibilidad general del negocio.
+    <strong>Si no hay horarios configurados</strong>, se usa el fallback 09:00–18:00.
+    Si hay horarios cargados pero un día no tiene fila, ese día está <strong>cerrado</strong>.
+  </p>
+
+  {% if business_hours %}
+  <table>
+    <thead>
+      <tr>
+        <th>Día</th>
+        <th>Apertura</th>
+        <th>Cierre</th>
+        <th>Acciones</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for bh in business_hours %}
+      <tr>
+        <td><span class="day-badge">{{ day_names[bh.day_of_week] }}</span></td>
+        <td class="time-range">{{ bh.start_time.strftime('%H:%M') }}</td>
+        <td class="time-range">{{ bh.end_time.strftime('%H:%M') }}</td>
+        <td>
+          <div class="actions">
+            <a href="/panel/horarios/{{ bh.id }}/edit" class="btn-sm btn-outline">Editar</a>
+            <form method="POST" action="/panel/horarios/{{ bh.id }}/delete" style="margin:0">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <button type="submit" class="btn-sm btn-danger">Eliminar</button>
+            </form>
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty-state">
+    <p>No hay horarios configurados. <a href="/panel/horarios/new" style="color:var(--primary);font-weight:600">Agregá el primero.</a></p>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
