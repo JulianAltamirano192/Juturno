@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Annotated, Optional
 
 import redis.asyncio as redis
-from fastapi import Depends, Header, HTTPException
+from fastapi import Depends, Header, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -109,5 +109,46 @@ async def get_current_tenant(
         await session.commit()
 
     await _cache_tenant_id(key_hash, tenant.id)
+
+    return tenant
+
+
+class RedirectToLoginException(Exception):
+    """Excepción para forzar redirección a /login cuando no hay sesión activa en el panel."""
+
+    def __init__(self, next_url: str = "/dashboard"):
+        self.next_url = next_url
+
+
+async def get_current_tenant_from_session(
+    request: Request,
+    session: AsyncSession = Depends(get_db),
+) -> Tenant:
+    """
+    Dependencia de FastAPI para páginas HTML del panel del negocio.
+    Valida la cookie de sesión firmada `juturno_session` y verifica
+    que la versión de sesión coincida con la del Tenant en base de datos.
+    Si no es válida o el tenant no existe, lanza RedirectToLoginException.
+    """
+    from app.session import SESSION_COOKIE_NAME, parse_session_token
+
+    cookie_value = request.cookies.get(SESSION_COOKIE_NAME)
+    next_url = str(request.url.path)
+    if request.url.query:
+        next_url += f"?{request.url.query}"
+
+    if not cookie_value:
+        raise RedirectToLoginException(next_url=next_url)
+
+    parsed = parse_session_token(cookie_value)
+    if not parsed:
+        raise RedirectToLoginException(next_url=next_url)
+
+    tenant_id, session_version = parsed
+
+    tenant = await session.get(Tenant, tenant_id)
+    # Caso borde: cookie válida pero tenant ya no existe o session_version cambió
+    if tenant is None or tenant.session_version != session_version:
+        raise RedirectToLoginException(next_url=next_url)
 
     return tenant

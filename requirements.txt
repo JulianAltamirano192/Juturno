@@ -13,3 +13,4 @@ cryptography>=42.0.0
 pytest>=8.0.0
 pytest-asyncio>=0.23.5
 sentry-sdk[fastapi]==2.69.2
+python-multipart>=0.0.9

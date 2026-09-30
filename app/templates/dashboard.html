@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+
+{% block title %}Panel de control - {{ tenant.name }}{% endblock %}
+
+{% block dash_content %}
+<div class="card">
+  <h1>Bienvenido al panel de {{ tenant.name }}</h1>
+  <p>Identificador de reserva pública: <code>{{ tenant.slug }}</code></p>
+  <p>Correo de acceso: <code>{{ tenant.owner_email }}</code></p>
+</div>
+{% endblock %}

@@ -1,5 +1,6 @@
 # app/main.py
 from datetime import date, datetime, time, timedelta
+from decimal import Decimal
 from typing import Optional, List, Annotated
 from contextlib import asynccontextmanager
 from zoneinfo import ZoneInfo
@@ -11,9 +12,9 @@ from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
 from sentry_sdk.integrations.httpx import HttpxIntegration
 
-from fastapi import FastAPI, Depends, HTTPException, Query, Request
+from fastapi import FastAPI, Depends, HTTPException, Query, Request, Form, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.responses import JSONResponse, HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,7 +25,11 @@ import redis.asyncio as aioredis
 
 from app.database import async_session_maker, get_db
 from app.models import Tenant, Service, Staff, Booking, Payment
-from app.services import calculate_available_slots
+from app.services import (
+    calculate_available_slots,
+    effective_deposit,
+    resolve_day_windows,
+)
 from app.scheduler import (
     process_reminders,
     process_deposit_expiration,
@@ -41,7 +46,27 @@ from app.mp_crypto import MPTokenCryptoError
 from app.phone import InvalidPhoneError, normalize_whatsapp_phone
 from app.webhooks import router as whatsapp_router
 from app.config import settings
-from app.auth import get_current_tenant
+from app.auth import (
+    get_current_tenant,
+    get_current_tenant_from_session,
+    RedirectToLoginException,
+)
+from app.csrf import (
+    validate_csrf,
+    generate_csrf_token,
+    set_csrf_cookie,
+    validate_csrf_double_submit,
+    CSRF_COOKIE_NAME,
+)
+from app.password import hash_password, verify_password
+from app.slug import generate_unique_slug
+from app.session import (
+    set_session_cookie,
+    delete_session_cookie,
+    parse_session_token,
+    sanitize_next_url,
+    SESSION_COOKIE_NAME,
+)
 
 
 # --- SENTRY (inicializar antes de crear la app) ---
@@ -76,46 +101,58 @@ async def lifespan(app: FastAPI):
     """
     Gestiona el ciclo de vida de la aplicación FastAPI.
     Arranca el scheduler de recordatorios al iniciar y lo apaga limpiamente al cerrar.
+    En entorno de test (TEST_DATABASE_URL seteada) NO arranca el scheduler
+    para evitar colisiones de conexión con los tests.
     """
-    scheduler.add_job(
-        process_reminders,
-        "interval",
-        minutes=5,
-        args=[async_session_maker],
-        id="reminder_job",
-        replace_existing=True,
-    )
-    scheduler.add_job(
-        process_outbox,
-        "interval",
-        minutes=1,
-        args=[async_session_maker],
-        id="outbox_job",
-        replace_existing=True,
-    )
-    scheduler.add_job(
-        process_deposit_expiration,
-        "interval",
-        minutes=1,
-        args=[async_session_maker],
-        id="deposit_expiration_job",
-        replace_existing=True,
-    )
-    scheduler.add_job(
-        process_mp_token_refresh,
-        "interval",
-        minutes=1440,
-        args=[async_session_maker],
-        id="mp_token_refresh_job",
-        replace_existing=True,
-    )
-    scheduler.start()
-    print("Scheduler distribuido de recordatorios iniciado correctamente.")
+    # En tests no arrancamos el scheduler: los tests corren su propia DB aislada
+    # y el scheduler en background causaría colisiones de conexión (asyncpg InterfaceError).
+    # TEST_DATABASE_URL solo existe y es no-vacía en entorno de test (docker compose exec -e TEST_DATABASE_URL=...).
+    test_db_url = getattr(settings, "TEST_DATABASE_URL", None)
+    if not test_db_url:
+        scheduler.add_job(
+            process_reminders,
+            "interval",
+            minutes=5,
+            args=[async_session_maker],
+            id="reminder_job",
+            replace_existing=True,
+        )
+        scheduler.add_job(
+            process_outbox,
+            "interval",
+            minutes=1,
+            args=[async_session_maker],
+            id="outbox_job",
+            replace_existing=True,
+        )
+        scheduler.add_job(
+            process_deposit_expiration,
+            "interval",
+            minutes=1,
+            args=[async_session_maker],
+            id="deposit_expiration_job",
+            replace_existing=True,
+        )
+        scheduler.add_job(
+            process_mp_token_refresh,
+            "interval",
+            minutes=1440,
+            args=[async_session_maker],
+            id="mp_token_refresh_job",
+            replace_existing=True,
+        )
+        scheduler.start()
+        print("Scheduler distribuido iniciado correctamente.")
+    else:
+        print("Entorno de test detectado: scheduler NO iniciado.")
 
     yield
 
-    scheduler.shutdown()
-    print("Scheduler detenido de forma segura.")
+    if not getattr(settings, "TEST_DATABASE_URL", None):
+        scheduler.shutdown()
+        print("Scheduler detenido de forma segura.")
+    else:
+        print("Entorno de test: nada que apagar.")
 
 
 # --- APP ---
@@ -132,6 +169,19 @@ app.add_middleware(
 app.include_router(mp_router)
 app.include_router(mp_connect_router)
 app.include_router(whatsapp_router)
+
+
+@app.exception_handler(RedirectToLoginException)
+async def redirect_to_login_handler(request: Request, exc: RedirectToLoginException):
+    """Redirige automáticamente a /login si no hay sesión activa en el panel."""
+    safe_next = sanitize_next_url(exc.next_url)
+    response = RedirectResponse(
+        url=f"/login?next={safe_next}",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+    delete_session_cookie(response)
+    return response
+
 
 # Plantillas para la página pública de reserva (/t/{slug})
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
@@ -278,15 +328,34 @@ async def get_available_slots(
     if not service or service.tenant_id != tenant_id:
         raise HTTPException(status_code=404, detail="Service not found")
 
-    window_start = datetime.combine(day, time(9, 0), tzinfo=tenant_timezone)
-    window_end = datetime.combine(day, time(18, 0), tzinfo=tenant_timezone)
+    windows = await resolve_day_windows(
+        session=session,
+        tenant_id=tenant_id,
+        day_of_week=day.weekday(),
+        day_date=day,
+        tenant_timezone=tenant_timezone,
+        staff_id=staff_id,
+    )
+
+    if not windows:
+        # Día cerrado (el negocio tiene horarios configurados pero no para hoy)
+        return AvailableSlotsResponse(
+            date=day,
+            service_duration_min=service.duration_minutes,
+            timezone=tenant.timezone,
+            slots=[],
+        )
+
+    # Usar la ventana más amplia posible para filtrar reservas del día
+    day_start = min(w[0] for w in windows)
+    day_end = max(w[1] for w in windows)
 
     stmt = select(Booking).where(
         and_(
             Booking.tenant_id == tenant_id,
             Booking.status.in_(["pending", "confirmed"]),
-            Booking.start_time < window_end,
-            Booking.end_time > window_start,
+            Booking.start_time < day_end,
+            Booking.end_time > day_start,
         )
     )
 
@@ -305,8 +374,7 @@ async def get_available_slots(
     ]
 
     slots = calculate_available_slots(
-        window_start=window_start,
-        window_end=window_end,
+        windows=windows,
         bookings=bookings_intervals,
         duration_min=service.duration_minutes,
         granularity_min=30,
@@ -494,11 +562,7 @@ async def get_public_tenant_detail(
                 name=s.name,
                 duration_minutes=s.duration_minutes,
                 price=float(s.price),
-                deposit_amount=(
-                    float(s.deposit_amount)
-                    if s.deposit_amount is not None
-                    else round(float(s.price) * 0.30, 2)
-                ),
+                deposit_amount=float(effective_deposit(s.price, s.deposit_amount)),
             )
             for s in services
         ],
@@ -533,15 +597,32 @@ async def get_public_available_slots(
     if not service or service.tenant_id != tenant_id:
         raise HTTPException(status_code=404, detail="Service not found")
 
-    window_start = datetime.combine(day, time(9, 0), tzinfo=tenant_timezone)
-    window_end = datetime.combine(day, time(18, 0), tzinfo=tenant_timezone)
+    windows = await resolve_day_windows(
+        session=session,
+        tenant_id=tenant_id,
+        day_of_week=day.weekday(),
+        day_date=day,
+        tenant_timezone=tenant_timezone,
+        staff_id=staff_id,
+    )
+
+    if not windows:
+        return AvailableSlotsResponse(
+            date=day,
+            service_duration_min=service.duration_minutes,
+            timezone=tenant.timezone,
+            slots=[],
+        )
+
+    day_start = min(w[0] for w in windows)
+    day_end = max(w[1] for w in windows)
 
     stmt = select(Booking).where(
         and_(
             Booking.tenant_id == tenant_id,
             Booking.status.in_(["pending", "confirmed"]),
-            Booking.start_time < window_end,
-            Booking.end_time > window_start,
+            Booking.start_time < day_end,
+            Booking.end_time > day_start,
         )
     )
 
@@ -560,8 +641,7 @@ async def get_public_available_slots(
     ]
 
     slots = calculate_available_slots(
-        window_start=window_start,
-        window_end=window_end,
+        windows=windows,
         bookings=bookings_intervals,
         duration_min=service.duration_minutes,
         granularity_min=30,
@@ -658,11 +738,7 @@ async def create_public_booking(
 
     end_time = start_time + timedelta(minutes=service.duration_minutes)
 
-    # Calcular monto de seña: deposit_amount explícito o 30% del precio total
-    if service.deposit_amount is not None:
-        deposit = float(service.deposit_amount)
-    else:
-        deposit = round(float(service.price) * 0.30, 2)
+    deposit = float(effective_deposit(service.price, service.deposit_amount))
 
     new_booking = Booking(
         tenant_id=payload.tenant_id,
@@ -809,11 +885,7 @@ async def public_booking_page(
             "name": s.name,
             "duration_minutes": s.duration_minutes,
             "price": float(s.price),
-            "deposit_amount": (
-                float(s.deposit_amount)
-                if s.deposit_amount is not None
-                else round(float(s.price) * 0.30, 2)
-            ),
+            "deposit_amount": float(effective_deposit(s.price, s.deposit_amount)),
         }
         for s in services
     ]
@@ -827,4 +899,513 @@ async def public_booking_page(
             "timezone": tenant.timezone or "America/Argentina/Buenos_Aires",
             "services": services_data,
         },
+    )
+
+
+# --- REGISTRO Y LOGIN (PANEL DEL NEGOCIO) ---
+@app.get("/register", response_class=HTMLResponse)
+async def register_page(request: Request):
+    """Muestra el formulario de registro de negocio."""
+    csrf_token = generate_csrf_token()
+    response = templates.TemplateResponse(
+        request,
+        "register.html",
+        {
+            "csrf_token": csrf_token,
+            "form_data": {},
+            "error_message": None,
+        },
+    )
+    set_csrf_cookie(response, csrf_token)
+    return response
+
+
+@app.post("/register", response_class=HTMLResponse)
+async def register_submit(
+    request: Request,
+    name: Annotated[str, Form()],
+    owner_email: Annotated[str, Form()],
+    password: Annotated[str, Form()],
+    whatsapp_number: Annotated[Optional[str], Form()] = None,
+    slug: Annotated[Optional[str], Form()] = None,
+    csrf_token: Annotated[Optional[str], Form()] = None,
+    session: AsyncSession = Depends(get_db),
+):
+    """
+    Registra un nuevo negocio y dueño de forma autoservicio.
+    Valida CSRF (double-submit), contraseña mínima, unicidad de email normalizado
+    y resuelve colisiones de slug automáticamente.
+    """
+    form_data = {
+        "name": name,
+        "owner_email": owner_email,
+        "whatsapp_number": whatsapp_number or "",
+        "slug": slug or "",
+    }
+
+    # 1. Validación CSRF Double-Submit
+    cookie_csrf = request.cookies.get(CSRF_COOKIE_NAME)
+    if not validate_csrf_double_submit(csrf_token, cookie_csrf):
+        new_csrf = generate_csrf_token()
+        response = templates.TemplateResponse(
+            request,
+            "register.html",
+            {
+                "csrf_token": new_csrf,
+                "form_data": form_data,
+                "error_message": "El formulario expiró o es inválido. Por favor, intentá nuevamente.",
+            },
+            status_code=400,
+        )
+        set_csrf_cookie(response, new_csrf)
+        return response
+
+    # 2. Validación de contraseña
+    if len(password) < 8:
+        new_csrf = generate_csrf_token()
+        response = templates.TemplateResponse(
+            request,
+            "register.html",
+            {
+                "csrf_token": new_csrf,
+                "form_data": form_data,
+                "error_message": "La contraseña debe tener al menos 8 caracteres.",
+            },
+            status_code=400,
+        )
+        set_csrf_cookie(response, new_csrf)
+        return response
+
+    # 3. Normalización y verificación de email único (siempre en minúsculas)
+    normalized_email = owner_email.strip().lower()
+    existing_owner = (
+        await session.execute(
+            select(Tenant).where(Tenant.owner_email == normalized_email)
+        )
+    ).scalar_one_or_none()
+
+    if existing_owner is not None:
+        new_csrf = generate_csrf_token()
+        response = templates.TemplateResponse(
+            request,
+            "register.html",
+            {
+                "csrf_token": new_csrf,
+                "form_data": form_data,
+                "error_message": "Ya existe un negocio registrado con este correo electrónico.",
+            },
+            status_code=400,
+        )
+        set_csrf_cookie(response, new_csrf)
+        return response
+
+    # 4. Generación de slug único con manejo de colisiones
+    base_slug_text = slug.strip() if slug and slug.strip() else name.strip()
+    final_slug = await generate_unique_slug(session, base_slug_text)
+
+    # 5. Hash seguro de contraseña (PBKDF2-HMAC-SHA256 con 600k iteraciones)
+    pwd_hash = hash_password(password)
+
+    # 6. Creación del tenant
+    clean_whatsapp = (
+        whatsapp_number.strip() if whatsapp_number and whatsapp_number.strip() else None
+    )
+    new_tenant = Tenant(
+        name=name.strip(),
+        slug=final_slug,
+        owner_email=normalized_email,
+        password_hash=pwd_hash,
+        whatsapp_number=clean_whatsapp,
+    )
+    session.add(new_tenant)
+    await session.commit()
+    await session.refresh(new_tenant)
+
+    return RedirectResponse(
+        url="/login?registered=1", status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(
+    request: Request,
+    registered: Optional[str] = Query(None),
+    next: Optional[str] = Query(None),
+    session: AsyncSession = Depends(get_db),
+):
+    """Muestra el formulario de inicio de sesión."""
+    # Si ya tiene una sesión válida activa, redirigir directo al dashboard
+    session_cookie = request.cookies.get(SESSION_COOKIE_NAME)
+    if session_cookie:
+        parsed = parse_session_token(session_cookie)
+        if parsed:
+            tenant_id, session_version = parsed
+            tenant = await session.get(Tenant, tenant_id)
+            if tenant is not None and tenant.session_version == session_version:
+                safe_next = sanitize_next_url(next)
+                return RedirectResponse(
+                    url=safe_next, status_code=status.HTTP_303_SEE_OTHER
+                )
+
+    csrf_token = generate_csrf_token()
+    info_message = (
+        "Tu cuenta fue creada con éxito. Iniciá sesión para continuar."
+        if registered == "1"
+        else None
+    )
+    safe_next = sanitize_next_url(next)
+
+    response = templates.TemplateResponse(
+        request,
+        "login.html",
+        {
+            "csrf_token": csrf_token,
+            "info_message": info_message,
+            "error_message": None,
+            "owner_email": "",
+            "next_url": safe_next,
+        },
+    )
+    set_csrf_cookie(response, csrf_token)
+    return response
+
+
+@app.post("/login", response_class=HTMLResponse)
+async def login_submit(
+    request: Request,
+    owner_email: Annotated[str, Form()],
+    password: Annotated[str, Form()],
+    next: Annotated[Optional[str], Form()] = None,
+    csrf_token: Annotated[Optional[str], Form()] = None,
+    session: AsyncSession = Depends(get_db),
+):
+    """Valida credenciales e inicia sesión estableciendo cookie firmada."""
+    safe_next = sanitize_next_url(next)
+
+    # 1. Validación CSRF Double-Submit
+    cookie_csrf = request.cookies.get(CSRF_COOKIE_NAME)
+    if not validate_csrf_double_submit(csrf_token, cookie_csrf):
+        new_csrf = generate_csrf_token()
+        response = templates.TemplateResponse(
+            request,
+            "login.html",
+            {
+                "csrf_token": new_csrf,
+                "info_message": None,
+                "error_message": "El formulario expiró o es inválido. Por favor, intentá nuevamente.",
+                "owner_email": owner_email,
+                "next_url": safe_next,
+            },
+            status_code=400,
+        )
+        set_csrf_cookie(response, new_csrf)
+        return response
+
+    # 2. Búsqueda de tenant por email normalizado
+    normalized_email = owner_email.strip().lower()
+    tenant = (
+        await session.execute(
+            select(Tenant).where(Tenant.owner_email == normalized_email)
+        )
+    ).scalar_one_or_none()
+
+    # 3. Verificación de contraseña (OWASP PBKDF2 a tiempo constante)
+    if (
+        tenant is None
+        or not tenant.password_hash
+        or not verify_password(password, tenant.password_hash)
+    ):
+        new_csrf = generate_csrf_token()
+        response = templates.TemplateResponse(
+            request,
+            "login.html",
+            {
+                "csrf_token": new_csrf,
+                "info_message": None,
+                "error_message": "Correo electrónico o contraseña incorrectos.",
+                "owner_email": owner_email,
+                "next_url": safe_next,
+            },
+            status_code=400,
+        )
+        set_csrf_cookie(response, new_csrf)
+        return response
+
+    # 4. Login exitoso -> emitir cookie de sesión firmada
+    response = RedirectResponse(url=safe_next, status_code=status.HTTP_303_SEE_OTHER)
+    set_session_cookie(response, tenant.id, tenant.session_version)
+    return response
+
+
+@app.post("/logout")
+async def logout(request: Request):
+    """Cierra la sesión eliminando la cookie."""
+    response = RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    delete_session_cookie(response)
+    return response
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
+async def dashboard_page(
+    request: Request,
+    tenant: Tenant = Depends(get_current_tenant_from_session),
+):
+    """Vista principal del panel del negocio."""
+    csrf_token = generate_csrf_token()
+    response = templates.TemplateResponse(
+        request,
+        "dashboard.html",
+        {
+            "tenant": tenant,
+            "csrf_token": csrf_token,
+        },
+    )
+    set_csrf_cookie(response, csrf_token)
+    return response
+
+
+# ---------------------------------------------------------------------------
+# Panel: CRUD de servicios
+# ---------------------------------------------------------------------------
+
+
+def _parse_service_form(form: dict) -> tuple[dict, dict]:
+    """Parsea y valida los campos del formulario de servicio.
+
+    Returns (data, errors). Si errors está vacío, data es usable para DB.
+    """
+    errors: dict = {}
+    data: dict = {}
+
+    name = form.get("name", "").strip()
+    if not name:
+        errors["name"] = "El nombre es obligatorio."
+    else:
+        data["name"] = name
+
+    try:
+        duration_minutes = int(form.get("duration_minutes", ""))
+        if duration_minutes < 1:
+            raise ValueError
+        data["duration_minutes"] = duration_minutes
+    except (ValueError, TypeError):
+        errors["duration_minutes"] = "La duración debe ser un número entero mayor a 0."
+
+    try:
+        price = Decimal(form.get("price", "").replace(",", "."))
+        if price < Decimal("0.01"):
+            raise ValueError
+        data["price"] = price
+    except Exception:
+        errors["price"] = "El precio debe ser un número mayor a 0 (ej: 5000.00)."
+
+    deposit_raw = form.get("deposit_amount", "").strip()
+    if deposit_raw == "":
+        data["deposit_amount"] = None
+    else:
+        try:
+            deposit = Decimal(deposit_raw.replace(",", "."))
+            if deposit < Decimal("0"):
+                raise ValueError
+            data["deposit_amount"] = deposit
+        except Exception:
+            errors["deposit_amount"] = (
+                "La seña debe ser un número mayor o igual a 0 (ej: 1500.00)."
+            )
+
+    return data, errors
+
+
+@app.get("/panel/services", response_class=HTMLResponse)
+async def panel_services_list(
+    request: Request,
+    tenant: Tenant = Depends(get_current_tenant_from_session),
+    session: AsyncSession = Depends(get_db),
+):
+    csrf_token = generate_csrf_token()
+    stmt = select(Service).where(Service.tenant_id == tenant.id).order_by(Service.id)
+    services = (await session.execute(stmt)).scalars().all()
+    services_with_deposit = [
+        (s, effective_deposit(s.price, s.deposit_amount)) for s in services
+    ]
+    response = templates.TemplateResponse(
+        request,
+        "services_list.html",
+        {
+            "tenant": tenant,
+            "csrf_token": csrf_token,
+            "services_with_deposit": services_with_deposit,
+        },
+    )
+    set_csrf_cookie(response, csrf_token)
+    return response
+
+
+@app.get("/panel/services/new", response_class=HTMLResponse)
+async def panel_services_new_form(
+    request: Request,
+    tenant: Tenant = Depends(get_current_tenant_from_session),
+):
+    csrf_token = generate_csrf_token()
+    response = templates.TemplateResponse(
+        request,
+        "service_form.html",
+        {
+            "tenant": tenant,
+            "csrf_token": csrf_token,
+            "service": None,
+            "form": {},
+            "errors": {},
+            "deposit_preview": None,
+        },
+    )
+    set_csrf_cookie(response, csrf_token)
+    return response
+
+
+@app.post("/panel/services/new", response_class=HTMLResponse)
+async def panel_services_new_submit(
+    request: Request,
+    tenant: Tenant = Depends(get_current_tenant_from_session),
+    session: AsyncSession = Depends(get_db),
+):
+    await validate_csrf(request)
+    form = dict(await request.form())
+    data, errors = _parse_service_form(form)
+
+    csrf_token = generate_csrf_token()
+
+    if errors:
+        deposit_preview = None
+        if "price" in data:
+            deposit_preview = effective_deposit(data["price"], None)
+        response = templates.TemplateResponse(
+            request,
+            "service_form.html",
+            {
+                "tenant": tenant,
+                "csrf_token": csrf_token,
+                "service": None,
+                "form": form,
+                "errors": errors,
+                "deposit_preview": deposit_preview,
+            },
+        )
+        set_csrf_cookie(response, csrf_token)
+        return response
+
+    new_service = Service(
+        tenant_id=tenant.id,
+        name=data["name"],
+        duration_minutes=data["duration_minutes"],
+        price=data["price"],
+        deposit_amount=data.get("deposit_amount"),
+        is_active=True,
+    )
+    session.add(new_service)
+    await session.commit()
+    return RedirectResponse(
+        url="/panel/services", status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
+@app.get("/panel/services/{service_id}/edit", response_class=HTMLResponse)
+async def panel_services_edit_form(
+    request: Request,
+    service_id: int,
+    tenant: Tenant = Depends(get_current_tenant_from_session),
+    session: AsyncSession = Depends(get_db),
+):
+    service = await session.get(Service, service_id)
+    if not service or service.tenant_id != tenant.id:
+        raise HTTPException(status_code=404, detail="Servicio no encontrado")
+
+    csrf_token = generate_csrf_token()
+    deposit_preview = effective_deposit(service.price, None)
+    form = {
+        "name": service.name,
+        "duration_minutes": str(service.duration_minutes),
+        "price": str(service.price),
+        "deposit_amount": (
+            str(service.deposit_amount) if service.deposit_amount is not None else ""
+        ),
+    }
+    response = templates.TemplateResponse(
+        request,
+        "service_form.html",
+        {
+            "tenant": tenant,
+            "csrf_token": csrf_token,
+            "service": service,
+            "form": form,
+            "errors": {},
+            "deposit_preview": deposit_preview,
+        },
+    )
+    set_csrf_cookie(response, csrf_token)
+    return response
+
+
+@app.post("/panel/services/{service_id}/edit", response_class=HTMLResponse)
+async def panel_services_edit_submit(
+    request: Request,
+    service_id: int,
+    tenant: Tenant = Depends(get_current_tenant_from_session),
+    session: AsyncSession = Depends(get_db),
+):
+    service = await session.get(Service, service_id)
+    if not service or service.tenant_id != tenant.id:
+        raise HTTPException(status_code=404, detail="Servicio no encontrado")
+
+    await validate_csrf(request)
+    form = dict(await request.form())
+    data, errors = _parse_service_form(form)
+
+    csrf_token = generate_csrf_token()
+
+    if errors:
+        deposit_preview = effective_deposit(data.get("price", service.price), None)
+        response = templates.TemplateResponse(
+            request,
+            "service_form.html",
+            {
+                "tenant": tenant,
+                "csrf_token": csrf_token,
+                "service": service,
+                "form": form,
+                "errors": errors,
+                "deposit_preview": deposit_preview,
+            },
+        )
+        set_csrf_cookie(response, csrf_token)
+        return response
+
+    service.name = data["name"]
+    service.duration_minutes = data["duration_minutes"]
+    service.price = data["price"]
+    service.deposit_amount = data.get("deposit_amount")
+    session.add(service)
+    await session.commit()
+    return RedirectResponse(
+        url="/panel/services", status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
+@app.post("/panel/services/{service_id}/toggle", response_class=HTMLResponse)
+async def panel_services_toggle(
+    request: Request,
+    service_id: int,
+    tenant: Tenant = Depends(get_current_tenant_from_session),
+    session: AsyncSession = Depends(get_db),
+):
+    service = await session.get(Service, service_id)
+    if not service or service.tenant_id != tenant.id:
+        raise HTTPException(status_code=404, detail="Servicio no encontrado")
+
+    await validate_csrf(request)
+    service.is_active = not service.is_active
+    session.add(service)
+    await session.commit()
+    return RedirectResponse(
+        url="/panel/services", status_code=status.HTTP_303_SEE_OTHER
     )

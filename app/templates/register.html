@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+
+{% block title %}Crear cuenta de negocio - Juturno{% endblock %}
+
+{% block auth_title %}Registrá tu negocio{% endblock %}
+{% block auth_sub %}Empezá a gestionar tus turnos y cobros de seña{% endblock %}
+
+{% block auth_content %}
+<div class="card">
+  {% if error_message %}
+  <div class="banner-danger">{{ error_message }}</div>
+  {% endif %}
+
+  <form method="POST" action="/register">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+    <div class="field">
+      <label for="name">Nombre del negocio *</label>
+      <input type="text" id="name" name="name" required placeholder="Ej: Mi Negocio" value="{{ form_data.name if form_data else '' }}">
+    </div>
+
+    <div class="field">
+      <label for="owner_email">Correo electrónico del dueño *</label>
+      <input type="email" id="owner_email" name="owner_email" required placeholder="dueno@ejemplo.com" value="{{ form_data.owner_email if form_data else '' }}">
+    </div>
+
+    <div class="field">
+      <label for="password">Contraseña *</label>
+      <div class="field-desc">Mínimo 8 caracteres</div>
+      <input type="password" id="password" name="password" required minlength="8" placeholder="••••••••">
+    </div>
+
+    <div class="field">
+      <label for="whatsapp_number">Teléfono / WhatsApp de contacto</label>
+      <div class="field-desc">Para coordinar con clientes y notificaciones</div>
+      <input type="tel" id="whatsapp_number" name="whatsapp_number" placeholder="Ej: 11 5555 5555" value="{{ form_data.whatsapp_number if form_data else '' }}">
+    </div>
+
+    <div class="field">
+      <label for="slug">Identificador del link (opcional)</label>
+      <div class="field-desc">juturno.com/t/<span style="color:var(--primary)">identificador</span> (se autogenera si lo dejás vacío)</div>
+      <input type="text" id="slug" name="slug" placeholder="mi-negocio" value="{{ form_data.slug if form_data else '' }}">
+    </div>
+
+    <button type="submit" class="btn-submit">Crear cuenta</button>
+  </form>
+</div>
+
+<div class="footer-links">
+  ¿Ya tenés una cuenta? <a href="/login">Iniciar sesión</a>
+</div>
+{% endblock %}

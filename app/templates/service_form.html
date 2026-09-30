@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+
+{% block title %}{% if service %}Editar servicio{% else %}Nuevo servicio{% endif %} - {{ tenant.name }}{% endblock %}
+
+{% block dash_content %}
+<style>
+  .back-link{display:inline-flex;align-items:center;gap:6px;color:var(--muted);font-size:.88rem;font-weight:600;text-decoration:none;margin-bottom:20px}
+  .back-link:hover{color:var(--text)}
+  .field-hint{font-size:.78rem;color:var(--muted);margin-top:4px}
+  .field-error{font-size:.78rem;color:var(--danger);margin-top:4px;font-weight:600}
+  input.has-error{border-color:var(--danger)}
+  .deposit-preview{font-size:.82rem;color:var(--muted);margin-top:6px;padding:8px 10px;background:#f8fafc;border-radius:8px}
+</style>
+
+<a href="/panel/services" class="back-link">← Volver a servicios</a>
+
+<div class="card">
+  <h1>{% if service %}Editar servicio{% else %}Nuevo servicio{% endif %}</h1>
+
+  <form method="POST" action="{% if service %}/panel/services/{{ service.id }}/edit{% else %}/panel/services/new{% endif %}" style="margin-top:24px">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+    <div class="field">
+      <label for="name">Nombre del servicio</label>
+      <input type="text" id="name" name="name" value="{{ form.get('name', '') }}" placeholder="Ej: Corte de cabello" class="{% if errors.name %}has-error{% endif %}">
+      {% if errors.name %}<div class="field-error">{{ errors.name }}</div>{% endif %}
+    </div>
+
+    <div class="field">
+      <label for="duration_minutes">Duración (minutos)</label>
+      <input type="number" id="duration_minutes" name="duration_minutes" value="{{ form.get('duration_minutes', '') }}" placeholder="60" min="1" class="{% if errors.duration_minutes %}has-error{% endif %}">
+      {% if errors.duration_minutes %}<div class="field-error">{{ errors.duration_minutes }}</div>{% endif %}
+    </div>
+
+    <div class="field">
+      <label for="price">Precio total</label>
+      <input type="text" id="price" name="price" value="{{ form.get('price', '') }}" placeholder="5000.00" class="{% if errors.price %}has-error{% endif %}">
+      <div class="field-hint">Usá punto como separador decimal (ej: 5000.00)</div>
+      {% if errors.price %}<div class="field-error">{{ errors.price }}</div>{% endif %}
+    </div>
+
+    <div class="field">
+      <label for="deposit_amount">Seña (opcional)</label>
+      <input type="text" id="deposit_amount" name="deposit_amount" value="{{ form.get('deposit_amount', '') }}" placeholder="Dejar vacío para usar el 30% del precio" class="{% if errors.deposit_amount %}has-error{% endif %}">
+      {% if deposit_preview %}
+      <div class="deposit-preview">
+        Si dejás este campo vacío, se cobrará <strong>${{ "%.2f"|format(deposit_preview) }}</strong> de seña (30% del precio ingresado).
+      </div>
+      {% endif %}
+      {% if errors.deposit_amount %}<div class="field-error">{{ errors.deposit_amount }}</div>{% endif %}
+    </div>
+
+    <button type="submit" class="btn-submit">{% if service %}Guardar cambios{% else %}Crear servicio{% endif %}</button>
+  </form>
+</div>
+{% endblock %}

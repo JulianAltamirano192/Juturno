@@ -6,6 +6,7 @@ from typing import List
 class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/saas"
     REDIS_URL: str = "redis://redis:6379/0"
+    SECRET_KEY: str = "change-this-secret-key-in-production-juturno"
     WHATSAPP_TOKEN: str = ""
     WHATSAPP_PHONE_NUMBER_ID: str = ""
     MP_ACCESS_TOKEN: str = ""
@@ -21,6 +22,9 @@ class Settings(BaseSettings):
     # true = credenciales de prueba: el checkout usa sandbox_init_point.
     # Pasar a false al migrar a credenciales de producción de MP.
     MP_SANDBOX: bool = True
+    # Solo existe en entorno de test (la define el fixture conftest / docker compose exec).
+    # Si está presente, el lifespan NO arranca el scheduler para evitar colisiones de conexión.
+    TEST_DATABASE_URL: str = ""
     META_VERIFY_TOKEN: str = ""
     META_APP_SECRET: str = ""
     CORS_ORIGINS: List[str] = []
@@ -28,6 +32,17 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "development"
     # URL pública donde vive la página de reserva (se usa para back_urls de MP)
     PUBLIC_BASE_URL: str = "https://juturno.com"
+
+    @property
+    def is_production(self) -> bool:
+        return self.ENVIRONMENT.lower() == "production"
+
+    def model_post_init(self, __context) -> None:
+        if (
+            self.is_production
+            and self.SECRET_KEY == "change-this-secret-key-in-production-juturno"
+        ):
+            raise ValueError("SECRET_KEY cannot be the default value in production!")
 
     class Config:
         env_file = ".env"

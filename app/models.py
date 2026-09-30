@@ -1,8 +1,8 @@
-from datetime import datetime, timezone
+from datetime import datetime, timezone, time as time_type
 from decimal import Decimal
 from typing import Optional, List, Any
 from sqlmodel import SQLModel, Field, Relationship, Column, JSON
-from sqlalchemy import DateTime, Integer, Numeric, UniqueConstraint
+from sqlalchemy import DateTime, Integer, Numeric, UniqueConstraint, Time as SATime
 from sqlalchemy.dialects.postgresql import ExcludeConstraint
 from sqlalchemy import text
 
@@ -27,6 +27,21 @@ class Tenant(SQLModel, table=True):
             "Minutos que tiene el cliente para pagar la seña antes de que "
             "la reserva expire y libere el horario. NULL = sin expiración."
         ),
+    )
+    owner_email: Optional[str] = Field(
+        default=None,
+        index=True,
+        unique=True,
+        description="Email del dueño del negocio para login en el panel.",
+    )
+    password_hash: Optional[str] = Field(
+        default=None,
+        description="Hash PBKDF2-HMAC-SHA256 de la contraseña del dueño.",
+    )
+    session_version: int = Field(
+        default=1,
+        sa_column_kwargs={"server_default": text("1")},
+        description="Versión de sesión para invalidar todas las cookies activas al cambiar clave.",
     )
     # Credenciales de Mercado Pago conectadas vía OAuth (D-012).
     # Los tokens se guardan CIFRADOS con Fernet (app/mp_crypto.py) —
@@ -114,6 +129,57 @@ class Staff(SQLModel, table=True):
 
     tenant: Optional[Tenant] = Relationship(back_populates="staff_members")
     bookings: List["Booking"] = Relationship(back_populates="staff")
+
+
+class BusinessHours(SQLModel, table=True):
+    """
+    Define los horarios de atención de un negocio o de un profesional específico.
+
+    - staff_id = NULL → horario general del negocio (aplica a todos los días
+      que no tengan una fila de staff específica).
+    - staff_id = <id>  → horario de ese profesional puntual (prioridad sobre
+      el horario del negocio).
+
+    Un negocio sin NINGUNA fila en esta tabla → el endpoint cae al fallback
+    estático 09-18 para no romper la página pública.
+    Un negocio CON filas → un día sin filas = "cerrado ese día".
+    """
+
+    __tablename__ = "business_hours"
+
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "staff_id",
+            "day_of_week",
+            name="uq_business_hours_tenant_staff_day",
+        ),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    tenant_id: int = Field(foreign_key="tenant.id", index=True, ondelete="CASCADE")
+    staff_id: Optional[int] = Field(
+        default=None,
+        foreign_key="staff.id",
+        index=True,
+        nullable=True,
+        ondelete="CASCADE",
+        description="NULL = horario del negocio; valor = horario de ese profesional.",
+    )
+    day_of_week: int = Field(
+        description="0 = lunes … 6 = domingo (Python weekday()).",
+        ge=0,
+        le=6,
+    )
+    # Guardamos hora de inicio y fin como Time en Postgres.
+    start_time: "time_type" = Field(
+        sa_column=Column("start_time", SATime, nullable=False),
+        description="Hora de apertura (ej. 09:00).",
+    )
+    end_time: "time_type" = Field(
+        sa_column=Column("end_time", SATime, nullable=False),
+        description="Hora de cierre (ej. 18:00).",
+    )
 
 
 class Booking(SQLModel, table=True):
