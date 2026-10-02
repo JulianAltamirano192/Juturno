@@ -235,6 +235,22 @@ class Booking(SQLModel, table=True):
 
     idempotency_key: str = Field(index=True, unique=True)
 
+    # --- Auditoría de acciones (Tarea 8) ---
+    status_changed_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
+    status_changed_by: Optional[str] = Field(default=None)
+    cancellation_reason: Optional[str] = Field(default=None)
+    no_show_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
+    completed_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
+
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
         sa_column=Column(
