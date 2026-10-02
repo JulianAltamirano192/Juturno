@@ -1,13 +1,14 @@
-# Dependencias para desarrollo local (no están en producción ni en el contenedor)
-# Uso: pip install -r requirements-dev.txt
+-r requirements.txt
 
-# Linting y formato
+# Testing
+pytest>=8.0.0
+pytest-asyncio>=0.23.5
+
+# Code quality (también usados por pre-commit)
+pre-commit>=4.0.0
 ruff>=0.8.0
 black>=24.10.0
-
-# Type checking — corre local, no en el contenedor
 mypy>=1.14.0
-types-redis>=4.5.0  # stubs para redis.asyncio usado en auth.py, scheduler.py, mp_connect.py
 
-# Pre-commit hooks (ejecuta con `pre-commit run --all-files`)
-pre-commit>=3.5.0
+# Type stubs (para correr mypy localmente)
+types-redis

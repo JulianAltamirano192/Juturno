@@ -30,13 +30,13 @@ FAKE_REFRESH_RESPONSE = {
 
 @pytest.fixture(autouse=True)
 def _fresh_redis_client(monkeypatch):
-    """redis_client de scheduler es global atado al primer loop (ver
-    test_deposit_expiration); lo reparchamos con uno nuevo por test."""
-    monkeypatch.setattr(
-        scheduler,
-        "redis_client",
-        redis_async.from_url(scheduler.settings.REDIS_URL, decode_responses=True),
+    """scheduler._get_redis_client() devuelve un cliente atado al event
+    loop actual. Como pytest-asyncio crea un loop por test, parcheamos
+    la función para que devuelva un cliente fresco por test."""
+    fake_client = redis_async.from_url(
+        scheduler.settings.REDIS_URL, decode_responses=True
     )
+    monkeypatch.setattr(scheduler, "_get_redis_client", lambda: fake_client)
     monkeypatch.setattr(scheduler.settings, "MP_TOKEN_ENCRYPTION_KEY", TEST_KEY)
     monkeypatch.setattr(scheduler.settings, "MP_MARKETPLACE_CLIENT_ID", "5555555555")
     monkeypatch.setattr(

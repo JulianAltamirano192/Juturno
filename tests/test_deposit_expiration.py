@@ -10,16 +10,13 @@ from app.scheduler import process_deposit_expiration
 from tests.conftest import TestingSessionLocal
 
 
-# redis_client de scheduler es un cliente global creado al importar. Como
-# pytest-asyncio crea un event loop por test, lo parcheamos con un cliente
-# fresco por test para evitar el error de conexión atada a otro loop.
+# scheduler._get_redis_client() devuelve un cliente atado al event loop
+# actual. Como pytest-asyncio crea un loop por test, parcheamos la
+# función para que devuelva un cliente fresco por test.
 @pytest.fixture(autouse=True)
 def _fresh_redis_client(monkeypatch):
-    monkeypatch.setattr(
-        scheduler,
-        "redis_client",
-        redis_async.from_url(settings.REDIS_URL, decode_responses=True),
-    )
+    fake_client = redis_async.from_url(settings.REDIS_URL, decode_responses=True)
+    monkeypatch.setattr(scheduler, "_get_redis_client", lambda: fake_client)
 
 
 async def _tenant_with_pending_booking(db_session, *, expiration_minutes, created_ago):

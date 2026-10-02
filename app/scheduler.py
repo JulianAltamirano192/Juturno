@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from uuid import uuid4
 from datetime import datetime, timedelta, timezone
@@ -10,8 +11,24 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Conexión asíncrona a Redis
-redis_client = redis.from_url(settings.REDIS_URL, decode_responses=True)
+# ============================================================================
+# Redis client — per-loop
+# ----------------------------------------------------------------------------
+# Necesario para tests: pytest-asyncio crea un loop por test, y un cliente
+# global queda atado al loop del primer test. Cuando el loop se cierra y se
+# crea uno nuevo, la conexión queda muerta ("got Future attached to a
+# different loop"). Mismo patrón que app/auth.py.
+# ============================================================================
+_redis_clients: dict[int, "redis.Redis"] = {}
+
+
+def _get_redis_client() -> "redis.Redis":
+    """Devuelve un cliente Redis atado al event loop actual."""
+    loop = asyncio.get_running_loop()
+    key = id(loop)
+    if key not in _redis_clients:
+        _redis_clients[key] = redis.from_url(settings.REDIS_URL, decode_responses=True)
+    return _redis_clients[key]
 
 
 async def process_reminders(async_session_maker):
@@ -19,6 +36,7 @@ async def process_reminders(async_session_maker):
     Job periódico que busca turnos próximos a cumplirse y encola recordatorios.
     Protegido por Lock distribuido de Redis con TTL (EX 30) para evitar deadlocks de instancia.
     """
+    redis_client = _get_redis_client()
     lock_key = "reminder-job-lock"
     lock_value = uuid4().hex
 
@@ -78,6 +96,7 @@ async def process_deposit_expiration(async_session_maker):
     liberan el horario (el ExcludeConstraint solo bloquea pending/confirmed).
     Mismo patrón de lock distribuido que los demás jobs.
     """
+    redis_client = _get_redis_client()
     lock_key = "deposit-expiration-job-lock"
     lock_value = uuid4().hex
 
@@ -138,6 +157,7 @@ async def process_mp_token_refresh(async_session_maker):
 
     Mismo patrón de lock distribuido en Redis que los demás jobs.
     """
+    redis_client = _get_redis_client()
     lock_key = "mp-token-refresh-job-lock"
     lock_value = uuid4().hex
 
