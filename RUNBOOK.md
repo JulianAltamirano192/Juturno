@@ -66,6 +66,52 @@ sleep 10
 curl http://localhost:8000/health
 ```
 
+**Causa E — El contenedor crashea con `ValidationError` (env var faltante en producción)**
+
+**Síntoma específico**: en producción, `curl https://api.juturno.com/health` devuelve 503 y Traefik responde `no available server`. En el VPS, el contenedor de la API aparece en `Restarting` (crash loop).
+
+```bash
+# En el VPS:
+ssh julian@46.224.147.8
+
+# 1. Ver el estado del contenedor de la API
+sudo docker ps -a | grep api-
+
+# 2. Ver los logs del contenedor en crash loop
+sudo docker logs <container_api_id> --tail=50
+```
+
+**Buscar en los logs**: `pydantic_core.ValidationError` con mensaje tipo:
+```
+Value error, SECRET_KEY cannot be the default value in production!
+```
+
+**Causa**: alguna variable de entorno requerida falta o tiene el valor default en un entorno con `ENVIRONMENT=production`. El validador de `config.py` rechaza el arranque para prevenir un deploy inseguro (ver D-014 en `DECISIONS.md`).
+
+**Variables críticas a verificar en Coolify**:
+- `SECRET_KEY` — obligatoria en producción, no puede ser el default `change-this-secret-key-in-production-juturno`.
+- `META_APP_SECRET` — obligatoria si hay webhooks de Meta activos.
+- `MP_TOKEN_ENCRYPTION_KEY` — obligatoria si hay tenants con OAuth MP conectado (clave Fernet válida).
+
+**Fix**:
+1. Ir al panel de Coolify: `http://46.224.147.8:8000`
+2. Proyecto `Juturno` → `juturno-api` → menú lateral **Environment Variables**.
+3. Agregar la variable faltante con un valor seguro. Para `SECRET_KEY`, generar uno:
+   ```bash
+   openssl rand -hex 32
+   ```
+   Guardarlo en el gestor de secretos y pegarlo en Coolify.
+4. **Actions** → **Deploy**. Esperar 2-3 minutos (build + arranque).
+5. Verificar desde el host:
+   ```bash
+   curl -s https://api.juturno.com/health
+   # Esperado: {"status":"ok","checks":{"api":"ok","database":"ok","redis":"ok"}}
+   ```
+
+**Prevención**: antes de cada deploy a producción, verificar que TODAS las variables requeridas por `app/config.py` (clase `Settings`) estén seteadas en Coolify. La lista completa está en el archivo; las críticas para arranque son `SECRET_KEY`, `DATABASE_URL`, `REDIS_URL`.
+
+**Referencia**: D-014 en `DECISIONS.md`.
+
 ### Verificación
 
 ```bash
@@ -250,6 +296,76 @@ docker compose exec db psql -U postgres -d saas_db -c \
 ```
 
 Si `payment_events.status = 'processed'` pero no hay `payment` con `approved`, hubo un error interno. Revisar Sentry.
+
+### MP OAuth: tokens vencidos o refresh fallido
+
+**Contexto**: cada tenant conecta su propia cuenta de Mercado Pago vía OAuth (ver D-012 en `DECISIONS.md`). Los tokens viven ~180 días y se renuevan automáticamente vía el job diario `process_mp_token_refresh`. Si MP rechaza el refresh (usuario revocó permisos, cambió contraseña, etc.), el tenant queda desconectado hasta que reconecte manualmente.
+
+**Síntomas**:
+- Un negocio no puede cobrar: `POST /public/bookings` devuelve 400 con mensaje de MP.
+- Los webhooks de MP del tenant no procesan pagos.
+- Sentry reporta errores de `MPTokenCryptoError` o `refresh_tenant_mp_token` fallando.
+- El panel del dueño muestra "Mercado Pago desconectado".
+
+**Diagnóstico**:
+
+```bash
+# Ver el estado de conexión de cada tenant
+docker compose exec -T db psql -U postgres -d saas_db << 'EOF'
+SELECT
+  id,
+  name,
+  mp_user_id,
+  mp_alias,
+  mp_token_expires_at,
+  CASE
+    WHEN mp_access_token_enc IS NULL THEN 'sin conexión'
+    WHEN mp_token_expires_at < NOW() THEN 'vencido'
+    WHEN mp_token_expires_at < NOW() + INTERVAL '7 days' THEN 'por vencer'
+    ELSE 'ok'
+  END AS estado
+FROM tenant
+ORDER BY mp_token_expires_at NULLS FIRST;
+EOF
+```
+
+**Interpretación**:
+- `sin conexión`: el tenant nunca conectó su cuenta MP. Los pagos usan el fallback de plataforma (`MP_ACCESS_TOKEN`).
+- `vencido`: el token venció y el refresh falló. Requiere reconexión manual.
+- `por vencer`: el job diario lo va a renovar en la próxima corrida.
+- `ok`: no hay nada que hacer.
+
+**Remediación**:
+
+**Caso 1 — El tenant nunca conectó MP (esperado)**:
+- Los pagos van a la cuenta de la plataforma (`MP_ACCESS_TOKEN`).
+- El dueño debería ir a `/mp/connect/start` para conectar su cuenta.
+
+**Caso 2 — El token venció y el refresh falló**:
+- El dueño del negocio debe ir a su panel → **Conectar Mercado Pago** → `/mp/connect/start` para reconectar.
+- No se puede forzar el refresh desde el backend; MP requiere interacción del usuario (OAuth consent).
+
+**Caso 3 — El refresh se ejecutó pero falló por error transitorio**:
+- Correr el job manualmente para forzar el retry:
+  ```bash
+  docker compose exec api python -c "
+  import asyncio
+  from app.database import async_session_maker
+  from app.scheduler import process_mp_token_refresh
+  asyncio.run(process_mp_token_refresh(async_session_maker))
+  "
+  ```
+- Verificar en logs: `docker compose logs api --tail=20 | grep "Refresh de tokens MP"`.
+
+**Caso 4 — `MP_TOKEN_ENCRYPTION_KEY` cambió (imposible descifrar)**:
+- Si se rota la clave Fernet, los tokens guardados son indescifrables.
+- Todos los tenants con MP conectado deben reconectar manualmente.
+- **Prevención**: rotar `MP_TOKEN_ENCRYPTION_KEY` requiere un plan de migración previo (no implementado hoy — deuda técnica anotada).
+
+**Prevención**:
+- El job diario `process_mp_token_refresh` renueva tokens con 30 días de anticipación (`REFRESH_AHEAD_DAYS` en `app/mp_connect.py`).
+- Monitorear logs de MP OAuth para detectar fallos tempranos.
+- El panel del dueño muestra el estado de conexión MP en `/dashboard`.
 
 ---
 

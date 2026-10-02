@@ -330,6 +330,59 @@ Plan de implementación aprobado: [`PLAN_MP_POR_TENANT.md`](PLAN_MP_POR_TENANT.m
 
 ---
 
+## D-013: Sesiones firmadas para panel web + session_version
+
+**Fecha**: Septiembre 2026
+
+**Contexto**: El panel del negocio (dueño/staff) necesita autenticación web separada del API key que usan los clientes. El dueño debe poder iniciar sesión con email + password, y al cambiar su contraseña todas las sesiones activas deben invalidarse inmediatamente.
+
+**Decisión**: Cookie firmada HMAC-SHA256 con payload `{tenant_id}.{session_version}.{expires_at}`. La cookie se llama `juturno_session`. La tabla `tenant` tiene un campo `session_version` (int, default 1, server_default) que se incrementa al cambiar contraseña o hacer logout masivo.
+
+**Alternativas consideradas**:
+- **JWT**: requiere blacklist para revocación (complejidad extra en Redis/DB).
+- **Session server-side en Redis**: agrega dependencia para sesiones, pero funciona.
+- **Cookie sin firma**: obviamente inaceptable.
+
+**Consecuencias**:
+- ✅ **Stateless**: no hay storage de sesiones, la cookie lleva toda la info.
+- ✅ **Invalidación instantánea**: cambiar `session_version` invalida TODAS las sesiones del tenant en un solo UPDATE.
+- ✅ **Timing-safe**: usa `hmac.compare_digest` en la validación.
+- ✅ **Sin dependencia extra**: HMAC está en stdlib.
+- ⚠️ **Rotación de SECRET_KEY**: si se rota `SECRET_KEY`, todas las sesiones activas se invalidan (comportamiento deseado, pero requiere aviso a usuarios).
+- 📌 **Deuda**: no hay endpoint de "cerrar sesión en todos los dispositivos" como tal — se hace incrementando `session_version` manualmente o desde un endpoint admin.
+
+**Implementación**: `app/session.py` con `create_session_token()` y `parse_session_token()`. La dependencia `get_current_tenant_from_session` en `app/auth.py` valida la cookie y compara `session_version` con el valor en DB.
+
+---
+
+## D-014: SECRET_KEY no puede usar el valor default en producción
+
+**Fecha**: Octubre 2026
+
+**Contexto**: Durante el deploy inicial en el VPS con Coolify, el contenedor de la API entraba en crash loop con `pydantic_core.ValidationError: SECRET_KEY cannot be the default value in production`. El contenedor arrancaba, `Settings()` fallaba al validar, uvicorn no cargaba la app, y Coolify lo reiniciaba indefinidamente. Traefik respondía 503 "no available server" durante más de una hora.
+
+La causa raíz: `config.py` tiene un validador que rechaza `SECRET_KEY == "change-this-secret-key-in-production-juturno"` cuando `ENVIRONMENT == "production"`. Es una defensa **correcta** (evita que un deploy en producción use el default), pero bloquea el arranque si nadie setea la variable.
+
+**Decisión**: **Mantener el validador tal cual está.** Es la defensa correcta. El fix no es en código, es en el proceso de deploy:
+1. `SECRET_KEY` debe estar listada como variable **obligatoria** en el `.env.example` y en el README.
+2. Coolify debe tener `SECRET_KEY` seteada antes del primer deploy en producción.
+3. El RUNBOOK documenta este incidente con su síntoma y diagnóstico.
+
+**Alternativas consideradas**:
+- **Permitir el default con warning**: peligroso, alguien podría deployar a producción con el default y firmar cookies con un secreto público.
+- **Generar SECRET_KEY automáticamente al arrancar**: imposible, invalidaría sesiones en cada restart.
+- **Fallback a un valor derivado**: complica debugging y crea dependencias entre variables.
+
+**Consecuencias**:
+- ✅ **Falla ruidosamente**: imposible deployar a producción con el default silenciosamente.
+- ✅ **Fuerza la configuración explícita**: el operador tiene que tomar una decisión consciente.
+- ⚠️ **Requiere documentación clara**: si no está en el RUNBOOK, el siguiente operador puede perder 30 min diagnosticando el mismo crash.
+- 📌 **Deuda**: la rotación de `SECRET_KEY` no está documentada como procedimiento (invalidaría todas las sesiones activas — aceptable pero requiere aviso previo).
+
+**Relacionado**: `META_APP_SECRET` y `MP_TOKEN_ENCRYPTION_KEY` tienen la misma categoría de "crítica en producción" pero sin validador. Deberían agregarse en un futuro pass.
+
+---
+
 ## Roadmap de deuda técnica
 
 Ordenado por impacto/urgencia estimada:
