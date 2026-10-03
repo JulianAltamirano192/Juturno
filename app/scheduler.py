@@ -1,13 +1,15 @@
 import asyncio
 import logging
-from uuid import uuid4
 from datetime import datetime, timedelta, timezone
-import redis.asyncio as redis
-from sqlalchemy import select, and_
+from uuid import uuid4
 
-from app.models import Booking, Tenant, NotificationOutbox
-from app.mp_connect import refresh_tenant_mp_token, REFRESH_AHEAD_DAYS
+import redis.asyncio as redis
+from sqlalchemy import and_, select
+
+from app.booking_actions import transition_booking_status
 from app.config import settings
+from app.models import Booking, NotificationOutbox, Tenant
+from app.mp_connect import REFRESH_AHEAD_DAYS, refresh_tenant_mp_token
 
 logger = logging.getLogger(__name__)
 
@@ -134,8 +136,9 @@ async def process_deposit_expiration(async_session_maker):
                     minutes=tenant.deposit_expiration_minutes
                 )
                 if now > deadline:
-                    booking.status = "expired"
-                    session.add(booking)
+                    await transition_booking_status(
+                        session, booking, "expired", actor="system"
+                    )
                     expired_count += 1
 
             if expired_count:

@@ -22,6 +22,19 @@
   .badge-expired{background:#f1f5f9;color:var(--muted)}
   .badge-cancelled{background:var(--danger-bg);color:var(--danger)}
   .badge-no_show{background:#fef2f2;color:#b91c1c}
+  .badge-completed{background:#dbeafe;color:#1e40af}
+  .actions-cell{display:flex;gap:6px;flex-wrap:wrap}
+  .inline-form{display:inline}
+  .btn-action{padding:5px 10px;border-radius:6px;font-size:.75rem;font-weight:600;border:1px solid var(--border);background:#fff;color:var(--text);cursor:pointer;white-space:nowrap}
+  .btn-action:hover{background:#f8fafc}
+  .btn-action-confirm{color:#065f46;border-color:#a7f3d0}
+  .btn-action-confirm:hover{background:#ecfdf5}
+  .btn-action-ok{color:#1e40af;border-color:#bfdbfe}
+  .btn-action-ok:hover{background:#eff6ff}
+  .btn-action-warn{color:#b45309;border-color:#fde68a}
+  .btn-action-warn:hover{background:#fffbeb}
+  .btn-action-danger{color:var(--danger);border-color:#fecaca}
+  .btn-action-danger:hover{background:var(--danger-bg)}
   .empty-state{text-align:center;padding:48px 0;color:var(--muted)}
 </style>
 
@@ -45,6 +58,7 @@
         <th>Cliente</th>
         <th>Servicio</th>
         <th>Estado</th>
+        <th>Acciones</th>
       </tr>
     </thead>
     <tbody>
@@ -57,6 +71,42 @@
         </td>
         <td>{{ item.service_name }}</td>
         <td><span class="badge badge-{{ item.status }}">{{ item.status_label }}</span></td>
+        <td class="actions-cell">
+          {% if item.status == 'pending' %}
+            <form method="POST" action="/panel/agenda/{{ item.booking_id }}/confirm" class="inline-form">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <input type="hidden" name="day" value="{{ target_day.isoformat() }}">
+              <button type="submit" class="btn-action btn-action-confirm">Confirmar</button>
+            </form>
+            <form method="POST" action="/panel/agenda/{{ item.booking_id }}/cancel" class="inline-form"
+                  onsubmit="this.reason.value = prompt('Motivo de cancelación (opcional):') || '';">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <input type="hidden" name="day" value="{{ target_day.isoformat() }}">
+              <input type="hidden" name="reason" value="">
+              <button type="submit" class="btn-action btn-action-danger">Cancelar</button>
+            </form>
+          {% elif item.status == 'confirmed' %}
+            <form method="POST" action="/panel/agenda/{{ item.booking_id }}/complete" class="inline-form"
+                  onsubmit="return confirm('¿Marcar este turno como completado?');">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <input type="hidden" name="day" value="{{ target_day.isoformat() }}">
+              <button type="submit" class="btn-action btn-action-ok">Completar</button>
+            </form>
+            <form method="POST" action="/panel/agenda/{{ item.booking_id }}/no-show" class="inline-form"
+                  onsubmit="return confirm('¿Marcar como no-show? El cliente no se presentó.');">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <input type="hidden" name="day" value="{{ target_day.isoformat() }}">
+              <button type="submit" class="btn-action btn-action-warn">No-show</button>
+            </form>
+            <form method="POST" action="/panel/agenda/{{ item.booking_id }}/cancel" class="inline-form"
+                  onsubmit="this.reason.value = prompt('Motivo de cancelación (opcional):') || '';">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <input type="hidden" name="day" value="{{ target_day.isoformat() }}">
+              <input type="hidden" name="reason" value="">
+              <button type="submit" class="btn-action btn-action-danger">Cancelar</button>
+            </form>
+          {% endif %}
+        </td>
       </tr>
       {% endfor %}
     </tbody>

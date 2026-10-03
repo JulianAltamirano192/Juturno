@@ -1,22 +1,24 @@
-import hmac
 import hashlib
+import hmac
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
-import httpx
-from fastapi import APIRouter, Request, Header, Depends, Response, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy import select, and_, func
+from typing import Any
 
+import httpx
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
+from sqlalchemy import and_, func, select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.booking_actions import transition_booking_status
+from app.config import settings
+from app.database import get_db
 from app.models import (
-    ProcessedWebhookEvent,
-    Payment,
     Booking,
     NotificationOutbox,
+    Payment,
+    ProcessedWebhookEvent,
     Tenant,
 )
-from app.database import get_db
-from app.config import settings
 from app.mp_crypto import decrypt_token
 
 router = APIRouter()
@@ -31,8 +33,8 @@ _WEBHOOK_TS_TOLERANCE = 300  # 5 minutos
 
 
 async def get_payment_details(
-    data_id: str, access_token: Optional[str] = None
-) -> Optional[Dict[str, Any]]:
+    data_id: str, access_token: str | None = None
+) -> dict[str, Any] | None:
     """
     Consulta la API de MP y devuelve el JSON completo del pago.
     Devuelve None si MP responde 404 (pago no existe en su sistema).
@@ -65,9 +67,9 @@ async def create_mp_preference(
     amount: float,
     client_name: str,
     notification_url: str = "https://api.juturno.com/webhooks/mercadopago",
-    back_url: Optional[str] = None,
-    access_token: Optional[str] = None,
-) -> Dict[str, str]:
+    back_url: str | None = None,
+    access_token: str | None = None,
+) -> dict[str, str]:
     """
     Crea una preferencia de pago en Mercado Pago y devuelve
     {"preference_id": ..., "init_point": ..., "sandbox_init_point": ...,
@@ -249,8 +251,8 @@ def _extract_event_type(payload: dict, request: Request) -> str:
 
 
 def _parse_booking_id_from_external_reference(
-    external_ref: Optional[str],
-) -> Optional[int]:
+    external_ref: str | None,
+) -> int | None:
     """
     Extrae el booking_id del external_reference.
     Formato esperado: 'booking-23' → 23
@@ -266,7 +268,7 @@ def _parse_booking_id_from_external_reference(
         return None
 
 
-def _parse_mp_datetime(value: Optional[str]) -> Optional[datetime]:
+def _parse_mp_datetime(value: str | None) -> datetime | None:
     """Convierte un datetime ISO de MP a datetime tz-aware."""
     if not value:
         return None
@@ -302,8 +304,8 @@ async def _slot_still_free(session: AsyncSession, booking: Booking) -> bool:
 
 
 async def _resolve_token_for_payment(
-    session: AsyncSession, payload: Dict[str, Any]
-) -> Optional[str]:
+    session: AsyncSession, payload: dict[str, Any]
+) -> str | None:
     """
     Determina con qué token consultar a MP este pago (webhook recibido).
 
@@ -458,19 +460,14 @@ async def mercadopago_webhook(
                 webhook_event.booking_id = booking.id
 
                 # Solo cambiar estado a confirmed si estaba en pending
-                if booking.status == "pending":
-                    booking.status = "confirmed"
-                    session.add(booking)
-
-                # Pago aprobado tardío sobre una reserva ya expirada (pagó la
-                # seña después del límite): se re-confirma solo si nadie más
-                # tomó el horario. Si fue tomado, la reserva queda expirada y
-                # el depósito queda en manos del negocio para su devolución.
-                elif booking.status == "expired" and await _slot_still_free(
-                    session, booking
+                if (
+                    booking.status == "pending"
+                    or booking.status == "expired"
+                    and await _slot_still_free(session, booking)
                 ):
-                    booking.status = "confirmed"
-                    session.add(booking)
+                    await transition_booking_status(
+                        session, booking, "confirmed", actor="webhook_mp"
+                    )
 
                 # Generar outbox de confirmación si el booking está confirmado y no existe previa
                 if booking.status == "confirmed":

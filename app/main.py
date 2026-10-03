@@ -1,73 +1,79 @@
 # app/main.py
+import logging
+from contextlib import asynccontextmanager
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
-from typing import Optional, List, Annotated
-from contextlib import asynccontextmanager
-from zoneinfo import ZoneInfo
-import logging
 from pathlib import Path
+from typing import Annotated
+from zoneinfo import ZoneInfo
 
+import redis.asyncio as aioredis
 import sentry_sdk
-from sentry_sdk.integrations.fastapi import FastApiIntegration
-from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
-from sentry_sdk.integrations.httpx import HttpxIntegration
-
-from fastapi import FastAPI, Depends, HTTPException, Query, Request, Form, status
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, text
+from sentry_sdk.integrations.fastapi import FastApiIntegration
+from sentry_sdk.integrations.httpx import HttpxIntegration
+from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
+from sqlalchemy import and_, select, text
 from sqlalchemy.exc import IntegrityError
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-import redis.asyncio as aioredis
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth import (
+    RedirectToLoginException,
+    get_current_tenant,
+    get_current_tenant_from_session,
+)
+from app.booking_actions import (
+    BookingNotStartedError,
+    InvalidTransitionError,
+    transition_booking_status,
+)
+from app.config import settings
+from app.csrf import (
+    CSRF_COOKIE_NAME,
+    generate_csrf_token,
+    set_csrf_cookie,
+    validate_csrf,
+    validate_csrf_double_submit,
+)
 from app.database import async_session_maker, get_db
-from app.models import Tenant, Service, Staff, Booking, Payment, BusinessHours
+from app.models import Booking, BusinessHours, Payment, Service, Staff, Tenant
+from app.mp_connect import (
+    ERR_PAGO_NO_CONFIGURADO,
+    resolve_mp_access_token,
+)
+from app.mp_connect import (
+    router as mp_connect_router,
+)
+from app.mp_crypto import MPTokenCryptoError
+from app.mp_webhooks import create_mp_preference
+from app.mp_webhooks import router as mp_router
+from app.outbox_worker import process_outbox
+from app.password import hash_password, verify_password
+from app.phone import InvalidPhoneError, normalize_whatsapp_phone
+from app.scheduler import (
+    process_deposit_expiration,
+    process_mp_token_refresh,
+    process_reminders,
+)
 from app.services import (
     calculate_available_slots,
     effective_deposit,
     resolve_day_windows,
 )
-from app.scheduler import (
-    process_reminders,
-    process_deposit_expiration,
-    process_mp_token_refresh,
-)
-from app.outbox_worker import process_outbox
-from app.mp_webhooks import router as mp_router, create_mp_preference
-from app.mp_connect import (
-    router as mp_connect_router,
-    resolve_mp_access_token,
-    ERR_PAGO_NO_CONFIGURADO,
-)
-from app.mp_crypto import MPTokenCryptoError
-from app.phone import InvalidPhoneError, normalize_whatsapp_phone
-from app.webhooks import router as whatsapp_router
-from app.config import settings
-from app.auth import (
-    get_current_tenant,
-    get_current_tenant_from_session,
-    RedirectToLoginException,
-)
-from app.csrf import (
-    validate_csrf,
-    generate_csrf_token,
-    set_csrf_cookie,
-    validate_csrf_double_submit,
-    CSRF_COOKIE_NAME,
-)
-from app.password import hash_password, verify_password
-from app.slug import generate_unique_slug
 from app.session import (
-    set_session_cookie,
+    SESSION_COOKIE_NAME,
     delete_session_cookie,
     parse_session_token,
     sanitize_next_url,
-    SESSION_COOKIE_NAME,
+    set_session_cookie,
 )
-
+from app.slug import generate_unique_slug
+from app.webhooks import router as whatsapp_router
 
 # --- SENTRY (inicializar antes de crear la app) ---
 if settings.SENTRY_DSN:
@@ -235,7 +241,7 @@ class SlotQuery(BaseModel):
     tenant_id: int = Field(gt=0, description="ID del negocio")
     service_id: int = Field(gt=0, description="ID del servicio requerido")
     day: date = Field(description="Fecha a consultar YYYY-MM-DD")
-    staff_id: Optional[int] = Field(default=None, description="ID del profesional")
+    staff_id: int | None = Field(default=None, description="ID del profesional")
 
     @field_validator("day", mode="before")
     @classmethod
@@ -250,7 +256,7 @@ class AvailableSlotsResponse(BaseModel):
     date: date
     service_duration_min: int
     timezone: str
-    slots: List[str]
+    slots: list[str]
 
 
 class PublicServiceRead(BaseModel):
@@ -266,9 +272,9 @@ class PublicServiceRead(BaseModel):
 class PublicTenantDetailResponse(BaseModel):
     id: int
     name: str
-    slug: Optional[str] = None
+    slug: str | None = None
     timezone: str
-    services: List[PublicServiceRead]
+    services: list[PublicServiceRead]
 
 
 class PublicBookingResponse(BaseModel):
@@ -283,12 +289,12 @@ class PublicBookingResponse(BaseModel):
 class BookingCreate(BaseModel):
     tenant_id: int
     service_id: int
-    staff_id: Optional[int] = None
+    staff_id: int | None = None
     client_name: str
     client_phone: str
     start_time: datetime
-    end_time: Optional[datetime] = None
-    price_at_booking: Optional[float] = None
+    end_time: datetime | None = None
+    price_at_booking: float | None = None
     idempotency_key: str
 
 
@@ -300,7 +306,7 @@ async def get_available_slots(
     tenant_id: Annotated[int, Query(gt=0, description="ID del negocio")],
     service_id: Annotated[int, Query(gt=0, description="ID del servicio")],
     day: Annotated[date, Query(description="Fecha YYYY-MM-DD")],
-    staff_id: Annotated[Optional[int], Query(description="ID del profesional")] = None,
+    staff_id: Annotated[int | None, Query(description="ID del profesional")] = None,
     current_tenant: Tenant = Depends(get_current_tenant),
     session: AsyncSession = Depends(get_db),
 ):
@@ -499,7 +505,7 @@ async def create_booking(
 class TenantSettingsUpdate(BaseModel):
     """Campos de configuración que el tenant puede actualizar de sí mismo."""
 
-    deposit_expiration_minutes: Optional[int] = Field(default=None, ge=1)
+    deposit_expiration_minutes: int | None = Field(default=None, ge=1)
 
 
 @app.patch("/tenants/me")
@@ -574,7 +580,7 @@ async def get_public_available_slots(
     tenant_id: Annotated[int, Query(gt=0, description="ID del negocio")],
     service_id: Annotated[int, Query(gt=0, description="ID del servicio")],
     day: Annotated[date, Query(description="Fecha YYYY-MM-DD")],
-    staff_id: Annotated[Optional[int], Query(description="ID del profesional")] = None,
+    staff_id: Annotated[int | None, Query(description="ID del profesional")] = None,
     session: AsyncSession = Depends(get_db),
 ):
     """Devuelve los slots libres para un servicio/día (público sin API Key)."""
@@ -926,9 +932,9 @@ async def register_submit(
     name: Annotated[str, Form()],
     owner_email: Annotated[str, Form()],
     password: Annotated[str, Form()],
-    whatsapp_number: Annotated[Optional[str], Form()] = None,
-    slug: Annotated[Optional[str], Form()] = None,
-    csrf_token: Annotated[Optional[str], Form()] = None,
+    whatsapp_number: Annotated[str | None, Form()] = None,
+    slug: Annotated[str | None, Form()] = None,
+    csrf_token: Annotated[str | None, Form()] = None,
     session: AsyncSession = Depends(get_db),
 ):
     """
@@ -1029,8 +1035,8 @@ async def register_submit(
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(
     request: Request,
-    registered: Optional[str] = Query(None),
-    next: Optional[str] = Query(None),
+    registered: str | None = Query(None),
+    next: str | None = Query(None),
     session: AsyncSession = Depends(get_db),
 ):
     """Muestra el formulario de inicio de sesión."""
@@ -1075,8 +1081,8 @@ async def login_submit(
     request: Request,
     owner_email: Annotated[str, Form()],
     password: Annotated[str, Form()],
-    next: Annotated[Optional[str], Form()] = None,
-    csrf_token: Annotated[Optional[str], Form()] = None,
+    next: Annotated[str | None, Form()] = None,
+    csrf_token: Annotated[str | None, Form()] = None,
     session: AsyncSession = Depends(get_db),
 ):
     """Valida credenciales e inicia sesión estableciendo cookie firmada."""
@@ -1205,7 +1211,7 @@ def _parse_service_form(form: dict) -> tuple[dict, dict]:
     else:
         try:
             deposit = Decimal(deposit_raw.replace(",", "."))
-            if deposit < Decimal("0"):
+            if deposit < Decimal(0):
                 raise ValueError
             data["deposit_amount"] = deposit
         except Exception:
@@ -1935,6 +1941,7 @@ _AGENDA_STATUS_LABELS = {
     "expired": "Expirado",
     "cancelled": "Cancelado",
     "no_show": "No se presentó",
+    "completed": "Completado",
 }
 
 
@@ -1969,7 +1976,7 @@ def _format_agenda_day_label(d: date) -> str:
 @app.get("/panel/agenda", response_class=HTMLResponse)
 async def panel_agenda(
     request: Request,
-    day: Annotated[Optional[str], Query()] = None,
+    day: Annotated[str | None, Query()] = None,
     tenant: Tenant = Depends(get_current_tenant_from_session),
     session: AsyncSession = Depends(get_db),
 ):
@@ -2048,3 +2055,103 @@ async def panel_agenda(
     )
     set_csrf_cookie(response, csrf_token)
     return response
+
+
+# --- PANEL AGENDA: acciones sobre turno (Tarea 8) ---
+
+_AGENDA_ACTION_REDIRECT = "/panel/agenda"
+
+
+async def _load_booking_for_tenant(
+    session: AsyncSession, booking_id: int, tenant: Tenant
+) -> Booking:
+    booking = await session.get(Booking, booking_id)
+    if not booking or booking.tenant_id != tenant.id:
+        raise HTTPException(status_code=404, detail="Turno no encontrado")
+    return booking
+
+
+def _redirect_to_agenda(day: str | None = None) -> RedirectResponse:
+    url = _AGENDA_ACTION_REDIRECT
+    if day:
+        url = f"{url}?day={day}"
+    return RedirectResponse(url=url, status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.post("/panel/agenda/{booking_id}/confirm", response_class=HTMLResponse)
+async def panel_agenda_confirm(
+    request: Request,
+    booking_id: int,
+    day: Annotated[str | None, Form()] = None,
+    tenant: Tenant = Depends(get_current_tenant_from_session),
+    session: AsyncSession = Depends(get_db),
+):
+    await validate_csrf(request)
+    booking = await _load_booking_for_tenant(session, booking_id, tenant)
+    try:
+        await transition_booking_status(session, booking, "confirmed", actor="owner")
+    except InvalidTransitionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    await session.commit()
+    return _redirect_to_agenda(day)
+
+
+@app.post("/panel/agenda/{booking_id}/cancel", response_class=HTMLResponse)
+async def panel_agenda_cancel(
+    request: Request,
+    booking_id: int,
+    reason: Annotated[str | None, Form()] = None,
+    day: Annotated[str | None, Form()] = None,
+    tenant: Tenant = Depends(get_current_tenant_from_session),
+    session: AsyncSession = Depends(get_db),
+):
+    await validate_csrf(request)
+    booking = await _load_booking_for_tenant(session, booking_id, tenant)
+    try:
+        await transition_booking_status(
+            session, booking, "cancelled", actor="owner", reason=reason
+        )
+    except InvalidTransitionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    await session.commit()
+    return _redirect_to_agenda(day)
+
+
+@app.post("/panel/agenda/{booking_id}/no-show", response_class=HTMLResponse)
+async def panel_agenda_no_show(
+    request: Request,
+    booking_id: int,
+    day: Annotated[str | None, Form()] = None,
+    tenant: Tenant = Depends(get_current_tenant_from_session),
+    session: AsyncSession = Depends(get_db),
+):
+    await validate_csrf(request)
+    booking = await _load_booking_for_tenant(session, booking_id, tenant)
+    try:
+        await transition_booking_status(session, booking, "no_show", actor="owner")
+    except InvalidTransitionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except BookingNotStartedError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    await session.commit()
+    return _redirect_to_agenda(day)
+
+
+@app.post("/panel/agenda/{booking_id}/complete", response_class=HTMLResponse)
+async def panel_agenda_complete(
+    request: Request,
+    booking_id: int,
+    day: Annotated[str | None, Form()] = None,
+    tenant: Tenant = Depends(get_current_tenant_from_session),
+    session: AsyncSession = Depends(get_db),
+):
+    await validate_csrf(request)
+    booking = await _load_booking_for_tenant(session, booking_id, tenant)
+    try:
+        await transition_booking_status(session, booking, "completed", actor="owner")
+    except InvalidTransitionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except BookingNotStartedError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    await session.commit()
+    return _redirect_to_agenda(day)
