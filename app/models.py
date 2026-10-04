@@ -1,6 +1,6 @@
 from datetime import datetime, timezone, time as time_type
 from decimal import Decimal
-from typing import Optional, List, Any
+from typing import Any
 from sqlmodel import SQLModel, Field, Relationship, Column, JSON
 from sqlalchemy import DateTime, Integer, Numeric, UniqueConstraint, Time as SATime
 from sqlalchemy.dialects.postgresql import ExcludeConstraint
@@ -15,12 +15,12 @@ class Tenant(SQLModel, table=True):
 
     __tablename__ = "tenant"
 
-    id: Optional[int] = Field(default=None, primary_key=True)
+    id: int | None = Field(default=None, primary_key=True)
     name: str = Field(index=True)
-    slug: Optional[str] = Field(default=None, index=True, unique=True)
-    whatsapp_number: Optional[str] = None
+    slug: str | None = Field(default=None, index=True, unique=True)
+    whatsapp_number: str | None = None
     timezone: str = Field(default="UTC")
-    deposit_expiration_minutes: Optional[int] = Field(
+    deposit_expiration_minutes: int | None = Field(
         default=15,
         sa_column=Column(Integer(), nullable=True),
         description=(
@@ -28,13 +28,13 @@ class Tenant(SQLModel, table=True):
             "la reserva expire y libere el horario. NULL = sin expiración."
         ),
     )
-    owner_email: Optional[str] = Field(
+    owner_email: str | None = Field(
         default=None,
         index=True,
         unique=True,
         description="Email del dueño del negocio para login en el panel.",
     )
-    password_hash: Optional[str] = Field(
+    password_hash: str | None = Field(
         default=None,
         description="Hash PBKDF2-HMAC-SHA256 de la contraseña del dueño.",
     )
@@ -46,45 +46,45 @@ class Tenant(SQLModel, table=True):
     # Credenciales de Mercado Pago conectadas vía OAuth (D-012).
     # Los tokens se guardan CIFRADOS con Fernet (app/mp_crypto.py) —
     # ningún token sensible se persiste en texto plano.
-    mp_user_id: Optional[str] = Field(
+    mp_user_id: str | None = Field(
         default=None,
         description="ID de la cuenta de MP conectada (collector_id).",
     )
-    mp_public_key: Optional[str] = Field(
+    mp_public_key: str | None = Field(
         default=None,
         description="Public key de la cuenta de MP (uso futuro p/ checkout).",
     )
-    mp_alias: Optional[str] = Field(
+    mp_alias: str | None = Field(
         default=None,
         description="Alias de la cuenta de MP, informativo (de /users/me).",
     )
-    mp_access_token_enc: Optional[str] = Field(
+    mp_access_token_enc: str | None = Field(
         default=None,
         description="Access token OAuth de MP, cifrado con Fernet.",
     )
-    mp_refresh_token_enc: Optional[str] = Field(
+    mp_refresh_token_enc: str | None = Field(
         default=None,
         description="Refresh token OAuth de MP, cifrado con Fernet.",
     )
-    mp_token_expires_at: Optional[datetime] = Field(
+    mp_token_expires_at: datetime | None = Field(
         default=None,
         sa_column=Column(DateTime(timezone=True), nullable=True),
         description="Cuándo vence el access token (MP: ~180 días).",
     )
 
-    services: List["Service"] = Relationship(
+    services: list["Service"] = Relationship(
         back_populates="tenant",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"},
     )
-    staff_members: List["Staff"] = Relationship(
+    staff_members: list["Staff"] = Relationship(
         back_populates="tenant",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"},
     )
-    bookings: List["Booking"] = Relationship(
+    bookings: list["Booking"] = Relationship(
         back_populates="tenant",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"},
     )
-    api_keys: List["ApiKey"] = Relationship(
+    api_keys: list["ApiKey"] = Relationship(
         back_populates="tenant",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"},
     )
@@ -97,20 +97,20 @@ class Service(SQLModel, table=True):
 
     __tablename__ = "service"
 
-    id: Optional[int] = Field(default=None, primary_key=True)
+    id: int | None = Field(default=None, primary_key=True)
     tenant_id: int = Field(foreign_key="tenant.id", index=True, ondelete="CASCADE")
     name: str
     duration_minutes: int
     price: Decimal = Field(sa_column=Column(Numeric(10, 2), nullable=False))
-    deposit_amount: Optional[Decimal] = Field(
+    deposit_amount: Decimal | None = Field(
         default=None,
         sa_column=Column(Numeric(10, 2), nullable=True),
         description="Monto de seña. Si es None, se usa el 30% del precio total.",
     )
     is_active: bool = Field(default=True, index=True)
 
-    tenant: Optional[Tenant] = Relationship(back_populates="services")
-    bookings: List["Booking"] = Relationship(
+    tenant: Tenant | None = Relationship(back_populates="services")
+    bookings: list["Booking"] = Relationship(
         back_populates="service",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"},
     )
@@ -123,13 +123,13 @@ class Staff(SQLModel, table=True):
 
     __tablename__ = "staff"
 
-    id: Optional[int] = Field(default=None, primary_key=True)
+    id: int | None = Field(default=None, primary_key=True)
     tenant_id: int = Field(foreign_key="tenant.id", index=True, ondelete="CASCADE")
     name: str
     is_active: bool = Field(default=True, index=True)
 
-    tenant: Optional[Tenant] = Relationship(back_populates="staff_members")
-    bookings: List["Booking"] = Relationship(back_populates="staff")
+    tenant: Tenant | None = Relationship(back_populates="staff_members")
+    bookings: list["Booking"] = Relationship(back_populates="staff")
 
 
 class BusinessHours(SQLModel, table=True):
@@ -157,9 +157,9 @@ class BusinessHours(SQLModel, table=True):
         ),
     )
 
-    id: Optional[int] = Field(default=None, primary_key=True)
+    id: int | None = Field(default=None, primary_key=True)
     tenant_id: int = Field(foreign_key="tenant.id", index=True, ondelete="CASCADE")
-    staff_id: Optional[int] = Field(
+    staff_id: int | None = Field(
         default=None,
         foreign_key="staff.id",
         index=True,
@@ -202,10 +202,10 @@ class Booking(SQLModel, table=True):
         ),
     )
 
-    id: Optional[int] = Field(default=None, primary_key=True)
+    id: int | None = Field(default=None, primary_key=True)
     tenant_id: int = Field(foreign_key="tenant.id", index=True, ondelete="CASCADE")
     service_id: int = Field(foreign_key="service.id", index=True, ondelete="CASCADE")
-    staff_id: Optional[int] = Field(
+    staff_id: int | None = Field(
         default=None, foreign_key="staff.id", index=True, ondelete="SET NULL"
     )
 
@@ -236,17 +236,17 @@ class Booking(SQLModel, table=True):
     idempotency_key: str = Field(index=True, unique=True)
 
     # --- Auditoría de acciones (Tarea 8) ---
-    status_changed_at: Optional[datetime] = Field(
+    status_changed_at: datetime | None = Field(
         default=None,
         sa_column=Column(DateTime(timezone=True), nullable=True),
     )
-    status_changed_by: Optional[str] = Field(default=None)
-    cancellation_reason: Optional[str] = Field(default=None)
-    no_show_at: Optional[datetime] = Field(
+    status_changed_by: str | None = Field(default=None)
+    cancellation_reason: str | None = Field(default=None)
+    no_show_at: datetime | None = Field(
         default=None,
         sa_column=Column(DateTime(timezone=True), nullable=True),
     )
-    completed_at: Optional[datetime] = Field(
+    completed_at: datetime | None = Field(
         default=None,
         sa_column=Column(DateTime(timezone=True), nullable=True),
     )
@@ -260,10 +260,10 @@ class Booking(SQLModel, table=True):
         ),
     )
 
-    tenant: Optional[Tenant] = Relationship(back_populates="bookings")
-    service: Optional[Service] = Relationship(back_populates="bookings")
-    staff: Optional[Staff] = Relationship(back_populates="bookings")
-    payments: List["Payment"] = Relationship(
+    tenant: Tenant | None = Relationship(back_populates="bookings")
+    service: Service | None = Relationship(back_populates="bookings")
+    staff: Staff | None = Relationship(back_populates="bookings")
+    payments: list["Payment"] = Relationship(
         back_populates="booking",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"},
     )
@@ -276,20 +276,20 @@ class Payment(SQLModel, table=True):
 
     __tablename__ = "payment"
 
-    id: Optional[int] = Field(default=None, primary_key=True)
+    id: int | None = Field(default=None, primary_key=True)
     booking_id: int = Field(foreign_key="booking.id", index=True, ondelete="CASCADE")
     amount: Decimal = Field(sa_column=Column(Numeric(10, 2), nullable=False))
-    mp_payment_id: Optional[str] = Field(default=None, index=True)
-    mp_preference_id: Optional[str] = Field(default=None, index=True)
-    mp_checkout_url: Optional[str] = Field(default=None)
+    mp_payment_id: str | None = Field(default=None, index=True)
+    mp_preference_id: str | None = Field(default=None, index=True)
+    mp_checkout_url: str | None = Field(default=None)
     method: str
     status: str = Field(index=True)
-    paid_at: Optional[datetime] = Field(
+    paid_at: datetime | None = Field(
         default=None,
         sa_column=Column(DateTime(timezone=True), nullable=True),
     )
 
-    booking: Optional[Booking] = Relationship(back_populates="payments")
+    booking: Booking | None = Relationship(back_populates="payments")
 
 
 class NotificationOutbox(SQLModel, table=True):
@@ -299,7 +299,7 @@ class NotificationOutbox(SQLModel, table=True):
 
     __tablename__ = "notification_outbox"
 
-    id: Optional[int] = Field(default=None, primary_key=True)
+    id: int | None = Field(default=None, primary_key=True)
     booking_id: int = Field(foreign_key="booking.id", index=True, ondelete="CASCADE")
     notification_type: str
 
@@ -314,7 +314,7 @@ class NotificationOutbox(SQLModel, table=True):
         sa_column_kwargs={"server_default": text("0")},
     )
 
-    error_message: Optional[str] = None
+    error_message: str | None = None
 
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
@@ -334,7 +334,7 @@ class ProcessedWebhookEvent(SQLModel, table=True):
     __tablename__ = "payment_events"
 
     event_id: str = Field(primary_key=True, index=True)
-    booking_id: Optional[int] = Field(
+    booking_id: int | None = Field(
         default=None,
         foreign_key="booking.id",
         index=True,
@@ -354,7 +354,7 @@ class ProcessedWebhookEvent(SQLModel, table=True):
         ),
     )
 
-    processed_at: Optional[datetime] = Field(
+    processed_at: datetime | None = Field(
         default=None,
         sa_column=Column(DateTime(timezone=True), nullable=True),
     )
@@ -373,22 +373,22 @@ class ApiKey(SQLModel, table=True):
 
     __tablename__ = "api_key"
 
-    id: Optional[int] = Field(default=None, primary_key=True)
+    id: int | None = Field(default=None, primary_key=True)
     tenant_id: int = Field(foreign_key="tenant.id", index=True, ondelete="CASCADE")
     key_hash: str = Field(index=True, unique=True)
-    label: Optional[str] = None
+    label: str | None = None
 
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
         sa_column=Column(DateTime(timezone=True), nullable=False),
     )
-    last_used_at: Optional[datetime] = Field(
+    last_used_at: datetime | None = Field(
         default=None,
         sa_column=Column(DateTime(timezone=True), nullable=True),
     )
-    revoked_at: Optional[datetime] = Field(
+    revoked_at: datetime | None = Field(
         default=None,
         sa_column=Column(DateTime(timezone=True), nullable=True),
     )
 
-    tenant: Optional[Tenant] = Relationship(back_populates="api_keys")
+    tenant: Tenant | None = Relationship(back_populates="api_keys")

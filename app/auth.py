@@ -14,7 +14,7 @@ Diseño:
 
 import hashlib
 from datetime import datetime, timedelta, timezone
-from typing import Annotated, Optional
+from typing import Annotated
 
 import redis.asyncio as redis
 from fastapi import Depends, Header, HTTPException, Request
@@ -52,7 +52,7 @@ def hash_api_key(key: str) -> str:
     return hashlib.sha256(key.encode("utf-8")).hexdigest()
 
 
-async def _get_cached_tenant_id(key_hash: str) -> Optional[int]:
+async def _get_cached_tenant_id(key_hash: str) -> int | None:
     cached = await _get_redis_client().get(_CACHE_PREFIX + key_hash)
     return int(cached) if cached is not None else None
 
@@ -64,7 +64,7 @@ async def _cache_tenant_id(key_hash: str, tenant_id: int) -> None:
 
 
 async def get_current_tenant(
-    x_tenant_api_key: Annotated[Optional[str], Header(alias="X-Tenant-API-Key")] = None,
+    x_tenant_api_key: Annotated[str | None, Header(alias="X-Tenant-API-Key")] = None,
     session: AsyncSession = Depends(get_db),
 ) -> Tenant:
     """

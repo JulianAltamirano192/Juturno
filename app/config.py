@@ -1,6 +1,5 @@
 # app/config.py
 from pydantic_settings import BaseSettings
-from typing import List
 
 
 class Settings(BaseSettings):
@@ -27,7 +26,7 @@ class Settings(BaseSettings):
     TEST_DATABASE_URL: str = ""
     META_VERIFY_TOKEN: str = ""
     META_APP_SECRET: str = ""
-    CORS_ORIGINS: List[str] = []
+    CORS_ORIGINS: list[str] = []
     SENTRY_DSN: str = ""
     ENVIRONMENT: str = "development"
     # URL pública donde vive la página de reserva (se usa para back_urls de MP)

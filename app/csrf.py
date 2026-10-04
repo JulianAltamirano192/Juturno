@@ -12,7 +12,7 @@ Diseño:
 
 import hmac
 import secrets
-from typing import Optional
+
 from fastapi import Response
 from app.config import settings
 
@@ -39,7 +39,7 @@ def set_csrf_cookie(response: Response, token: str) -> None:
 
 
 def validate_csrf_double_submit(
-    form_token: Optional[str], cookie_token: Optional[str]
+    form_token: str | None, cookie_token: str | None
 ) -> bool:
     """
     Valida que el token enviado en el formulario coincida exactamente con

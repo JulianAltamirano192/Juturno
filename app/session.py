@@ -14,7 +14,7 @@ Diseño:
 import hashlib
 import hmac
 import time
-from typing import Optional, Tuple
+
 from urllib.parse import urlparse
 from fastapi import Response
 from app.config import settings
@@ -42,7 +42,7 @@ def create_session_token(
     return f"{payload}.{signature}"
 
 
-def parse_session_token(token: Optional[str]) -> Optional[Tuple[int, int]]:
+def parse_session_token(token: str | None) -> tuple[int, int] | None:
     """
     Verifica y decodifica un token de sesión.
     Devuelve (tenant_id, session_version) si es válido y no expiró, o None.
@@ -105,7 +105,7 @@ def delete_session_cookie(response: Response) -> None:
     )
 
 
-def sanitize_next_url(next_url: Optional[str]) -> str:
+def sanitize_next_url(next_url: str | None) -> str:
     """
     Sanitiza el parámetro `next` para prevenir ataques de open redirect / phishing.
     Solo permite rutas relativas internas que comiencen con '/' y no con '//'.

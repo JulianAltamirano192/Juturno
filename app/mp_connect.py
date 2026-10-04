@@ -21,7 +21,7 @@ callback trae únicamente datos de estado (conectado, user_id, alias).
 
 import secrets
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Optional
+from typing import Any
 from urllib.parse import urlencode
 
 import httpx
@@ -61,7 +61,7 @@ async def _store_state(state: str, tenant_id: int) -> None:
         await client.aclose()
 
 
-async def _consume_state(state: str) -> Optional[int]:
+async def _consume_state(state: str) -> int | None:
     """Devuelve el tenant_id del state y lo borra (un solo uso), o None."""
     client = redis.from_url(settings.REDIS_URL, decode_responses=True)
     try:
@@ -76,7 +76,7 @@ async def _consume_state(state: str) -> Optional[int]:
         return None
 
 
-async def _exchange_code_for_tokens(code: str) -> Dict[str, Any]:
+async def _exchange_code_for_tokens(code: str) -> dict[str, Any]:
     """
     Canjea el authorization_code por tokens en el endpoint de MP.
     MP exige redirect_uri idéntico al de la URL de autorización; en sandbox
@@ -125,7 +125,7 @@ async def _exchange_code_for_tokens(code: str) -> Dict[str, Any]:
 
 async def _fetch_mp_profile(
     access_token: str,
-) -> tuple[Optional[str], Optional[str]]:
+) -> tuple[str | None, str | None]:
     """user_id y alias (nickname) de la cuenta recién autorizada.
     No es crítico: si falla, el tenant queda conectado igual."""
     try:
@@ -154,7 +154,7 @@ ERR_PAGO_NO_CONFIGURADO = (
 )
 
 
-def resolve_mp_access_token(tenant: Tenant) -> Optional[str]:
+def resolve_mp_access_token(tenant: Tenant) -> str | None:
     """
     Token OAuth con el que cobra este tenant, según la regla de D-012:
 
@@ -274,9 +274,9 @@ async def mp_connect_start(
 @router.get("/mp/connect/callback")
 async def mp_connect_callback(
     session: AsyncSession = Depends(get_db),
-    code: Optional[str] = Query(default=None),
-    state: Optional[str] = Query(default=None),
-    error: Optional[str] = Query(default=None),
+    code: str | None = Query(default=None),
+    state: str | None = Query(default=None),
+    error: str | None = Query(default=None),
 ):
     """
     Destino del redirect_uri registrado en MP Developers. Recibe el code,

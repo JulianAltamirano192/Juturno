@@ -1,9 +1,8 @@
 from datetime import datetime, timedelta
 from decimal import Decimal
-from typing import List, Optional, Tuple
 
 
-def effective_deposit(price: Decimal, deposit_amount: Optional[Decimal]) -> Decimal:
+def effective_deposit(price: Decimal, deposit_amount: Decimal | None) -> Decimal:
     """Monto de seña efectivo: el explícito, o 30% del precio si es None."""
     if deposit_amount is not None:
         return deposit_amount
@@ -11,11 +10,11 @@ def effective_deposit(price: Decimal, deposit_amount: Optional[Decimal]) -> Deci
 
 
 def calculate_available_slots(
-    windows: List[Tuple[datetime, datetime]],
-    bookings: List[Tuple[datetime, datetime]],
+    windows: list[tuple[datetime, datetime]],
+    bookings: list[tuple[datetime, datetime]],
     duration_min: int,
     granularity_min: int = 30,
-) -> List[str]:
+) -> list[str]:
     """
     Calcula los slots libres para una lista de ventanas de atención.
 
@@ -36,7 +35,7 @@ def calculate_available_slots(
     """
     # Normalizar bookings: merge solapamientos para simplificar la búsqueda
     bookings = sorted(bookings, key=lambda x: x[0])
-    merged_busy: List[List[datetime]] = []
+    merged_busy: list[list[datetime]] = []
     for b_start, b_end in bookings:
         if not merged_busy:
             merged_busy.append([b_start, b_end])
@@ -51,7 +50,7 @@ def calculate_available_slots(
     granularity = timedelta(minutes=granularity_min)
     gran_sec = granularity.total_seconds()
 
-    slots: List[str] = []
+    slots: list[str] = []
 
     for window_start, window_end in windows:
         # Obtener gaps libres dentro de esta ventana
@@ -95,7 +94,7 @@ async def resolve_day_windows(
     day_date,
     tenant_timezone,
     staff_id=None,
-) -> List[Tuple[datetime, datetime]]:
+) -> list[tuple[datetime, datetime]]:
     """
     Devuelve la lista de ventanas (window_start, window_end) para el día dado.
 
@@ -115,7 +114,7 @@ async def resolve_day_windows(
     FALLBACK_START = time_type(9, 0)
     FALLBACK_END = time_type(18, 0)
 
-    def make_windows(rows) -> List[Tuple[datetime, datetime]]:
+    def make_windows(rows) -> list[tuple[datetime, datetime]]:
         windows = []
         for row in rows:
             ws = datetime.combine(day_date, row.start_time, tzinfo=tenant_timezone)

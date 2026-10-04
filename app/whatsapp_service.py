@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from typing import Any, Dict
+from typing import Any
 import httpx
 
 logger = logging.getLogger(__name__)
@@ -46,7 +46,7 @@ class WhatsAppService:
         }
 
     async def _send_request_with_retry(
-        self, payload: Dict[str, Any], max_retries: int = 3
+        self, payload: dict[str, Any], max_retries: int = 3
     ) -> httpx.Response:
         """
         Envía la petición a Meta manejando Timeouts, 429 (Rate Limit) y 5xx.

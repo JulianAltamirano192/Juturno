@@ -4,7 +4,7 @@ Normalización y generación de slugs únicos para negocios (tenants).
 
 import re
 import unicodedata
-from typing import Optional
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import Tenant
@@ -28,7 +28,7 @@ def slugify(text: str) -> str:
 async def generate_unique_slug(
     session: AsyncSession,
     base_text: str,
-    exclude_tenant_id: Optional[int] = None,
+    exclude_tenant_id: int | None = None,
 ) -> str:
     """
     Genera un slug único para un Tenant. Si ya existe, añade un sufijo numérico (-2, -3, ...).
