@@ -12,7 +12,12 @@
       "Bash(mypy:*)",
       "Bash(docker compose ps:*)",
       "Bash(docker compose logs:*)",
-      "Bash(docker compose exec api alembic:*)",
+      "Bash(docker compose exec api alembic current:*)",
+      "Bash(docker compose exec api alembic heads:*)",
+      "Bash(docker compose exec api alembic history:*)",
+      "Bash(docker compose exec api alembic upgrade:*)",
+      "Bash(docker compose exec api alembic revision:*)",
+      "Bash(docker compose exec api alembic show:*)",
       "Bash(docker compose up:*)"
     ],
     "ask": [
