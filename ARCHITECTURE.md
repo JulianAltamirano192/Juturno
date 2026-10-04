@@ -1,433 +1,349 @@
 # Arquitectura de Juturno
 
-> *Documento de referencia técnica. Explica qué hace cada componente y por qué
-> está diseñado así. Para las decisiones individuales con contexto histórico,
-> ver `DECISIONS.md`.*
+> Descripción técnica de componentes, flujos de datos y decisiones de diseño. Para devs que trabajan en el código.
 
-***
+---
 
-## 1. Visión general
-
-Juturno es un SaaS multi-tenant donde cada negocio (tenant) gestiona sus turnos
-de forma aislada. Los clientes reservan desde un link público, pagan seña con
-Mercado Pago, y reciben confirmación por WhatsApp.
-
-El diseño prioriza **operación simple sobre escalabilidad prematura**: un solo
-VPS con Docker Compose (orquestado por Coolify + Traefik como reverse proxy),
-sin colas externas ni orquestación de contenedores.
-
-**Stack**:
-- **Backend**: FastAPI + SQLModel + Pydantic v2
-- **DB**: PostgreSQL 16 con extensión `btree_gist`
-- **Cache/locks**: Redis 7
-- **Scheduler**: APScheduler in-process
-- **Pagos**: Mercado Pago (Checkout Pro + OAuth por tenant)
-- **Notificaciones**: WhatsApp Business API (Meta)
-- **Observabilidad**: Sentry + logs estructurados + health check profundo
-- **Deploy**: Coolify en VPS + Traefik + Cloudflare DNS
-
-***
-
-## 2. Diagrama de componentes
+## 1. Visión general (diagrama ASCII)
 
 ```
-                    ┌──────────────────────────────────────────────┐
-                    │              Docker Network                   │
-                    │                                              │
-   ┌────────┐       │  ┌────────────┐         ┌──────────────────┐ │
-   │ Cliente├───────┼─►│   FastAPI  │────────►│   PostgreSQL 16  │ │
-   │  Web   │       │  │  (uvicorn) │         │   + btree_gist   │ │
-   └────────┘       │  │            │         └──────────────────┘ │
-                    │  │ APScheduler│                              │
-   ┌────────┐       │  │  (in-proc) │         ┌──────────────────┐ │
-   │WhatsApp├───────┼─►│            │────────►│     Redis 7      │ │
-   │  (Meta)│       │  │            │         │  locks + cache   │ │
-   └────────┘       │  └─────┬──────┘         └──────────────────┘ │
-                    │        │                                     │
-   ┌────────┐       │        ▼                                     │
-   │ Mercado├───────┼─►  /webhooks/mercadopago                     │
-   │  Pago  │       │                                              │
-   └────────┘       └──────────────────────────────────────────────┘
-                            ▲
-                            │ (prod)
-                    ┌───────┴───────┐
-                    │  Traefik v3   │  ← reverse proxy + TLS (Let's Encrypt)
-                    │  (Coolify)    │
-                    └───────────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              CLIENTE (Web / Móvil)                          │
+└─────────────────────────────────┬───────────────────────────────────────────┘
+                                  │
+                    ┌─────────────▼─────────────┐
+                    │     FastAPI (uvicorn)     │
+                    │  app/main.py + lifespan   │
+                    └─────────────┬─────────────┘
+                                  │
+        ┌─────────────────────────┼─────────────────────────┐
+        │                         │                         │
+        ▼                         ▼                         ▼
+┌───────────────┐       ┌─────────────────┐       ┌───────────────┐
+│  PostgreSQL   │       │      Redis      │       │  APScheduler  │
+│    16         │       │       7         │       │  (in-process) │
+│  + btree_gist │       │                 │       │               │
+└───────────────┘       └─────────────────┘       └───────┬───────┘
+                                                          │
+                    ┌─────────────────────────────────────┼─────────────────────────────────────┐
+                    │                                     │                                     │
+                    ▼                                     ▼                                     ▼
+            ┌───────────────┐                   ┌─────────────────┐                 ┌─────────────────┐
+            │   Webhooks    │                   │  Mercado Pago   │                 │  WhatsApp       │
+            │               │                   │  (OAuth + MP)   │                 │  (Meta)         │
+            │ /webhooks/    │                   │                 │                 │                 │
+            │ whatsapp      │                   │ /mp/connect/*   │                 │ /webhooks/      │
+            │ /webhooks/    │                   │ /webhooks/      │                 │ whatsapp        │
+            │ mercadopago   │                   │ mercadopago     │                 │                 │
+            └───────────────┘                   └─────────────────┘                 └─────────────────┘
 ```
 
-**Flujos externos**:
-- Clientes Web → endpoints REST (reservas, pagos, slots).
-- WhatsApp (Meta) → `POST /webhooks/whatsapp` (eventos de mensajes).
-- Mercado Pago → `POST /webhooks/mercadopago` (confirmaciones de pago).
-- FastAPI → WhatsApp API (envío de plantillas de confirmación y recordatorio).
-- FastAPI → Mercado Pago API (creación de preferencias de pago, OAuth refresh).
+**Flujo de un booking típico:**
+1. Cliente accede a `/t/{slug}` → ve servicios → elige slot → `POST /public/bookings`
+2. Se crea `Booking` (status `pending`) + `Payment` (status `pending`, con `mp_checkout_url`) en **misma transacción**
+3. Se crea preferencia MP con token del tenant (OAuth) → devuelve `payment_url`
+4. Cliente paga en MP → MP envía webhook a `/webhooks/mercadopago`
+5. Webhook valida HMAC, replay protection, idempotencia → consulta MP con token del tenant
+6. Si `approved` → `transition_booking_status(booking, "confirmed")` + crea `NotificationOutbox` (tipo `confirmation`) en **misma transacción**
+7. Job `process_outbox` (cada 60s) envía WhatsApp via Meta Graph API
+8. Job `process_reminders` (cada 5min) encola recordatorio 24h antes → outbox reminder
+9. Job `process_deposit_expiration` (cada 1min) expira `pending` sin pago → libera slot
+10. Job `process_mp_token_refresh` (diario) renueva tokens OAuth que vencen en <30 días
 
-***
+---
 
-## 3. Multi-tenancy
+## 2. Modelo de datos (tablas + relaciones)
 
-**Modelo elegido**: shared database con columna `tenant_id` en todas las tablas
-relevantes.
+```
+Tenant (1) ──────< Service
+     │                │
+     │                ├── duration_minutes, price, deposit_amount (nullable, default 30%)
+     │                └── is_active
+     │
+     ├──< Staff
+     │       └── is_active (default true)
+     │
+     ├──< BusinessHours
+     │       ├── staff_id NULL = horario del negocio
+     │       ├── staff_id = ID = horario del profesional (prioridad)
+     │       ├── day_of_week (0=Lun..6=Dom)
+     │       ├── start_time / end_time (Time, sin TZ)
+     │       └── unique (tenant_id, staff_id, day_of_week)
+     │
+     ├──< Booking
+     │       ├── service_id, staff_id (nullable)
+     │       ├── client_name, client_phone (formato 549XXXXXXXXXX)
+     │       ├── start_time / end_time (TIMESTAMPTZ)
+     │       ├── price_at_booking (Decimal)
+     │       ├── status: pending | confirmed | cancelled | expired | no_show | completed
+     │       ├── idempotency_key (unique)
+     │       ├── reminder_sent (bool)
+     │       └── Auditoría (Tarea 8):
+     │           status_changed_at, status_changed_by,
+     │           cancellation_reason, no_show_at, completed_at
+     │
+     ├──< Payment (1:N por Booking)
+     │       ├── amount, method (mercado_pago), status
+     │       ├── mp_payment_id, mp_preference_id, mp_checkout_url
+     │       └── paid_at
+     │
+     ├──< ApiKey
+     │       ├── key_hash (SHA-256, unique)
+     │       ├── last_used_at (throttle 5min), revoked_at
+     │
+     ├──< NotificationOutbox
+     │       ├── notification_type: confirmation | reminder
+     │       ├── status: pending | sent | failed | cancelled
+     │       └── retry_count, error_message
+     │
+     └──< ProcessedWebhookEvent (idempotencia MP)
+             ├── event_id (PK), event_type, payload (JSON)
+             ├── status: received | processing | processed | failed
+             └── received_at, processed_at
+```
 
-**Por qué no database-per-tenant**: menor costo operativo (una DB en lugar de N),
-menos migraciones que coordinar, y el volumen actual de datos no justifica
-aislamiento físico.
+**Constraints críticas:**
+- `ExcludeConstraint excl_overlapping_bookings` en `booking`:
+  ```sql
+  EXCLUDE USING gist (
+      tenant_id WITH =,
+      COALESCE(staff_id, -1) WITH =,
+      tstzrange(start_time, end_time) WITH &&
+  ) WHERE (status IN ('pending', 'confirmed'));
+  ```
+  - Garantiza anti-solapamiento atómico a nivel motor (no en código)
+  - `tenant_id` como primera dimensión = aislamiento cross-tenant automático
+  - `COALESCE(staff_id, -1)` agrupa bookings sin staff en bucket ficticio
+  - Solo `pending` y `confirmed` bloquean; `cancelled`/`expired`/`no_show`/`completed` liberan
 
-**Cómo se enforce el aislamiento**:
+---
 
-1. La dependencia `get_current_tenant` (API key) o `get_current_tenant_from_session`
-   (panel) se inyecta en todos los endpoints protegidos.
-2. Todos los endpoints validan que el recurso pertenece al `tenant_id` del request
-   (retorna **404** si no — nunca 403, para no filtrar existencia).
-3. El `ExcludeConstraint` de `booking` incluye `tenant_id` como primera dimensión,
-   garantizando que la protección de solapamiento nunca colisione entre tenants.
-4. El campo `tenant.session_version` (int, default 1) permite invalidar todas las
-   sesiones del panel de un tenant con un solo `UPDATE` (ver D-013).
+## 3. Multi-tenancy (shared DB + tenant_id + constraints)
 
-**Defensa contra errores de filtrado**: si un filtro de `tenant_id` se omite en una
-query, Sentry lo registra y los tests de aislamiento entre tenants lo detectan
-(`test_auth.py::test_tenant_a_cannot_read_tenant_b_data`).
+- **Una sola DB** (`saas_db`) para todos los tenants.
+- **Tablas principales** (`tenant`, `service`, `staff`, `business_hours`, `booking`, `api_key`) tienen `tenant_id` con FK `ON DELETE CASCADE`. Las tablas auxiliares (`payment`, `notification_outbox`, `payment_events`) referencian el tenant indirectamente vía `booking_id`.
+- **Aislamiento**: lógica de aplicación + constraints de DB.
+- **API Key auth**: `X-Tenant-API-Key` → SHA-256 → lookup en `ApiKey` (índice único) → cache Redis 60s.
+- **Panel web**: cookie `juturno_session` firmada HMAC-SHA256 con `tenant_id.session_version.expires_at.signature`.
+- **Nunca** hacer queries sin filtrar `tenant_id` en endpoints autenticados.
 
-***
+---
 
 ## 4. Autenticación
 
-El proyecto tiene **dos mecanismos de autenticación** según el tipo de cliente:
+### 4.1 API Key (`X-Tenant-API-Key`)
+- Header `X-Tenant-API-Key` con key generada por CLI (256 bits, alta entropía).
+- Hash: `SHA-256` determinístico (no bcrypt/argon2) → permite índice único en `ApiKey.key_hash`.
+- Cache Redis: `auth:apikey:{hash}` → `tenant_id` (TTL 60s). Trade-off: key revocada puede seguir aceptándose hasta 60s.
+- `last_used_at` actualizado con throttle (máx 1 vez cada 5 min).
 
-### 4.1 — API key (clientes externos, integraciones)
+### 4.2 Panel web (cookie firmada)
+- Cookie `juturno_session` = `{tenant_id}.{session_version}.{expires_at}.{signature}`
+- Firma: HMAC-SHA256 con `SECRET_KEY`.
+- `session_version` en `Tenant` (default 1, `server_default`). Al cambiar password → `session_version += 1` → invalida **todas** las cookies activas instantáneamente (D-013).
+- Validación: `hmac.compare_digest` (timing-safe), expiración, `tenant_id` existe, `session_version` coincide.
+- Cookie: `HttpOnly`, `SameSite=Lax`, `Secure` en prod, `max_age=14d`.
 
-**Mecanismo**: header `X-Tenant-API-Key`.
+### 4.3 CSRF (double-submit cookie)
+- Token generado con `secrets.token_hex(32)` en GET que renderiza formulario.
+- Cookie `csrf_token` (no HttpOnly, `SameSite=Lax`, `Secure` en prod, 2h).
+- Campo oculto en formulario con mismo token.
+- POST valida `hmac.compare_digest(form_token, cookie_token)`.
 
-**Flujo** (`app/auth.py::get_current_tenant`):
+---
 
-```
-Request → auth.py:
-  1. Lee el header X-Tenant-API-Key
-  2. Hash SHA-256 de la key recibida
-  3. Busca en tabla api_key (cache Redis, TTL 60s)
-  4. Si existe y no está revocada → devuelve Tenant
-  5. Si no → 401
-```
+## 5. Slots y ventanas horarias
 
-**Por qué SHA-256 y no bcrypt**: las keys son secretos de alta entropía (256 bits)
-generados por CLI. No hay riesgo de ataque de diccionario, el determinismo permite
-índice único en DB, y el hash lento de bcrypt obligaría a iterar todas las keys en
-cada request. SHA-256 es la elección correcta aquí (ver D-002).
+### 5.1 BusinessHours (horarios de atención)
+- **Negocio**: `staff_id IS NULL` → aplica a todos los días sin horario de staff específico.
+- **Profesional**: `staff_id = ID` → prioridad sobre horario del negocio.
+- **Sin filas en tabla**: fallback estático `09:00-18:00` (no rompe página pública).
+- **Con filas pero sin día**: día **cerrado** (lista vacía).
+- Unique constraint: `(tenant_id, staff_id, day_of_week)`.
 
-**Revocación**: soft delete con `revoked_at`. Las keys nunca se borran físicamente —
-sirven de auditoría para saber qué se usó y cuándo.
+### 5.2 `resolve_day_windows(session, tenant_id, day_of_week, day_date, tenant_timezone, staff_id=None)`
+Lógica de prioridad:
+1. Si `staff_id` → busca `BusinessHours(tenant_id, staff_id, day_of_week)`.
+   - Si hay → usa esas ventanas.
+   - Si no hay → ¿tiene el staff **alguna** fila en cualquier día?
+     - Sí → día cerrado (`[]`).
+     - No → cae a horario general del negocio.
+2. Horario general: `BusinessHours(tenant_id, staff_id=NULL, day_of_week)`.
+   - Si hay → usa esas ventanas.
+   - Si no hay → ¿tiene el negocio **alguna** fila general en cualquier día?
+     - Sí → día cerrado (`[]`).
+     - No → fallback `09:00-18:00`.
 
-**Cache Redis**: evita un round-trip a Postgres en cada request. TTL de 60s — si una
-key se revoca, el peor caso es que siga funcionando 60s más. Aceptable.
+### 5.3 `calculate_available_slots(windows, bookings, duration_min, granularity_min=30)`
+- `windows`: lista de `(window_start, window_end)` del día (puede ser mañana + tarde).
+- `bookings`: lista de `(start, end)` de reservas `pending`/`confirmed` del día.
+- **Mergea solapamientos** en bookings para simplificar búsqueda de gaps.
+- **Alineación**: ancla la grilla al `window_start` de cada ventana (no a medianoche).
+  - `offset = (gap_start - window_start).total_seconds()`
+  - `remainder = offset % granularity_seconds`
+  - Primer slot = `gap_start` si `remainder==0`, si no `gap_start + (granularity - remainder)`.
+- Retorna `list[str]` formato `"HH:MM"` en orden cronológico.
+- **Nota**: diseñado para un día de un tenant/staff (pocas ventanas, pocas reservas). No llamar con cientos de ventanas.
 
-### 4.2 — Cookie de sesión firmada (panel del negocio)
+### 5.4 Filtro de slots pasados (hoy)
+- En endpoints de slots: si `day == today_local` (en TZ del tenant), filtra slots `< now_local`.
 
-**Mecanismo**: cookie HTTP-only `juturno_session` firmada con HMAC-SHA256.
+---
 
-**Formato del payload**: `{tenant_id}.{session_version}.{expires_at}`.
+## 6. Anti-solapamiento (ExcludeConstraint)
 
-**Flujo** (`app/auth.py::get_current_tenant_from_session`):
+- **PostgreSQL `EXCLUDE USING gist`** + extensión `btree_gist` + `tstzrange`.
+- Constraint vive en migración `9a1b2c3d4e5f` (filtro por status `pending/confirmed`; tenant_id agregado en `3c4d5e6f7a8b`):
+  ```sql
+  ALTER TABLE booking ADD CONSTRAINT excl_overlapping_bookings
+  EXCLUDE USING gist (
+      tenant_id WITH =,
+      (COALESCE(staff_id, -1)) WITH =,
+      tstzrange(start_time, end_time) WITH &&
+  ) WHERE (status IN ('pending', 'confirmed'));
+  ```
+- **Ventajas**: atómico bajo concurrencia extrema, declarativo, versionado, cross-tenant safe.
+- **Race conditions imposibles**: la DB rechaza el INSERT con `IntegrityError` (exclusion violation).
+- Endpoints capturan `IntegrityError` → 409 "Slot ya reservado o superpuesto" (o recuperan por idempotency_key).
 
-```
-Request → auth.py:
-  1. Lee la cookie juturno_session
-  2. Parsea y valida la firma HMAC (timing-safe con hmac.compare_digest)
-  3. Verifica que no haya expirado
-  4. Carga el Tenant de la DB
-  5. Compara tenant.session_version con el de la cookie
-  6. Si no coinciden → invalida sesión (redirect a /login)
-```
+---
 
-**Invalidación masiva**: al cambiar la contraseña (o hacer "logout en todos los
-dispositivos"), se incrementa `tenant.session_version`. Todas las cookies activas
-quedan invalidadas de inmediato (ver D-013).
-
-**Ventajas frente a JWT**:
-- No requiere blacklist ni storage (stateless).
-- Invalidación instantánea con un solo `UPDATE`.
-- `hmac.compare_digest` es timing-safe.
-- Sin dependencia externa (HMAC está en la stdlib).
-
-**Protección CSRF**: los endpoints del panel que modifican estado usan el módulo
-`app/csrf.py` con token en formulario. Verifica origen además de token.
-
-***
-
-## 5. Reservas y anti-solapamiento
-
-**Constraint en DB** (extensión `btree_gist`):
-
-```sql
-EXCLUDE USING gist (
-  tenant_id WITH =,
-  COALESCE(staff_id, -1) WITH =,
-  tstzrange(start_time, end_time) WITH &&
-) WHERE status IN ('pending', 'confirmed')
-```
-
-**Por qué cada parte**:
-
-| Parte | Razón |
-|---|---|
-| `tenant_id WITH =` | Dos tenants distintos nunca colisionan entre sí |
-| `COALESCE(staff_id, -1)` | Bookings sin staff se agrupan en `-1` para que no se solapen dentro del mismo tenant |
-| `tstzrange &&` | Detecta solapamiento de intervalos de tiempo |
-| `WHERE status IN (...)` | Solo `pending` y `confirmed` bloquean el slot. `cancelled`, `no_show`, `completed` y `expired` liberan el horario automáticamente |
-
-**Por qué no validar en aplicación**: dos requests simultáneos pueden pasar la
-validación a nivel código y crear bookings superpuestos (race condition). El
-`EXCLUDE` de Postgres lo previene a nivel motor, con semántica atómica: es el
-mecanismo más robusto disponible para este caso (ver D-003).
-
-***
-
-## 6. Patrón Outbox para notificaciones
-
-**Problema**: enviar WhatsApp en el mismo request que crea el booking acopla la
-latencia de Meta a la respuesta del cliente. Si Meta se cae, la reserva falla sin
-razón de negocio.
-
-**Solución (Outbox pattern)**:
-
-```
-POST /bookings
-  └── BEGIN TRANSACTION
-        ├── INSERT INTO booking (...)         → booking creado
-        └── INSERT INTO notification_outbox (status='pending')
-      COMMIT
-  └── Response 201 al cliente (rápido, sin depender de Meta)
-
-APScheduler (cada 60s):
-  └── SELECT ... FROM notification_outbox WHERE status='pending'
-      FOR UPDATE SKIP LOCKED
-        ├── Enviar WhatsApp vía API de Meta
-        └── UPDATE notification_outbox SET status='sent'/'failed'
-```
-
-**Tipos de notificación soportados**:
-- `confirmation`: al crear un booking (o al confirmarlo manualmente).
-- `reminder`: 24h antes del turno (job `process_reminders`).
-
-**Garantía**: la reserva y la notificación son atómicas respecto a la DB. Si el envío
-falla, el booking ya está confirmado y el outbox queda en `failed` para reintentar o
-investigar (ver D-004).
-
-**Compensación**: la notificación puede tardar hasta 60s. Es aceptable porque el
-cliente ya recibe la confirmación de la reserva en la respuesta 201.
-
-***
-
-## 7. Webhooks y seguridad
-
-### WhatsApp (Meta)
-
-| Operación | Detalle |
-|---|---|
-| Verificación (GET) | Compara `hub.verify_token` con `META_VERIFY_TOKEN` del env |
-| Eventos (POST) | Valida `X-Hub-Signature-256` con HMAC-SHA256 sobre el body crudo |
-| Rechazo | Si la firma no coincide → 403 inmediato |
-
-### Mercado Pago
-
-| Operación | Detalle |
-|---|---|
-| Firma | `x-signature` (HMAC-SHA256) sobre manifest `id:{data_id};request-id:{x_request_id};ts:{ts};` con `MP_SECRET_KEY` |
-| Replay protection | Rechaza timestamps > 5 minutos |
-| Idempotencia | Tabla `payment_events` con `event_id` como PK — si ya existe y está `processed`, retorna `DUPLICATE_EVENT_IGNORED` |
-| **Resolución de tenant** | El webhook identifica al tenant dueño del pago por el `user_id` del payload (que es el `collector_id` de la cuenta que recibió el dinero). Busca `tenant.mp_user_id` y usa `tenant.mp_access_token_enc` para consultar el pago |
-| Fallback | Si ningún tenant matchea el `user_id`, se usa `MP_ACCESS_TOKEN` de plataforma (legacy, ver D-012) |
-| Auto-creación | Si el webhook trae un pago aprobado sin `Payment` en DB, lo crea on-the-fly desde los datos de MP |
-| Confirmación | Si el pago está `approved` → confirma el booking y encola el WhatsApp de confirmación |
-
-### OAuth de Mercado Pago por tenant
-
-**Contexto**: cada negocio cobra en su **propia** cuenta de Mercado Pago. El dinero
-NO pasa por la cuenta de la plataforma (ver D-012).
-
-**Flujo OAuth**:
-
-```
-1. El dueño va a /panel/mp → click en "Conectar Mercado Pago"
-2. GET /mp/connect/start → redirect a MP con client_id de la plataforma
-3. Usuario autoriza → MP redirige a /mp/connect/callback?code=...
-4. Backend intercambia code por tokens (access + refresh)
-5. Tokens se cifran con Fernet (MP_TOKEN_ENCRYPTION_KEY) y se persisten en tenant:
-   - mp_user_id
-   - mp_alias
-   - mp_access_token_enc
-   - mp_refresh_token_enc
-   - mp_token_expires_at
-6. A partir de ahí, los pagos del tenant usan SU access_token, no el de la plataforma
-```
-
-**Renovación automática**: el job diario `process_mp_token_refresh` renueva los tokens
-que vencen en menos de 30 días (`REFRESH_AHEAD_DAYS`). Si MP rechaza el refresh
-(usuario revocó permisos), el tenant debe reconectar manualmente (ver RUNBOOK).
-
-**Cifrado**: `app/mp_crypto.py` usa Fernet (AES-128 en CBC con HMAC-SHA256). La clave
-`MP_TOKEN_ENCRYPTION_KEY` se genera una sola vez con
-`Fernet.generate_key().decode()` y se guarda en el env.
-
-***
-
-## 8. Scheduler y locks distribuidos
-
-**Problema**: si corren 2+ instancias de la API (o en el futuro), cada una ejecuta el
-scheduler. El outbox podría procesarse dos veces y los clientes recibirían WhatsApp
-duplicados.
-
-**Solución**: lock distribuido en Redis con `SET NX EX` al inicio de cada job. Si otra
-instancia tiene el lock, el job finaliza sin ejecutarse.
+## 7. Máquina de estados Booking (`app/booking_actions.py`)
 
 ```python
-lock = await redis.set(f"lock:{job_name}", uuid, nx=True, ex=ttl_seconds)
-if not lock:
-    return  # Otra instancia se encargó
-```
-
-**Jobs registrados** (`app/scheduler.py`):
-
-| Job | Frecuencia | Qué hace |
-|---|---|---|
-| `process_outbox` | 60s | Encola y envía notificaciones WhatsApp pendientes |
-| `process_reminders` | 5 min | Busca bookings confirmados que empiezan en ~24h y encola recordatorios |
-| `process_deposit_expiration` | 5 min | Expira bookings `pending` cuyo deadline de seña (`tenant.deposit_expiration_minutes`) venció |
-| `process_mp_token_refresh` | 24h | Renueva tokens OAuth de MP que vencen en <30 días |
-
-**Deshabilitado en tests**: si `TEST_DATABASE_URL` está seteada, el lifespan NO
-arranca el scheduler, para evitar que los jobs interfieran con los tests.
-
-**Limitación actual**: el scheduler vive dentro del proceso de la API. Si la API se
-reinicia, los jobs se detienen hasta que el proceso vuelva. En producción con 1
-réplica, esto es aceptable (ver D-005).
-
-**Futuro**: migrar a worker separado (Celery, ARQ o Dramatiq) cuando tengamos >1
-réplica o la carga lo justifique.
-
-***
-
-## 9. Zonas horarias
-
-**Almacenamiento**: `TIMESTAMPTZ` (con zona horaria) en UTC. Siempre.
-
-**Cálculo de slots**: en el timezone del tenant (campo `timezone`, ej.
-`America/Argentina/Buenos_Aires`). Usamos `zoneinfo` de la stdlib — sin dependencia
-de `pytz` (ver D-009).
-
-**Input de clientes**: se acepta datetime con o sin timezone. Si viene naive (sin info
-de zona), se interpreta como hora local del tenant.
-
-**Mensajes de WhatsApp**: la fecha se formatea al timezone del tenant antes de
-incluirla en la plantilla (`app/outbox_worker.py::format_booking_datetime`).
-
-***
-
-## 10. Observabilidad
-
-| Canal | Qué captura |
-|---|---|
-| Sentry | Excepciones con stack trace, endpoint, tenant. Sample rate 10% para traces y profiles |
-| Logs | `logging.basicConfig` nivel INFO, formato `%(asctime)s [%(levelname)s] %(name)s: %(message)s` |
-| Health check | `GET /health` → verifica **API + DB + Redis**, retorna 503 si alguno falla |
-| Métricas | Pendiente (PostHog en roadmap Q3 2027) |
-
-**Health check profundo** (implementado):
-```json
-{
-  "status": "ok",
-  "checks": {
-    "api": "ok",
-    "database": "ok",
-    "redis": "ok"
-  }
+VALID_TRANSITIONS = {
+    "pending":   {"confirmed", "cancelled", "expired"},
+    "confirmed": {"cancelled", "no_show", "completed"},
+    "expired":   {"confirmed"},          # webhook MP puede confirmar pago tardío
+    "cancelled": set(),
+    "no_show":   set(),
+    "completed": set(),
 }
+
+REQUIRE_STARTED = {"no_show", "completed"}  # solo si start_time <= now
 ```
 
-Si algún check falla, retorna `503` con `"status": "degraded"`. Esto permite que
-monitores externos (UptimeRobot, Better Stack) y el healthcheck de Coolify detecten
-caídas reales de dependencias, no solo que uvicorn respire.
+**Auditoría (Tarea 8):**
+- `status_changed_at` (TIMESTAMPTZ), `status_changed_by` (actor: `"owner"|"system"|"webhook_mp"`)
+- `cancellation_reason` (solo si `cancelled`)
+- `no_show_at`, `completed_at` (TIMESTAMPTZ)
+- Al cancelar: marca `NotificationOutbox` pendientes del booking como `cancelled` (`error_message="booking_cancelled"`).
 
-***
+**NO hace commit**: el caller decide cuándo `await session.commit()` (permite agrupar con otras operaciones).
 
-## 11. Backups
+---
 
-El script `scripts/backup_db.sh` hace un `pg_dump` comprimido con `gzip --clean
---if-exists` y rota backups con más de 30 días. Es el procedimiento canónico de
-backup: README.md y RUNBOOK.md referencian este mismo flujo.
+## 8. Patrón Outbox (`NotificationOutbox` + `process_outbox`)
 
-```bash
-# Backup manual (ruta por defecto: ./backups/)
-./scripts/backup_db.sh
+**Tabla `notification_outbox`:**
+- `booking_id`, `notification_type` (`confirmation`|`reminder`), `status` (`pending`|`sent`|`failed`|`cancelled`)
+- `retry_count`, `error_message`, `created_at`
 
-# Backup a directorio específico
-./scripts/backup_db.sh /mnt/backup-externo
+**Flujo:**
+1. Al crear booking (`POST /bookings` o `/public/bookings`) → inserta `Booking` (y en flujo público también `Payment`). **No** se crea `NotificationOutbox` acá.
+2. Al confirmar por webhook MP (`approved`) → marca `confirmed` + crea `NotificationOutbox(type="confirmation")` si no existe — **misma transacción** que la confirmación.
+3. Job `process_reminders` (cada 5min) → busca bookings `confirmed` con `start_time` en ~24h y `reminder_sent=False` → marca `reminder_sent=True` + crea `NotificationOutbox(type="reminder")` en **lote atómico**.
+4. Job `process_outbox` (cada 60s) → `SELECT ... FOR UPDATE SKIP LOCKED` → por cada evento:
+   - Carga booking + tenant (para timezone)
+   - `WhatsAppService.send_confirmation()` o `send_reminder()` (template Meta Utility)
+   - Si OK → `status="sent"`; si falla → `status="failed"`, `retry_count+=1`, `error_message=exc`
+   - **Commit por batch** (un solo `async with session.begin()` engloba todo el loop). Si un evento falla, todo el batch hace rollback y se reintenta en el próximo ciclo (~60s). Ver D-016.
 
-# Restaurar (⚠️ reemplaza los datos actuales; verificar backup previo)
-gunzip -c backups/saas_db_YYYYMMDD_HHMMSS.sql.gz | \
-  docker compose exec -T db psql -U postgres -d saas_db
-```
+---
 
-**Cobertura del backup**: incluye datos de tenants, bookings, payments, outbox,
-api_keys, y los tokens OAuth de MP (que están cifrados con Fernet, así que el backup
-requiere la `MP_TOKEN_ENCRYPTION_KEY` para ser restaurado en un entorno funcional).
+## 9. Scheduler (4 jobs, in-process + lock Redis / DB)
 
-**Automatización**: pendiente como cron en el VPS de producción (Fase 0).
+| Job | Frecuencia | Concurrencia | Qué hace |
+|-----|------------|--------------|----------|
+| `process_outbox` | 60s | `SELECT ... FOR UPDATE SKIP LOCKED` (DB) | Envía WhatsApp pendientes |
+| `process_reminders` | 5 min | Redis `SET NX EX 30s` (`reminder-job-lock`) | Encola recordatorios 24h |
+| `process_deposit_expiration` | 1 min | Redis `SET NX EX 30s` (`deposit-expiration-job-lock`) | Expira `pending` sin pago |
+| `process_mp_token_refresh` | 24h | Redis `SET NX EX 30s` (`mp-token-refresh-job-lock`) | Renueva tokens OAuth <30 días |
 
-***
+- **Locks Redis**: `uuid4().hex` como valor, TTL 30s (seguridad anti-deadlock) — para 3 jobs.
+- **Outbox**: usa `FOR UPDATE SKIP LOCKED` a nivel DB (no Redis lock) — evita doble procesamiento sin lock externo.
+- **NO arranca** si `TEST_DATABASE_URL` está seteada (evita colisiones en tests — ver `main.py:116-153`).
+- Comparte `async_session_maker` con la app (sin IPC).
 
-## 12. Tests
+---
 
-**20 archivos de test, 169 tests**, todos con `pytest-asyncio`:
+## 10. Mercado Pago
 
-| Archivo | Qué cubre |
-|---|---|
-| `test_auth.py` | API key auth, cross-tenant isolation, `last_used_at` |
-| `test_booking_constraints.py` | `ExcludeConstraint` cross-tenant, race conditions |
-| `test_integration.py` | Flujo de reserva end-to-end + webhooks |
-| `test_slots.py` | Cálculo de slots disponibles |
-| `test_server_defaults.py` | Defaults a nivel DB + `TIMESTAMPTZ` |
-| `test_phone.py` | Normalización de números de teléfono |
-| `test_deposit_expiration.py` | Job de expiración de señas |
-| `test_mp_crypto.py` | Cifrado/descifrado Fernet de tokens MP |
-| `test_mp_connect.py` | Flujo OAuth de conexión con MP |
-| `test_mp_token_refresh.py` | Job de renovación de tokens OAuth |
-| `test_mp_webhooks.py` | Firma HMAC, replay protection, idempotencia |
-| `test_mp_webhook_tenant.py` | Resolución de tenant por `user_id` del webhook |
-| `test_mp_tenant_payment.py` | Cobro con token del tenant (no de la plataforma) |
-| `test_public_endpoints.py` | Endpoints públicos + integración MP completa |
-| `test_whatsapp_webhooks.py` | Firma HMAC y manejo de eventos de Meta |
-| `test_login.py` | Login del panel, sesiones firmadas |
-| `test_register.py` | Registro de tenant + onboarding |
-| `test_services_panel.py` | CRUD de servicios del panel |
-| `test_staff_panel.py` | CRUD de staff + horarios |
-| `test_agenda_panel.py` | Vista de agenda por día |
-| `test_business_hours_panel.py` | Configuración de horarios de atención |
+### 10.1 OAuth por tenant (`app/mp_connect.py`)
+- **Flujo Authorization Code**:
+  1. `GET /mp/connect/start` (auth API key) → genera `state` (nonce 32 bytes) → guarda en Redis `mp_connect_state:{state}: tenant_id` (TTL 600s, un solo uso).
+  2. Devuelve `authorization_url` de MP con `state`, `redirect_uri`, `client_id`.
+  3. Dueño autoriza en MP → MP redirige a `GET /mp/connect/callback?code=...&state=...`
+  4. Callback consume `state` (Redis `GETDEL` → un solo uso), canjea `code` por tokens en `POST /oauth/token`.
+  5. Cifra `access_token` y `refresh_token` con **Fernet** (`MP_TOKEN_ENCRYPTION_KEY`) → guarda en `tenant.mp_access_token_enc`, `mp_refresh_token_enc`.
+  6. Guarda `mp_user_id` (collector_id), `mp_alias` (nickname), `mp_token_expires_at = now + expires_in`.
+- **Regla de cobro (D-012)**: `resolve_mp_access_token(tenant)`:
+  - Tenant con cuenta → su `access_token` descifrado.
+  - Sandbox + sin cuenta → `MP_ACCESS_TOKEN` de la plataforma (dinero de prueba).
+  - **Producción + sin cuenta → `None` → `POST /public/bookings` responde 422 `ERR_PAGO_NO_CONFIGURADO`**.
+- **Refresh proactivo**: job diario renueva tokens con `mp_token_expires_at <= now + 30d` (`REFRESH_AHEAD_DAYS=30`). MP rota par completo (access + refresh).
 
-**Fixtures compartidos** en `tests/conftest.py`.
-**DB de tests**: `saas_test` (aislada de `saas_db`, con engine `NullPool`).
-**Scheduler deshabilitado** en tests (chequea `TEST_DATABASE_URL`).
-**CI**: GitHub Actions corre los 169 tests en cada push a `main`.
+### 10.2 Webhook MP (`app/mp_webhooks.py`)
+- **Endpoint**: `POST /webhooks/mercadopago`
+- **Verificaciones**:
+  - HMAC SHA256: header `x-signature` = `ts=timestamp,v1=hmac` → `manifest = "id:{data_id};request-id:{x_request_id};ts:{ts};"` → `hmac.compare_digest`.
+  - Replay protection: `|now - ts| <= 300s` (5 min).
+  - Idempotencia: tabla `payment_events` con `event_id` PK. Estados: `received` → `processing` → `processed`|`failed`. Reintentos legítimos (estado `processing`/`failed`) reprocesan.
+- **Resolución de token** (`_resolve_token_for_payment`):
+  - Payload MP trae `user_id` (collector_id) en raíz o en `data.user_id`.
+  - Busca `Tenant.mp_user_id == user_id` → usa su token descifrado.
+  - Fallback: `None` → usa `MP_ACCESS_TOKEN` de la plataforma.
+- **Auto-creación Payment**: si webhook `approved` y no existe `Payment` con ese `mp_payment_id` → crea con datos de MP (`transaction_amount`, `payment_method_id`, `date_approved`).
+- **Confirmación booking**: si `approved` y booking en `pending` (o `expired` y slot libre) → `transition_booking_status(booking, "confirmed", actor="webhook_mp")` + outbox confirmation.
 
-***
+### 10.3 Creación de preferencia (`create_mp_preference`)
+- Usa API `/checkout/preferences` (Checkout Pro, "legacy" pero estable).
+- `external_reference = "booking-{id}"`, `notification_url = webhook`, `back_urls` con `PUBLIC_BASE_URL/t/{slug}?booking={id}`.
+- `checkout_url` = `sandbox_init_point` si `MP_SANDBOX=true`, sino `init_point`.
+- Lanza `HTTPException 502` si MP rechaza → caller hace rollback del booking.
 
-## 13. Deuda técnica conocida
+---
 
-| Deuda | Impacto | Cuándo atacarla |
-|---|---|---|
-| Worker separado para el scheduler | Alto — necesario para >1 réplica | Q2 2027 |
-| Rate limiting en endpoints públicos | Medio — sin protección contra abuso | Q2 2027 |
-| Rotación de `MP_TOKEN_ENCRYPTION_KEY` | Medio — requiere plan de migración de tokens | Q2 2027 |
-| Migrar a MP Orders API | Bajo — Preferencias funciona pero es "legacy" | Q2 2027 |
-| Rotación de `SECRET_KEY` documentada | Bajo — no hay procedimiento; invalidaría todas las sesiones | Q1 2027 |
-| Cache Redis en health check | Bajo — crea cliente nuevo por request en lugar de reusar pool | Q1 2027 |
-| Multi-stage Dockerfile | Bajo — imagen final más chica | Q1 2027 |
-| Resource limits en `docker-compose.prod.yml` | Bajo — sin límites de CPU/RAM por contenedor | Q1 2027 |
-| Métricas de producto (PostHog) | Bajo — no hay dashboards para tenants | Q3 2027 |
+## 11. WhatsApp (Meta Business API)
 
-**Cerrado recientemente**:
-- ✅ Auth por tenant vía `X-Tenant-API-Key` con cache Redis (`app/auth.py::get_current_tenant`).
-- ✅ `BusinessHours` configurable por tenant (modelo + panel + tests).
-- ✅ `pytest` fuera de `requirements.txt` (movido a `requirements-dev.txt`).
+- **Webhook**: `GET /webhooks/whatsapp` (verificación `hub.verify_token` → devuelve `hub.challenge`), `POST /webhooks/whatsapp` (HMAC `X-Hub-Signature-256` con `META_APP_SECRET`).
+- **Plantillas Utility** (aprobadas por Meta, categoría "Utility", funcionan fuera de ventana 24h):
+  - `booking_confirmation`: parámetros `{nombre, fecha, booking_id}`
+  - `booking_reminder`: parámetros `{nombre, fecha}`
+- **Envío**: `WhatsAppService` → `POST https://graph.facebook.com/v19.0/{phone_number_id}/messages`
+  - Singleton `httpx.AsyncClient` (pool conexiones).
+  - Retry con backoff exponencial (1s, 2s, 4s) en 429/5xx/timeout.
+  - Loggea body completo en 4xx no-rate-limit.
+- **Normalización teléfono para Meta** (`normalize_phone_for_meta`):
+  - Meta **requiere** números argentinos móviles SIN el `9` (formato E.164 tradicional `54XXXXXXXXXX`).
+  - `phone.py` normaliza a `549XXXXXXXXXX` (canónico AR) para guardar en DB.
+  - `whatsapp_service.py:9-18` (`normalize_phone_for_meta`) remueve el `9` de `549...` antes de enviar a Meta.
+  - Convención de integración: DB = `549...`, Meta = `54...`.
 
-Ver `DECISIONS.md` → Roadmap para el timeline completo.
+---
+
+## 12. Convenciones de código (obligatorias)
+
+| Convención | Ejemplo |
+|------------|---------|
+| **Async everywhere** | `async def` en endpoints, servicios, jobs |
+| **SQLModel** | Modelos = Pydantic + SQLAlchemy unificado |
+| **No commit en servicios** | `session.add(obj)`; caller hace `await session.commit()` |
+| **Excepciones específicas** | `InvalidTransitionError`, `BookingNotStartedError`, `MPTokenCryptoError`, `InvalidPhoneError` |
+| **Logging** | `logger = logging.getLogger(__name__)` |
+| **Timing-safe** | `hmac.compare_digest` para firmas/tokens |
+| **Type hints** | `X | None`, `list[X]`, `dict[K, V]` (no `Optional`, `List`, `Dict`) |
+| **Timezones** | `datetime.now(timezone.utc)` siempre; `zoneinfo.ZoneInfo(tenant.timezone)` para tenant |
+| **Decimal** | `Decimal` para dinero (nunca `float`) |
+| **Queries** | **Siempre** filtran `tenant_id` en endpoints autenticados |
+
+---
+
+## Ver también
+
+- [`README.md`](README.md) — Quickstart, env vars, comandos
+- [`DECISIONS.md`](DECISIONS.md) — 18 ADRs (D-001 a D-018)
+- [`DEPLOYMENT.md`](DEPLOYMENT.md) — Deploy, migraciones, backups, CI
+- [`API_REFERENCE.md`](API_REFERENCE.md) — 27 endpoints con schemas
+- [`RUNBOOK.md`](RUNBOOK.md) — Incidentes y diagnóstico
+- [`ONBOARDING.md`](ONBOARDING.md) — Setup y convenciones para dev nuevo

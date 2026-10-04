@@ -104,7 +104,8 @@ EXCLUDE USING gist (
 **Contexto**: Enviar WhatsApp en el mismo request HTTP que crea el booking introduce la latencia de Meta
 en la respuesta al cliente. Si Meta se cae, la reserva falla. Inaceptable.
 
-**Decisión**: Insertar `NotificationOutbox` en la misma transacción que el booking, y procesar los
+**Decisión**: Insertar `NotificationOutbox` en la misma transacción que la operación que la dispara
+(confirmación de pago vía webhook MP, o encolar recordatorio via scheduler), y procesar los
 pendientes con un job de APScheduler cada 60 segundos.
 
 **Alternativas**:
@@ -113,11 +114,13 @@ pendientes con un job de APScheduler cada 60 segundos.
 - **Celery / RQ**: más robusto para multi-instancia, pero agrega un worker extra, un broker, y otro proceso que monitorear. No justificado para el volumen actual.
 
 **Consecuencias**:
-- **Ventaja** — Atomicidad: reserva y notificación son una sola transacción de DB.
+- **Ventaja** — Atomicidad: confirmación de pago y notificación son una sola transacción de DB (webhook MP).
 - **Ventaja** — Resiliencia: si Meta se cae, el outbox queda en `failed` y se reintenta en el próximo ciclo.
 - **Ventaja** — Desacoplamiento: la latencia de Meta no afecta la respuesta al cliente.
 - **Riesgo** — La notificación no es inmediata: puede tardar hasta 60s. No afecta la experiencia de reserva.
 - **Deuda** — Si se migra a un worker separado, este código se mueve al worker.
+
+> **Nota**: `POST /public/bookings` y `POST /bookings` crean `Booking` (+ `Payment` en el público), pero **no** crean `NotificationOutbox` en esa transacción. El outbox se crea cuando el webhook MP confirma el pago y transiciona el booking a `confirmed`.
 
 ---
 
@@ -383,6 +386,98 @@ La causa raíz: `config.py` tiene un validador que rechaza `SECRET_KEY == "chang
 
 ---
 
+## D-015: Refresh de tokens MP sin expires_in
+
+**Fecha**: Octubre 2026
+
+**Contexto**: El job `process_mp_token_refresh` (scheduler diario) filtra tenants con `mp_token_expires_at IS NOT NULL AND mp_token_expires_at <= now + 30d`. MP devuelve `expires_in` (~180 días) al canjear el code OAuth, pero si MP no lo incluye (edge case, cambio de API, cuenta de prueba), `mp_token_expires_at` queda `NULL` y el token **nunca se renueva**. Vence a los ~180 días sin aviso.
+
+**Decisión**: En `refresh_tenant_mp_token` (app/mp_connect.py:183-233), si `expires_in` no viene en la respuesta de MP, setear `mp_token_expires_at = now + 180 días` (valor por defecto documentado por MP). Además, agregar fallback en el job: tenants con `mp_refresh_token_enc IS NOT NULL AND mp_token_expires_at IS NULL` → intentar refresh igual.
+
+> **Estado**: Decisión registrada, **pendiente de implementación**. El código actual en `app/mp_connect.py:225-229` no aplica el fallback de 180 días si `expires_in` es nulo; el job `process_mp_token_refresh` (app/scheduler.py:181-187) excluye tenants con `mp_token_expires_at IS NULL`.
+
+**Alternativas**:
+- **Ignorar**: asumir que MP siempre manda `expires_in`. Riesgo: token vence silenciosamente.
+- **Alertar y no refrescar**: requiere intervención manual. No escala.
+
+**Consecuencias**:
+- **Ventaja** — Tokens nunca quedan sin `expires_in`; refresh proactivo cubre edge cases.
+- **Ventaja** — Default de 180 días alineado con documentación MP.
+- **Riesgo** — Si MP cambia vida del token (ej. 90 días), el default queda desactualizado. Mitigado: MP notifica cambios de API con antelación.
+- **Deuda** — Monitorear logs del job para detectar tenants con refresh fallido repetido.
+
+---
+
+## D-016: Atomicidad del outbox worker (commit por batch)
+
+**Fecha**: Octubre 2026
+
+**Contexto**: `process_outbox` (app/outbox_worker.py:32-91) usa un solo `async with session.begin()` que engloba todo el loop de eventos. Si un evento falla (ej. WhatsApp timeout), **todos** los eventos del batch hacen rollback — incluso los que se enviaron OK. Con commit por evento (diseño original), cada evento commiteaba su estado independiente.
+
+**Decisión**: Mantener commit por batch (comportamiento actual). Rationale: volumen actual bajo (<200 eventos/min), simplicidad transaccional, y `FOR UPDATE SKIP LOCKED` ya aísla eventos entre workers. Si un evento falla, se reintentará en el próximo ciclo (60s).
+
+**Alternativas**:
+- **Commit por evento**: cada evento en su propia transacción. Más granular, pero más round-trips y complejidad de manejo de errores parciales.
+- **Savepoints por evento**: rollback solo del evento fallido. Complejidad extra en SQLAlchemy async.
+
+**Consecuencias**:
+- **Ventaja** — Código simple, una transacción por corrida del job.
+- **Ventaja** — `FOR UPDATE SKIP LOCKED` evita que dos workers procesen el mismo evento.
+- **Riesgo** — Un fallo transitorio (red, rate limit) retrasa eventos exitosos del mismo batch hasta el próximo ciclo (60s).
+- **Deuda** — Si volumen crece (>1000 eventos/min), migrar a commit por evento o worker separado (Celery/ARQ).
+
+---
+
+## D-017: Refactor unificar lógica available-slots
+
+**Fecha**: Octubre 2026
+
+**Contexto**: `get_available_slots` (panel, auth API key, línea 304) y `get_public_available_slots` (público, sin auth, línea 578) en `app/main.py` son **casi idénticos** (~100 líneas duplicadas). Diferencias: auth dependency, validación `tenant_id == current_tenant.id` vs lookup por ID, y manejo de 404 vs 401.
+
+**Decisión**: Extraer lógica compartida a `app/services.py` como `_compute_available_slots(session, tenant_id, service_id, day, staff_id, tenant_timezone)` y llamar desde ambos endpoints. Los endpoints solo manejan auth, validación de tenant y respuesta HTTP.
+
+> **Estado**: Decisión registrada, **pendiente de implementación**. El código actual mantiene la duplicación en `app/main.py` (líneas 304 y 578).
+
+**Alternativas**:
+- **Dejar duplicado**: simple pero riesgo de drift (fix en uno no llega al otro).
+- **Decorator/auth dependency**: más complejo, no elimina duplicación de lógica de negocio.
+
+**Consecuencias**:
+- **Ventaja** — Single source of truth para cálculo de slots.
+- **Ventaja** — Tests cubren una sola función; endpoints testean solo auth/validación.
+- **Riesgo** — Refactor toca código crítico (slots). Requiere tests de regresión exhaustivos.
+- **Deuda** — Hacer el refactor en PR dedicado con tests antes de nuevas features de slots.
+
+---
+
+## D-018: Validadores env vars críticas (extender D-014)
+
+**Fecha**: Octubre 2026
+
+**Contexto**: `config.py` valida `SECRET_KEY` no-default en producción (D-014), pero `META_APP_SECRET`, `MP_TOKEN_ENCRYPTION_KEY` y `MP_SECRET_KEY` son igual de críticas y no tienen validador. Deploy en prod sin ellas causa fallos silenciosos o errores crípticos en runtime (webhooks MP/WhatsApp rechazados, tokens MP no descifrables).
+
+**Decisión**: Agregar validadores en `Settings.model_post_init` para:
+- `META_APP_SECRET`: no vacío en prod (webhook WhatsApp falla 401).
+- `MP_TOKEN_ENCRYPTION_KEY`: no vacío en prod (tokens MP no se pueden descifrar → 502).
+- `MP_SECRET_KEY`: no vacío en prod (webhook MP falla 401).
+- `WHATSAPP_TOKEN` + `WHATSAPP_PHONE_NUMBER_ID`: no vacíos en prod (envío WhatsApp falla).
+
+Mismo patrón que `SECRET_KEY`: `ValueError` con mensaje claro al arranque.
+
+> **Estado**: Decisión registrada, **pendiente de implementación**. `app/config.py:40-45` solo valida `SECRET_KEY`; las demás variables aún no tienen validador.
+
+**Alternativas**:
+- **Warnings en logs**: no bloquea arranque, pero falla en runtime — peor UX operativa.
+- **Defaults de desarrollo**: peligroso en prod si se olvida setear.
+
+**Consecuencias**:
+- **Ventaja** — Falla ruidosa al arranque, no en runtime.
+- **Ventaja** — Mensaje de error accionable ("setea X en Coolify").
+- **Riesgo** — Bloquea arranque si falta una var; requiere checklist de deploy actualizado.
+- **Deuda** — Documentar checklist en DEPLOYMENT.md y RUNBOOK.md.
+
+---
+
 ## Roadmap de deuda técnica
 
 Ordenado por impacto/urgencia estimada:
@@ -400,7 +495,7 @@ Ordenado por impacto/urgencia estimada:
 ### Q2 2027 (mes 4-6)
 7. **Worker separado** del scheduler (Celery o ARQ) para >1 réplica.
 8. **Rate limiting** en endpoints públicos (slowapi).
-9. **`BusinessHours` configurable** por tenant (hoy hardcoded 09-18).
+9. ~~`BusinessHours` configurable~~ — **implementado** (modelo + panel CRUD en `app/main.py`). El fallback 09-18 solo aplica cuando el tenant no tiene ninguna fila en `business_hours`.
 10. **Migrar a MP Orders API**.
 
 ### Q3 2027 (mes 7-9)
