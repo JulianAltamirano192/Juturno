@@ -120,12 +120,12 @@ docker compose exec api alembic upgrade head
 docker compose exec api alembic current
 docker compose exec api alembic downgrade -1
 
-# Backup manual (genera backups/saas_db_YYYYMMDD_HHMMSS.sql.gz)
+# Backup manual (genera backups/saas_db_YYYYMMDD_HHMMSS.sql.gz; sube a S3 si S3_BACKUP_BUCKET está seteada)
 ./scripts/backup_db.sh
 
 # Restaurar backup (⚠️ reemplaza datos actuales)
-gunzip -c backups/saas_db_YYYYMMDD_HHMMSS.sql.gz | \
-  docker compose exec -T db psql -U postgres -d saas_db
+./scripts/restore_db.sh backups/saas_db_YYYYMMDD_HHMMSS.sql.gz --yes
+# O desde S3: ./scripts/restore_db.sh s3://bucket/path/saas_db_YYYYMMDD_HHMMSS.sql.gz --yes
 ```
 
 ---
@@ -168,7 +168,7 @@ APScheduler ─────► 4 jobs (outbox, reminders, ───────�
 | D-013 | Cookie firmada + session_version | Invalidación instantánea de todas las sesiones al cambiar clave |
 | D-014 | SECRET_KEY bloquea default en prod | Falla ruidosa, fuerza configuración explícita |
 
-👉 Registro completo (18 ADRs) en [`DECISIONS.md`](DECISIONS.md).
+👉 Registro completo (20 ADRs) en [`DECISIONS.md`](DECISIONS.md).
 
 ---
 
@@ -194,7 +194,7 @@ docker compose exec \
   api pytest -v
 ```
 
-- **189 tests** en 23 archivos (`tests/test_*.py`).
+- **211 tests** en 24 archivos (`tests/test_*.py`).
 - Fixtures en `tests/conftest.py`: `setup_db` (crea/borra tablas + `btree_gist`), `db_session`, `client` (httpx.ASGITransport).
 - El scheduler **se deshabilita automáticamente** cuando `TEST_DATABASE_URL` está seteada.
 - CI corre todo en cada push a `main`; si falla, el merge se bloquea.
@@ -212,7 +212,7 @@ Proyecto personal de Julián Altamirano — julian@juturno.com
 ## Documentación relacionada
 
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — Componentes, flujos, multi-tenancy, auth, slots, outbox, scheduler, webhooks
-- [`DECISIONS.md`](DECISIONS.md) — 18 ADRs con contexto, alternativas, consecuencias
+- [`DECISIONS.md`](DECISIONS.md) — 20 ADRs con contexto, alternativas, consecuencias
 - [`DEPLOYMENT.md`](DEPLOYMENT.md) — Deploy, migraciones, rollback, backups, CI
 - [`API_REFERENCE.md`](API_REFERENCE.md) — 44 endpoints con schemas, auth, códigos de error
 - [`RUNBOOK.md`](RUNBOOK.md) — Incidentes: síntomas, diagnóstico, mitigación, fix

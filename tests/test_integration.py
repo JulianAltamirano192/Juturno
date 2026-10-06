@@ -2,6 +2,7 @@ import pytest
 import hmac
 import hashlib
 from datetime import datetime, timedelta, date, time, timezone
+from decimal import Decimal
 from sqlalchemy import text
 
 from app.models import Tenant, Service, ApiKey, Booking
@@ -428,7 +429,10 @@ async def test_idempotency_key_scoped_to_tenant(client, db_session):
         db_session.add(tenant)
         await db_session.flush()
         service = Service(
-            tenant_id=tenant.id, name="Servicio", duration_minutes=30, price=100.0
+            tenant_id=tenant.id,
+            name="Servicio",
+            duration_minutes=30,
+            price=Decimal("100.00"),
         )
         db_session.add(service)
         await db_session.commit()

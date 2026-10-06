@@ -75,8 +75,9 @@ Tenant (1) ──────< Service
      │       ├── client_name, client_phone (formato 549XXXXXXXXXX)
      │       ├── start_time / end_time (TIMESTAMPTZ)
      │       ├── price_at_booking (Decimal)
+     │       ├── deposit_at_booking (Decimal, nullable) — snapshot de effective_deposit al crear
      │       ├── status: pending | confirmed | cancelled | expired | no_show | completed
-     │       ├── idempotency_key (unique)
+     │       ├── idempotency_key (unique compuesto con tenant_id — `uq_booking_idempotency_key`)
      │       ├── reminder_sent (bool)
      │       └── Auditoría (Tarea 8):
      │           status_changed_at, status_changed_by,
@@ -294,6 +295,7 @@ REQUIRE_STARTED = {"no_show", "completed"}  # solo si start_time <= now
   - Busca `Tenant.mp_user_id == user_id` → usa su token descifrado.
   - Fallback: `None` → usa `MP_ACCESS_TOKEN` de la plataforma.
 - **Auto-creación Payment**: si webhook `approved` y no existe `Payment` con ese `mp_payment_id` → crea con datos de MP (`transaction_amount`, `payment_method_id`, `date_approved`).
+- **Guard de amount**: usa `booking.deposit_at_booking` si está seteado; si es `NULL` (bookings anteriores a la migración `55526fb8c0f9`) cae al fallback `effective_deposit(service.price, service.deposit_amount)`.
 - **Confirmación booking**: si `approved` y booking en `pending` (o `expired` y slot libre) → `transition_booking_status(booking, "confirmed", actor="webhook_mp")` + outbox confirmation.
 
 ### 10.3 Creación de preferencia (`create_mp_preference`)

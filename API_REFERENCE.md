@@ -32,7 +32,7 @@
 
 | Convención | Detalle |
 |------------|---------|
-| **Idempotencia** | `idempotency_key` (string, **UNIQUE global** — `uq_booking_idempotency_key`) en `POST /bookings` y `POST /public/bookings`. El lookup filtra por `tenant_id` + key; un retry con la misma key del mismo tenant → 200 + booking existente. Una key ya usada por **otro** tenant choca con el constraint global (409). |
+| **Idempotencia** | `idempotency_key` (string, **UNIQUE compuesto `(tenant_id, idempotency_key)`** — `uq_booking_idempotency_key`) en `POST /bookings` y `POST /public/bookings`. Un retry con la misma key del mismo tenant → 200 + booking existente. Keys de distintos tenants no colisionan. |
 | **Timestamps** | ISO 8601 UTC: `2026-10-15T14:30:00+00:00` o `2026-10-15T14:30:00Z`. |
 | **Decimales** | DB y Python usan `Decimal` (`Numeric(10,2)`). Las responses públicas serializan montos como **float JSON** (`price: float`, `deposit_amount: float`) — los schemas actuales (`PublicServiceRead`, `BookingCreate`) declaran `float`. |
 | **Errores** | `{ "detail": "mensaje en español" }` (4xx) o `{ "detail": "interno" }` (5xx). |
@@ -144,7 +144,7 @@
 }
 ```
 - `end_time` opcional: se deriva de `service.duration_minutes`.
-- `price_at_booking` opcional: se usa `service.price`.
+- El precio se toma siempre de `service.price`; no hay campo `price_at_booking` en el schema del cliente.
 - Teléfono normalizado a `549XXXXXXXXXX` (`phone.py`). 422 si inválido.
 
 **Response 201:**
@@ -158,7 +158,7 @@
 
 **Errores:**
 - 404 "Tenant/Service/Staff not found"
-- 409 "Slot ya reservado o superpuesto" (ExcludeConstraint o colisión de `idempotency_key` global de otro tenant)
+- 409 "Slot ya reservado o superpuesto" (ExcludeConstraint o colisión de `idempotency_key` del mismo tenant)
 - 422 "El WhatsApp no parece completo..." (teléfono inválido)
 - 422 `ERR_PAGO_NO_CONFIGURADO` (prod + tenant sin MP conectado)
 - 502 "Error al procesar el cobro..." (`MPTokenCryptoError` al descifrar el token del tenant)

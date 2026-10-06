@@ -103,8 +103,10 @@ docker compose -f docker-compose.prod.yml up -d --build
 ls -la backups/
 
 # 2. Restaurar (⚠️ REEMPLAZA datos actuales)
-gunzip -c backups/saas_db_YYYYMMDD_HHMMSS.sql.gz | \
-  docker compose exec -T db psql -U postgres -d saas_db
+# Desde archivo local:
+./scripts/restore_db.sh backups/saas_db_YYYYMMDD_HHMMSS.sql.gz --yes
+# Desde S3 (si S3_BACKUP_BUCKET configurada):
+./scripts/restore_db.sh s3://bucket/path/saas_db_YYYYMMDD_HHMMSS.sql.gz --yes
 
 # 3. Verificar
 docker compose exec api alembic current

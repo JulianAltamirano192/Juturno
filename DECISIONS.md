@@ -290,8 +290,8 @@ y que no acumulen archivos eternamente en el disco.
 - **Ventaja** — Comprimido con gzip — mucho menor tamaño en disco.
 - **Ventaja** — Rotación automática (30 días) — no requiere limpieza manual.
 - **Ventaja** — Falla de forma visible: si el dump queda vacío, el script sale con error (set -euo pipefail).
-- **Riesgo** — Los backups están en el mismo disco que la DB — si el disco falla, se pierde todo. Para producción, copiar a S3 o similar.
-- **Deuda** — Automatizar como cron en el VPS y agregar copia a almacenamiento externo.
+- **Riesgo** — Los backups están en el mismo disco que la DB — si el disco falla, se pierde todo. Mitigado: el script sube a S3 cuando `S3_BACKUP_BUCKET` está configurada (commit `746778c`).
+- **Deuda** — Automatizar como cron en el VPS (configuración pendiente en el host). Copia a S3 resuelta en `746778c`. Test de restore documentado en `DEPLOYMENT.md` §7.
 
 ---
 
@@ -526,10 +526,9 @@ DB.
 - **Riesgo** — Un tenant que no completó la conexión OAuth en producción verá sus webhooks
   rechazados silenciosamente. Mitigation: la pantalla de onboarding debe mostrar el estado
   de conexión antes de publicar el link de reserva.
-- **Deuda** — `deposit_at_booking`: el guard de amount compara contra el precio actual del
-  servicio, no contra el monto acordado al crear el booking. Si el precio del servicio cambia
-  entre la creación del turno y el pago, la validación puede rechazar un pago legítimo.
-  Requiere columna `deposit_at_booking` en `Payment` (ver roadmap).
+- **Deuda resuelta** — `deposit_at_booking`: resuelto en D-020 / commit `f128344`. El campo
+  se snapshotea en `Booking` al momento de la creación; el guard de amount lo usa directamente
+  y solo cae al fallback en filas anteriores a la migración.
 - **Deuda** — Race condition: dos webhooks simultáneos del mismo `mp_payment_id` pueden
   crear dos filas `Payment`. Requiere UNIQUE constraint y `SELECT FOR UPDATE` (ver roadmap).
 
@@ -538,24 +537,70 @@ Commit: `4e3af49`.
 
 ---
 
+## D-020: Snapshot de `deposit_at_booking` en `Booking`
+
+**Fecha**: Octubre 2026
+
+**Contexto**: D-019 introdujo un guard de amount en el webhook MP que compara el monto
+pagado contra `effective_deposit(service.price, service.deposit_amount)` calculado en tiempo
+real. Si el dueño del negocio modifica el precio del servicio entre la creación del turno y
+el pago, ese cálculo cambia: un pago realizado al monto original puede ser rechazado
+retroactivamente. El monto de seña exigible es el vigente al momento de crear el turno, no
+al momento del pago.
+
+**Decisión**: Agregar `deposit_at_booking` (`Numeric(10,2)`, nullable) a `Booking` y
+setearlo en la creación del turno via `effective_deposit(service.price, service.deposit_amount)`.
+El guard de amount en el webhook lee `booking.deposit_at_booking`; si es `NULL` (filas
+anteriores a la migración) cae al fallback de cálculo en tiempo real. La migración backfill
+usa el precio actual del servicio para filas históricas (mejor aproximación disponible).
+Se agrega `CHECK (deposit_at_booking >= 0)` en DB.
+
+El campo se snapshotea en `Booking` (no en `Payment`) porque el monto acordado es una
+propiedad del turno, no del pago: un turno puede tener múltiples pagos (reintentos, pagos
+parciales futuros) y todos deben compararse contra el mismo monto pactado.
+
+**Alternativas**:
+- **Snapshot en `Payment`**: más cercano al evento de pago, pero requeriría que el webhook
+  de creación de preferencia conozca el monto —o que el monto se recalcule al crear
+  `Payment`— lo que no elimina la ventana de race condition si el precio cambia entre
+  preferencia y pago.
+- **No snapshotear; bloquear cambios de precio si hay bookings pending**: más restrictivo
+  para el dueño del negocio; rechaza casos legítimos (actualizar precio para nuevos turnos).
+- **Tolerar el desfase**: aceptable como deuda de baja severidad solo si no hay producción;
+  rechazado ahora que hay pagos reales en juego.
+
+**Consecuencias**:
+- **Ventaja** — Un cambio de precio no rechaza retroactivamente un pago válido.
+- **Ventaja** — El guard de amount es determinístico: no depende del estado actual del servicio.
+- **Ventaja** — `CHECK >= 0` en DB previene valores negativos por bug en `effective_deposit`.
+- **Riesgo** — El backfill usa el precio actual del servicio para filas históricas. Si el
+  precio cambió antes de la migración, esas filas quedan con un valor aproximado —no el
+  real al momento de la reserva. En producción con turnos existentes, pagos tardíos sobre
+  esas filas podrían seguir fallando o aprobando según el delta.
+- **Deuda** — `NULL` en filas históricas y en el backfill con precio cambiado. El fallback
+  a `effective_deposit()` en tiempo real persiste para esos casos hasta que se cancelen o
+  completen los turnos afectados.
+
+**Implementación**: `app/models.py`, `app/main.py`, `app/mp_webhooks.py`.
+Migración: `55526fb8c0f9_move_deposit_at_booking_to_booking.py`.
+Tests en `tests/test_integration.py`, `tests/test_mp_webhooks.py`.
+Commit: `f128344`.
+
+---
+
 ## Roadmap de deuda técnica
 
 Ordenado por impacto/urgencia estimada:
 
 ### Fase 0 — Autonomía (Septiembre-Octubre 2026)
-1. **Health check profundo** que verifique DB y Redis.
-2. **Backup automatizado** como cron en el VPS de producción + copia a S3.
-3. **Test de restore** del backup para verificar que funciona cuando importa.
-4. **`deposit_at_booking` en `Payment`** — columna que guarda el monto de seña acordado al
-   momento del pago. Hoy el guard de D-019 compara contra el precio del servicio en tiempo
-   real; si el precio cambia, pagos legítimos pueden rechazarse. Requiere migración + fix en
-   webhook MP. (Media 2 del audit Oct 2026)
-5. **`Payment.mp_payment_id` UNIQUE + `SELECT FOR UPDATE`** — evitar race condition donde
-   dos webhooks simultáneos del mismo pago crean dos filas `Payment`. Requiere migración.
-   (Media B del audit Oct 2026)
-6. **`CHECK (deposit_amount >= 0)` en `service`** — constraint de DB que impide configurar
-   un monto de seña negativo, lo que pasaría el guard de amount y confirmaría bookings sin
-   cobrar. Requiere migración. (Baja 3 del audit Oct 2026)
+1. ~~**Health check profundo** que verifique DB y Redis.~~ — **Resuelto en `f2aae77`**. Endpoint `/health` con checks de DB y Redis; 2 tests agregados en `tests/test_health.py`.
+2. ~~**Backup automatizado** como cron en el VPS de producción + copia a S3.~~ — **Resuelto parcialmente en `746778c`**. Script `scripts/backup_db.sh` sube a S3 cuando `S3_BACKUP_BUCKET` está configurada. Configuración del cron en el host: pendiente operacional (ver `DEPLOYMENT.md` §7).
+3. ~~**Test de restore** del backup para verificar que funciona cuando importa.~~ — **Resuelto en `746778c`**. Nuevo script `scripts/restore_db.sh` (local o `s3://`, flag `--yes`). Procedimiento documentado en `DEPLOYMENT.md` §7.
+4. ~~**`deposit_at_booking` en `Booking`**~~ — **Resuelto en D-020 / `f128344`**. Snapshot
+   de `effective_deposit` al crear el turno; guard de amount en webhook MP lo consume.
+5. ~~**`Payment.mp_payment_id` UNIQUE + `SELECT FOR UPDATE`**~~ — **Resuelto en `072ab22`**.
+6. ~~**`CHECK (deposit_amount >= 0)` en `service`**~~ — **Resuelto en `6677acc`**.
+7. ~~**`idempotency_key` UNIQUE global → UNIQUE compuesto `(tenant_id, idempotency_key)`**~~ — **Resuelto en `8cfa0d6`**. Migración `b0e5b8028ae7`; el constraint `uq_booking_idempotency_key` ahora abarca `(tenant_id, idempotency_key)`. Eliminado campo `price_at_booking: float | None` de `BookingCreate` (era ignorado; el endpoint siempre usa `service.price`).
 
 ### Q1 2027 (mes 1-3)
 4. **Deploy a producción** (VPS + dominio + Cloudflare Named Tunnel).

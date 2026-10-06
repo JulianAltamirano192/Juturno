@@ -67,9 +67,8 @@ Si un doc contradice el código, manda el código: avisá y proponé corregir el
   `PATCH /tenants/me` exigen API key; el panel con cookie no tiene botón. No hay cambio/recupero
   de contraseña ni verificación de email.
 - CSRF en `/panel/*`: `validate_csrf` solo exige que exista la cookie, no la compara con el form.
-- `idempotency_key` es UNIQUE global (debería ser `(tenant_id, idempotency_key)`).
-- `BookingCreate` acepta `price_at_booking` del cliente y montos `float`: el endpoint público
-  debe usar siempre `service.price`; dinero en `Decimal`.
+- ~~`idempotency_key` es UNIQUE global~~ — **Resuelto en `8cfa0d6`** (migración `b0e5b8028ae7`): constraint ahora es `(tenant_id, idempotency_key)`.
+- ~~`BookingCreate` acepta `price_at_booking` del cliente~~ — **Resuelto en `8cfa0d6`**: campo eliminado del schema. Pendiente: montos `float` en schemas públicos (`PublicServiceRead`, `BookingCreate`) — dinero debería ser `Decimal`.
 - ~~Webhook MP: falta validar monto >= seña y `booking.tenant_id == tenant resuelto`.~~
   **Resuelto en `4e3af49`** (guard de collector_id para todos los estados, currency ARS, amount
   is_finite). Pendiente: `deposit_at_booking`, race condition Payment, CHECK deposit >= 0
@@ -77,8 +76,8 @@ Si un doc contradice el código, manda el código: avisá y proponé corregir el
 - Outbox (D-016): commit por lote → riesgo de reenvíos y mensajes "veneno"; pasar a commit por evento.
 - Sin rate limiting en endpoints públicos; uvicorn sin `--forwarded-allow-ips` detrás de Traefik.
 - CI solo corre pytest (Python 3.12 en CI vs 3.11 en Dockerfile); sin branch protection confirmada.
-- Backups sin copia externa ni restore probado.
-- Docs desactualizados: README (conteo de tests), PLAN_MP.
+- ~~Backups sin copia externa ni restore probado~~ — **Resuelto en `746778c`**: `backup_db.sh` sube a S3 (condicional a `S3_BACKUP_BUCKET`); nuevo `restore_db.sh` con soporte local y S3.
+- Docs desactualizados: PLAN_MP.
 
 ## Flujo de trabajo
 

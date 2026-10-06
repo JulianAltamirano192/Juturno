@@ -11,9 +11,13 @@
 
 set -euo pipefail
 
-BACKUP_SRC="${1:-}"
+BACKUP_SRC=""
 SKIP_CONFIRM=false
-[ "${2:-}" = "--yes" ] && SKIP_CONFIRM=true
+for arg in "$@"; do
+    if [ "$arg" = "--yes" ]; then SKIP_CONFIRM=true
+    elif [ -z "$BACKUP_SRC" ]; then BACKUP_SRC="$arg"
+    fi
+done
 
 if [ -z "$BACKUP_SRC" ]; then
     echo "Uso: $0 <ruta_local.sql.gz | s3://bucket/key> [--yes]"

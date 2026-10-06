@@ -38,7 +38,8 @@ echo "Backups activos: $REMAINING"
 if [ -n "${S3_BACKUP_BUCKET:-}" ]; then
     S3_KEY="${S3_BACKUP_PREFIX:-juturno/backups}/$(basename "$BACKUP_FILE")"
     echo "Subiendo a s3://${S3_BACKUP_BUCKET}/${S3_KEY} ..."
-    aws s3 cp "$BACKUP_FILE" "s3://${S3_BACKUP_BUCKET}/${S3_KEY}"
+    aws s3 cp "$BACKUP_FILE" "s3://${S3_BACKUP_BUCKET}/${S3_KEY}" \
+        || { echo "[$(date +%Y-%m-%d\ %H:%M:%S)] WARNING: S3 upload failed; local backup preserved at $BACKUP_FILE"; exit 2; }
     echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Upload S3 OK: s3://${S3_BACKUP_BUCKET}/${S3_KEY}"
 fi
 
