@@ -478,6 +478,66 @@ Mismo patrón que `SECRET_KEY`: `ValueError` con mensaje claro al arranque.
 
 ---
 
+## D-019: Webhook MP — guard ordering, fail-closed en producción y aislamiento por tenant
+
+**Fecha**: Octubre 2026
+
+**Contexto**: La auditoría de seguridad del webhook `POST /webhooks/mercadopago` (Oct 2026)
+detectó que los guards de tenant, currency y amount solo se aplicaban a pagos con
+`payment_status == "approved"`. Los pagos en estado `pending`, `rejected` u otros podían
+ser procesados sin verificar que el `collector_id` (cuenta vendedora) correspondiera al
+tenant de la reserva, lo que permitía que un pago de un tenant apareciera como evento válido
+en la fila `Payment` de otro. Adicionalmente, los guards corrían **después** de crear la
+fila `Payment`, por lo que un rechazo posterior a la inserción dejaba una fila huérfana en
+DB.
+
+**Decisión**: Reestructurar el bloque de guards con el siguiente orden estricto, aplicado
+**antes** de crear o actualizar cualquier fila `Payment`:
+
+1. **Guard de tenant** (todos los estados): verificar que `collector_id` del response
+   autenticado de MP coincide con `tenant.mp_user_id` de la reserva.
+   - En **producción** (`ENVIRONMENT == "production"`): si el tenant no tiene `mp_user_id`
+     configurado → `TENANT_MISMATCH` (fail-closed).
+   - En **sandbox/dev**: si no hay `mp_user_id` → se omite el guard (retrocompatibilidad
+     con entornos de prueba donde el tenant no pasó por el flujo OAuth).
+2. **Guard de currency** (solo `approved`): rechazar si `currency_id != "ARS"`.
+3. **Guard de amount** (solo `approved`):
+   - Fail-closed si el servicio no existe (`service is None`).
+   - Validar `paid_amount.is_finite()` antes de la comparación decimal (previene
+     `InvalidOperation` con `NaN` o `Infinity`).
+   - Rechazar si `paid_amount < deposit`.
+
+**Alternativas**:
+- **Guards solo en `approved`**: el status quo antes del fix. Dejaba `pending`/`rejected`
+  sin validación de tenant — un pago de otro tenant podía quedar registrado con
+  `booking_id` correcto.
+- **Guard en la capa de routing antes del handler**: posible, pero complica la lectura del
+  flujo y requiere conocer el `booking_id` antes del handler.
+- **Fail-open siempre cuando no hay `mp_user_id`**: riesgo inaceptable en producción; un
+  tenant que olvidó conectar MP procesaría pagos de cualquier cuenta vendedora.
+
+**Consecuencias**:
+- **Ventaja** — Ningún `Payment` se crea antes de validar que el pago pertenece al tenant
+  correcto — sin filas huérfanas ni cross-tenant data.
+- **Ventaja** — El comportamiento en producción es determinístico: sin `mp_user_id`
+  configurado, los webhooks se rechazan hasta que el tenant complete el alta.
+- **Ventaja** — La guardia de `is_finite()` elimina el riesgo de `InvalidOperation` con
+  valores `NaN`/`Infinity` que MP podría enviar en edge cases.
+- **Riesgo** — Un tenant que no completó la conexión OAuth en producción verá sus webhooks
+  rechazados silenciosamente. Mitigation: la pantalla de onboarding debe mostrar el estado
+  de conexión antes de publicar el link de reserva.
+- **Deuda** — `deposit_at_booking`: el guard de amount compara contra el precio actual del
+  servicio, no contra el monto acordado al crear el booking. Si el precio del servicio cambia
+  entre la creación del turno y el pago, la validación puede rechazar un pago legítimo.
+  Requiere columna `deposit_at_booking` en `Payment` (ver roadmap).
+- **Deuda** — Race condition: dos webhooks simultáneos del mismo `mp_payment_id` pueden
+  crear dos filas `Payment`. Requiere UNIQUE constraint y `SELECT FOR UPDATE` (ver roadmap).
+
+**Implementación**: `app/mp_webhooks.py`. Tests en `tests/test_mp_webhooks.py`.
+Commit: `4e3af49`.
+
+---
+
 ## Roadmap de deuda técnica
 
 Ordenado por impacto/urgencia estimada:
@@ -486,6 +546,16 @@ Ordenado por impacto/urgencia estimada:
 1. **Health check profundo** que verifique DB y Redis.
 2. **Backup automatizado** como cron en el VPS de producción + copia a S3.
 3. **Test de restore** del backup para verificar que funciona cuando importa.
+4. **`deposit_at_booking` en `Payment`** — columna que guarda el monto de seña acordado al
+   momento del pago. Hoy el guard de D-019 compara contra el precio del servicio en tiempo
+   real; si el precio cambia, pagos legítimos pueden rechazarse. Requiere migración + fix en
+   webhook MP. (Media 2 del audit Oct 2026)
+5. **`Payment.mp_payment_id` UNIQUE + `SELECT FOR UPDATE`** — evitar race condition donde
+   dos webhooks simultáneos del mismo pago crean dos filas `Payment`. Requiere migración.
+   (Media B del audit Oct 2026)
+6. **`CHECK (deposit_amount >= 0)` en `service`** — constraint de DB que impide configurar
+   un monto de seña negativo, lo que pasaría el guard de amount y confirmaría bookings sin
+   cobrar. Requiere migración. (Baja 3 del audit Oct 2026)
 
 ### Q1 2027 (mes 1-3)
 4. **Deploy a producción** (VPS + dominio + Cloudflare Named Tunnel).
