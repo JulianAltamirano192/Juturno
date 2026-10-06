@@ -249,9 +249,9 @@ async def login_submit(
         set_csrf_cookie(response, new_csrf)
         return response
 
-    response = RedirectResponse(url=safe_next, status_code=status.HTTP_303_SEE_OTHER)
-    set_session_cookie(response, tenant.id, tenant.session_version)
-    return response
+    redirect = RedirectResponse(url=safe_next, status_code=status.HTTP_303_SEE_OTHER)
+    set_session_cookie(redirect, tenant.id, tenant.session_version)
+    return redirect
 
 
 @router.post("/logout")

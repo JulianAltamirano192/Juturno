@@ -88,6 +88,10 @@ class WhatsAppService:
 
                 await asyncio.sleep(2**attempt)
 
+        raise RuntimeError(
+            "unreachable: all retries exhausted without returning or raising"
+        )
+
     async def send_confirmation(
         self, phone: str, booking_id: int, nombre: str, fecha: str
     ):
