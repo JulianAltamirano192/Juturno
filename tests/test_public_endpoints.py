@@ -1,10 +1,10 @@
-import pytest
 from datetime import date, timedelta
 from unittest.mock import AsyncMock, patch
 
-from app.models import Tenant, Service, Booking, Payment
+import pytest
 from sqlalchemy import select
 
+from app.models import Booking, Payment, Service, Tenant
 
 # ---------------------------------------------------------------------------
 # Fixtures helpers
@@ -18,7 +18,7 @@ FAKE_MP_RESULT = {
     "checkout_url": "https://sandbox.mercadopago.com.ar/checkout/v1/redirect?pref_id=fake-pref-id-123",
 }
 
-MP_PATCH = "app.main.create_mp_preference"
+MP_PATCH = "app.routers.public.create_mp_preference"
 
 
 # ---------------------------------------------------------------------------

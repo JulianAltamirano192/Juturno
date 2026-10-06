@@ -10,13 +10,14 @@ Para forzar un ciphertext "de otra clave" se cifra con una Fernet key que NO
 es la activa en settings en ese momento.
 """
 
-import pytest
 from datetime import datetime, timedelta, timezone
+
+import pytest
 from cryptography.fernet import Fernet
 from sqlalchemy import text
 
 from app import main as main_module
-from app.models import Tenant, Service
+from app.models import Service, Tenant
 from app.mp_crypto import encrypt_token
 
 TEST_FERNET_KEY = Fernet.generate_key().decode()
@@ -48,7 +49,9 @@ def fake_mp(monkeypatch):
             "checkout_url": "https://sandbox.mercadopago.com/init",
         }
 
-    monkeypatch.setattr(main_module, "create_mp_preference", fake_create_mp_preference)
+    monkeypatch.setattr(
+        "app.routers.public.create_mp_preference", fake_create_mp_preference
+    )
     return captured
 
 

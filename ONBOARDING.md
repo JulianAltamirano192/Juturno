@@ -34,7 +34,7 @@ curl http://localhost:8000/health
 docker compose exec \
   -e TEST_DATABASE_URL="postgresql+asyncpg://postgres:$(grep '^POSTGRES_PASSWORD=' .env | cut -d= -f2-)@db:5432/saas_test" \
   api pytest -v
-# 189 tests en 23 archivos, ~100s
+# 222 tests en ~23 archivos, ~100s
 ```
 
 > **Nota clave**: Tests corren **dentro del contenedor `api`**. `TEST_DATABASE_URL` debe apuntar al servicio `db` (no `localhost`). El scheduler se deshabilita automáticamente con esta variable.
@@ -83,7 +83,20 @@ Booking.flow:
 
 ## 4. Cómo agregar un endpoint
 
-### 4.1 Definir schema (Pydantic) en `main.py` o archivo separado
+### 4.1 Elegir el router correcto
+
+Los endpoints viven en `app/routers/`, agrupados por mecanismo de auth:
+
+| Auth | Archivo |
+|------|---------|
+| Sin auth (público) | `app/routers/public.py` |
+| Cookie `juturno_session` (panel HTML) | `app/routers/panel.py` o `app/routers/auth.py` |
+| Header `X-Tenant-API-Key` | `app/routers/api.py` |
+
+### 4.2 Definir schemas Pydantic
+
+Si el schema es específico del endpoint, definilo en el mismo archivo de router. Si es compartido entre routers, usá `app/schemas.py`.
+
 ```python
 class MiRequest(BaseModel):
     campo: str
@@ -93,7 +106,7 @@ class MiResponse(BaseModel):
     resultado: str
 ```
 
-### 4.2 Elegir autenticación
+### 4.3 Elegir dependencia de autenticación
 ```python
 # API Key (endpoints máquina-a-máquina)
 current_tenant: Tenant = Depends(get_current_tenant)
@@ -102,9 +115,12 @@ current_tenant: Tenant = Depends(get_current_tenant)
 tenant: Tenant = Depends(get_current_tenant_from_session)
 ```
 
-### 4.3 Escribir handler
+### 4.4 Escribir handler en el router correspondiente
 ```python
-@app.post("/mi-endpoint", response_model=MiResponse)
+# En app/routers/api.py (ejemplo con API Key)
+router = APIRouter()
+
+@router.post("/mi-endpoint", response_model=MiResponse)
 async def mi_endpoint(
     payload: MiRequest,
     current_tenant: Tenant = Depends(get_current_tenant),
@@ -118,7 +134,9 @@ async def mi_endpoint(
     return MiResponse(resultado="ok")
 ```
 
-### 4.4 Agregar tests
+`app/main.py` ya registra todos los routers con `app.include_router(...)`. No hace falta tocarlo para agregar handlers dentro de un router existente.
+
+### 4.5 Agregar tests
 ```python
 # tests/test_mi_feature.py
 @pytest.mark.asyncio
@@ -129,7 +147,9 @@ async def test_mi_endpoint(client, db_session):
     assert res.json()["resultado"] == "ok"
 ```
 
-### 4.5 Verificar calidad
+> Si el test necesita mockear algo importado en un router (ej. `create_mp_preference`), el patch target es el módulo del router donde se importa, no `app.main`. Ejemplo: `monkeypatch.setattr("app.routers.public.create_mp_preference", mock_fn)`.
+
+### 4.6 Verificar calidad
 ```bash
 # Lint/typecheck (local, host)
 ruff check app/ tests/
@@ -203,7 +223,7 @@ monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_get_payment_details
 ```
 
 ### 6.4 Scheduler en tests
-- **Se deshabilita automáticamente** si `TEST_DATABASE_URL` está seteada (`main.py:116-153`).
+- **Se deshabilita automáticamente** si `TEST_DATABASE_URL` está seteada (ver lifespan en `app/main.py`).
 - No hace falta mockear jobs; corren en tests de integración solo si los invocás manual.
 
 ---

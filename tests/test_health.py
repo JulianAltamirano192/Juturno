@@ -1,5 +1,6 @@
-import pytest
 from unittest.mock import AsyncMock, patch
+
+import pytest
 
 
 @pytest.mark.asyncio
@@ -19,7 +20,7 @@ async def test_health_redis_down(client, monkeypatch):
     mock_redis.ping.side_effect = ConnectionError("redis unreachable")
     mock_redis.aclose = AsyncMock()
 
-    with patch("app.main.aioredis.from_url", return_value=mock_redis):
+    with patch("app.routers.public.aioredis.from_url", return_value=mock_redis):
         res = await client.get("/health")
 
     assert res.status_code == 503

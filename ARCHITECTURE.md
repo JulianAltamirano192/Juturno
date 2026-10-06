@@ -13,7 +13,8 @@
                                   │
                     ┌─────────────▼─────────────┐
                     │     FastAPI (uvicorn)     │
-                    │  app/main.py + lifespan   │
+                    │  app/main.py (lifespan,   │
+                    │  middleware, routers)      │
                     └─────────────┬─────────────┘
                                   │
         ┌─────────────────────────┼─────────────────────────┐
@@ -263,7 +264,7 @@ REQUIRE_STARTED = {"no_show", "completed"}  # solo si start_time <= now
 
 - **Locks Redis**: `uuid4().hex` como valor, TTL 30s (seguridad anti-deadlock) — para 3 jobs.
 - **Outbox**: usa `FOR UPDATE SKIP LOCKED` a nivel DB (no Redis lock) — evita doble procesamiento sin lock externo.
-- **NO arranca** si `TEST_DATABASE_URL` está seteada (evita colisiones en tests — ver `main.py:116-153`).
+- **NO arranca** si `TEST_DATABASE_URL` está seteada (evita colisiones en tests — ver lifespan en `app/main.py`).
 - Comparte `async_session_maker` con la app (sin IPC).
 
 ---
@@ -324,7 +325,35 @@ REQUIRE_STARTED = {"no_show", "completed"}  # solo si start_time <= now
 
 ---
 
-## 12. Convenciones de código (obligatorias)
+## 12. Estructura de archivos relevante
+
+```
+app/
+├── main.py              — lifespan, APScheduler, middlewares, exception handlers, include_router()
+├── limiter.py           — singleton Limiter de slowapi (separado para evitar imports circulares)
+├── templates.py         — singleton Jinja2Templates
+├── schemas.py           — schemas Pydantic compartidos: SlotQuery, AvailableSlotsResponse, BookingCreate
+├── routers/
+│   ├── public.py        — sin auth: GET /health, GET /public/*, POST /public/bookings, GET /t/{slug}
+│   ├── auth.py          — formularios/cookies: GET+POST /register, GET+POST /login, POST /logout
+│   ├── api.py           — API Key (X-Tenant-API-Key): /bookings/available-slots, POST /bookings, PATCH /tenants/me
+│   └── panel.py         — cookie auth: GET /dashboard, GET+POST /panel/*
+├── mp_connect.py        — OAuth MP: /mp/connect/start, /mp/connect/callback, PATCH /tenants/me/mp
+├── mp_webhooks.py       — POST /webhooks/mercadopago
+├── booking_actions.py   — máquina de estados booking (transition_booking_status)
+├── services.py          — lógica de negocio (compute_available_slots, etc.)
+├── config.py            — Settings (pydantic-settings), validación de env vars en startup
+└── ...
+```
+
+**Regla de agrupación de routers**: el router se elige según el mecanismo de auth del endpoint:
+- Sin auth → `routers/public.py`
+- Cookie firmada (`juturno_session`) → `routers/panel.py` o `routers/auth.py`
+- Header `X-Tenant-API-Key` → `routers/api.py`
+
+---
+
+## 13. Convenciones de código (obligatorias)
 
 | Convención | Ejemplo |
 |------------|---------|
