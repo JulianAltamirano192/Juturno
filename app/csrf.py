@@ -52,7 +52,7 @@ def validate_csrf_double_submit(
     return hmac.compare_digest(form_token.encode(), cookie_token.encode())
 
 
-async def validate_csrf(request) -> bool:
+async def validate_csrf(request) -> None:
     """
     Valida CSRF para peticiones del panel usando el patrón double-submit cookie.
     Lee el campo 'csrf_token' del form body y lo compara contra la cookie.
@@ -73,5 +73,3 @@ async def validate_csrf(request) -> bool:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="CSRF token invalid"
         )
-
-    return True

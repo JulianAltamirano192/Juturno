@@ -302,6 +302,29 @@ async def test_logout_clears_session(client: AsyncClient):
     assert response.headers["location"] == "/login"
 
 
+@pytest.mark.asyncio
+async def test_logout_csrf_missing_cookie_returns_403(client: AsyncClient):
+    """POST /logout sin cookie CSRF devuelve 403."""
+    response = await client.post(
+        "/logout",
+        data={"csrf_token": "any-token"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_logout_csrf_mismatch_returns_403(client: AsyncClient):
+    """POST /logout con token de formulario distinto a la cookie devuelve 403."""
+    response = await client.post(
+        "/logout",
+        data={"csrf_token": "token-a"},
+        cookies={"csrf_token": "token-b"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 403
+
+
 def test_sanitize_next_url_unit():
     """Prueba unitaria de sanitización de open redirect."""
     assert sanitize_next_url("/dashboard") == "/dashboard"
