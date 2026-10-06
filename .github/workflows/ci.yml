@@ -56,6 +56,12 @@ jobs:
         run: |
           psql -h localhost -U postgres -d saas_test -c "CREATE EXTENSION IF NOT EXISTS btree_gist;"
 
+      - name: Lint (ruff)
+        run: ruff check app/ tests/
+
+      - name: Type check (mypy)
+        run: mypy app/
+
       - name: Run tests
         env:
           DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/saas_test
