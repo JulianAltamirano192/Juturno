@@ -11,16 +11,16 @@ import redis.asyncio as aioredis
 import sentry_sdk
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request, status
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_serializer, field_validator
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.httpx import HttpxIntegration
 from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 from sqlalchemy import and_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -64,9 +64,8 @@ from app.scheduler import (
     process_reminders,
 )
 from app.services import (
-    calculate_available_slots,
+    compute_available_slots,
     effective_deposit,
-    resolve_day_windows,
 )
 from app.session import (
     SESSION_COOKIE_NAME,
@@ -275,10 +274,14 @@ class PublicServiceRead(BaseModel):
     id: int
     name: str
     duration_minutes: int
-    price: float
-    deposit_amount: float = Field(
+    price: Decimal
+    deposit_amount: Decimal = Field(
         description="Seña efectiva: deposit_amount o 30% del precio"
     )
+
+    @field_serializer("price", "deposit_amount")
+    def serialize_money(self, v: Decimal) -> float:
+        return float(v)
 
 
 class PublicTenantDetailResponse(BaseModel):
@@ -322,97 +325,33 @@ async def get_available_slots(
     session: AsyncSession = Depends(get_db),
 ):
     """Devuelve los slots libres para un servicio/día/staff."""
-
-    tenant = current_tenant
+    if tenant_id != current_tenant.id:
+        raise HTTPException(status_code=404, detail="Service not found")
 
     tenant_timezone = ZoneInfo(
-        tenant.timezone if tenant.timezone else "America/Argentina/Buenos_Aires"
+        current_tenant.timezone or "America/Argentina/Buenos_Aires"
     )
-    now_local = datetime.now(tenant_timezone)
-    today_local = now_local.date()
-
-    if day < today_local:
+    if day < datetime.now(tenant_timezone).date():
         raise HTTPException(
             status_code=400, detail="No se pueden consultar fechas pasadas"
         )
-
-    if tenant_id != current_tenant.id:
-        # La API key es válida pero para otro tenant: 404 para no
-        # revelar si el tenant_id existe.
-        raise HTTPException(status_code=404, detail="Service not found")
 
     service = await session.get(Service, service_id)
     if not service or service.tenant_id != tenant_id:
         raise HTTPException(status_code=404, detail="Service not found")
 
-    windows = await resolve_day_windows(
+    slots = await compute_available_slots(
         session=session,
         tenant_id=tenant_id,
-        day_of_week=day.weekday(),
-        day_date=day,
-        tenant_timezone=tenant_timezone,
+        service=service,
+        day=day,
         staff_id=staff_id,
+        tenant_timezone=tenant_timezone,
     )
-
-    if not windows:
-        # Día cerrado (el negocio tiene horarios configurados pero no para hoy)
-        return AvailableSlotsResponse(
-            date=day,
-            service_duration_min=service.duration_minutes,
-            timezone=tenant.timezone,
-            slots=[],
-        )
-
-    # Usar la ventana más amplia posible para filtrar reservas del día
-    day_start = min(w[0] for w in windows)
-    day_end = max(w[1] for w in windows)
-
-    stmt = select(Booking).where(
-        and_(
-            Booking.tenant_id == tenant_id,
-            Booking.status.in_(["pending", "confirmed"]),
-            Booking.start_time < day_end,
-            Booking.end_time > day_start,
-        )
-    )
-
-    if staff_id:
-        stmt = stmt.where(Booking.staff_id == staff_id)
-
-    result = await session.execute(stmt)
-    bookings_db = result.scalars().all()
-
-    bookings_intervals = [
-        (
-            b.start_time.astimezone(tenant_timezone),
-            b.end_time.astimezone(tenant_timezone),
-        )
-        for b in bookings_db
-    ]
-
-    slots = calculate_available_slots(
-        windows=windows,
-        bookings=bookings_intervals,
-        duration_min=service.duration_minutes,
-        granularity_min=30,
-    )
-
-    # Si la fecha es HOY en el timezone del tenant, filtrar slots pasados
-    if day == today_local:
-        filtered_slots = []
-        for s in slots:
-            slot_h, slot_m = map(int, s.split(":"))
-            slot_dt = datetime.combine(
-                day, time(slot_h, slot_m), tzinfo=tenant_timezone
-            )
-            if slot_dt >= now_local:
-                filtered_slots.append(s)
-        slots = filtered_slots
-
     return AvailableSlotsResponse(
         date=day,
         service_duration_min=service.duration_minutes,
-        timezone=tenant.timezone,
+        timezone=current_tenant.timezone,
         slots=slots,
     )
 
@@ -579,8 +518,8 @@ async def get_public_tenant_detail(
                 id=s.id,
                 name=s.name,
                 duration_minutes=s.duration_minutes,
-                price=float(s.price),
-                deposit_amount=float(effective_deposit(s.price, s.deposit_amount)),
+                price=s.price,
+                deposit_amount=effective_deposit(s.price, s.deposit_amount),
             )
             for s in services
         ],
@@ -600,13 +539,8 @@ async def get_public_available_slots(
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
 
-    tenant_timezone = ZoneInfo(
-        tenant.timezone if tenant.timezone else "America/Argentina/Buenos_Aires"
-    )
-    now_local = datetime.now(tenant_timezone)
-    today_local = now_local.date()
-
-    if day < today_local:
+    tenant_timezone = ZoneInfo(tenant.timezone or "America/Argentina/Buenos_Aires")
+    if day < datetime.now(tenant_timezone).date():
         raise HTTPException(
             status_code=400, detail="No se pueden consultar fechas pasadas"
         )
@@ -615,67 +549,14 @@ async def get_public_available_slots(
     if not service or service.tenant_id != tenant_id:
         raise HTTPException(status_code=404, detail="Service not found")
 
-    windows = await resolve_day_windows(
+    slots = await compute_available_slots(
         session=session,
         tenant_id=tenant_id,
-        day_of_week=day.weekday(),
-        day_date=day,
-        tenant_timezone=tenant_timezone,
+        service=service,
+        day=day,
         staff_id=staff_id,
+        tenant_timezone=tenant_timezone,
     )
-
-    if not windows:
-        return AvailableSlotsResponse(
-            date=day,
-            service_duration_min=service.duration_minutes,
-            timezone=tenant.timezone,
-            slots=[],
-        )
-
-    day_start = min(w[0] for w in windows)
-    day_end = max(w[1] for w in windows)
-
-    stmt = select(Booking).where(
-        and_(
-            Booking.tenant_id == tenant_id,
-            Booking.status.in_(["pending", "confirmed"]),
-            Booking.start_time < day_end,
-            Booking.end_time > day_start,
-        )
-    )
-
-    if staff_id:
-        stmt = stmt.where(Booking.staff_id == staff_id)
-
-    result = await session.execute(stmt)
-    bookings_db = result.scalars().all()
-
-    bookings_intervals = [
-        (
-            b.start_time.astimezone(tenant_timezone),
-            b.end_time.astimezone(tenant_timezone),
-        )
-        for b in bookings_db
-    ]
-
-    slots = calculate_available_slots(
-        windows=windows,
-        bookings=bookings_intervals,
-        duration_min=service.duration_minutes,
-        granularity_min=30,
-    )
-
-    if day == today_local:
-        filtered_slots = []
-        for s in slots:
-            slot_h, slot_m = map(int, s.split(":"))
-            slot_dt = datetime.combine(
-                day, time(slot_h, slot_m), tzinfo=tenant_timezone
-            )
-            if slot_dt >= now_local:
-                filtered_slots.append(s)
-        slots = filtered_slots
-
     return AvailableSlotsResponse(
         date=day,
         service_duration_min=service.duration_minutes,

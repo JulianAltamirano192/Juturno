@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import ROUND_HALF_UP, Decimal
 
 
 def effective_deposit(price: Decimal, deposit_amount: Decimal | None) -> Decimal:
@@ -107,9 +107,11 @@ async def resolve_day_windows(
        → aplica fallback estático 09:00-18:00.
        Si tiene al menos una fila pero no para este día → día cerrado, lista vacía.
     """
-    from sqlalchemy import select, func, and_
-    from app.models import BusinessHours
     from datetime import time as time_type
+
+    from sqlalchemy import and_, func, select
+
+    from app.models import BusinessHours
 
     FALLBACK_START = time_type(9, 0)
     FALLBACK_END = time_type(18, 0)
@@ -178,3 +180,78 @@ async def resolve_day_windows(
     ws = datetime.combine(day_date, FALLBACK_START, tzinfo=tenant_timezone)
     we = datetime.combine(day_date, FALLBACK_END, tzinfo=tenant_timezone)
     return [(ws, we)]
+
+
+async def compute_available_slots(
+    *,
+    session,
+    tenant_id: int,
+    service,
+    day,
+    staff_id,
+    tenant_timezone,
+) -> list[str]:
+    """Lógica compartida de cálculo de slots. El caller valida auth y tenant."""
+    from datetime import time
+
+    from sqlalchemy import and_, select
+
+    from app.models import Booking
+
+    now_local = datetime.now(tenant_timezone)
+    today_local = now_local.date()
+
+    windows = await resolve_day_windows(
+        session=session,
+        tenant_id=tenant_id,
+        day_of_week=day.weekday(),
+        day_date=day,
+        tenant_timezone=tenant_timezone,
+        staff_id=staff_id,
+    )
+
+    if not windows:
+        return []
+
+    day_start = min(w[0] for w in windows)
+    day_end = max(w[1] for w in windows)
+
+    stmt = select(Booking).where(
+        and_(
+            Booking.tenant_id == tenant_id,
+            Booking.status.in_(["pending", "confirmed"]),
+            Booking.start_time < day_end,
+            Booking.end_time > day_start,
+        )
+    )
+    if staff_id:
+        stmt = stmt.where(Booking.staff_id == staff_id)
+
+    bookings_db = (await session.execute(stmt)).scalars().all()
+
+    bookings_intervals = [
+        (
+            b.start_time.astimezone(tenant_timezone),
+            b.end_time.astimezone(tenant_timezone),
+        )
+        for b in bookings_db
+    ]
+
+    slots = calculate_available_slots(
+        windows=windows,
+        bookings=bookings_intervals,
+        duration_min=service.duration_minutes,
+        granularity_min=30,
+    )
+
+    if day == today_local:
+        slots = [
+            s
+            for s in slots
+            if datetime.combine(
+                day, time(*map(int, s.split(":"))), tzinfo=tenant_timezone
+            )
+            >= now_local
+        ]
+
+    return slots

@@ -44,6 +44,22 @@ class Settings(BaseSettings):
             raise ValueError("SECRET_KEY cannot be the default value in production!")
         if self.is_production and self.MP_SANDBOX:
             raise ValueError("MP_SANDBOX must be False in production")
+        if self.is_production:
+            missing = [
+                name
+                for name, val in [
+                    ("META_APP_SECRET", self.META_APP_SECRET),
+                    ("MP_TOKEN_ENCRYPTION_KEY", self.MP_TOKEN_ENCRYPTION_KEY),
+                    ("MP_SECRET_KEY", self.MP_SECRET_KEY),
+                    ("WHATSAPP_TOKEN", self.WHATSAPP_TOKEN),
+                    ("WHATSAPP_PHONE_NUMBER_ID", self.WHATSAPP_PHONE_NUMBER_ID),
+                ]
+                if not val
+            ]
+            if missing:
+                raise ValueError(
+                    f"Missing required env vars in production: {', '.join(missing)}"
+                )
 
     class Config:
         env_file = ".env"
