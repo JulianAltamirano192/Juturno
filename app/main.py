@@ -11,6 +11,9 @@ import redis.asyncio as aioredis
 import sentry_sdk
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request, status
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -161,9 +164,18 @@ async def lifespan(app: FastAPI):
         print("Entorno de test: nada que apagar.")
 
 
+# --- RATE LIMITER ---
+# Disabled in test environment (TEST_DATABASE_URL is set by docker-compose exec in tests).
+limiter = Limiter(
+    key_func=get_remote_address,
+    enabled=not bool(settings.TEST_DATABASE_URL),
+)
+
 # --- APP ---
 
 app = FastAPI(lifespan=lifespan)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
@@ -673,7 +685,9 @@ async def get_public_available_slots(
 
 
 @app.post("/public/bookings", status_code=201)
+@limiter.limit("20/minute")
 async def create_public_booking(
+    request: Request,
     payload: BookingCreate,
     session: AsyncSession = Depends(get_db),
 ):
@@ -928,6 +942,7 @@ async def register_page(request: Request):
 
 
 @app.post("/register", response_class=HTMLResponse)
+@limiter.limit("5/minute")
 async def register_submit(
     request: Request,
     name: Annotated[str, Form()],
@@ -1078,6 +1093,7 @@ async def login_page(
 
 
 @app.post("/login", response_class=HTMLResponse)
+@limiter.limit("10/minute")
 async def login_submit(
     request: Request,
     owner_email: Annotated[str, Form()],
