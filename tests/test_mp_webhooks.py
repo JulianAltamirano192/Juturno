@@ -752,7 +752,7 @@ async def test_webhook_deposit_amount_zero(client, db_session, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_webhook_deposit_null_rounding(client, db_session, monkeypatch):
-    """Precio 10.75, deposit=None → seña efectiva = 3.22 (30% redondeado). Pago exacto confirma."""
+    """Precio 10.75, deposit=None → seña efectiva = 3.23 (30% con ROUND_HALF_UP). Pago exacto confirma."""
     from decimal import Decimal
 
     secret = "test-webhook-secret"
@@ -766,7 +766,7 @@ async def test_webhook_deposit_null_rounding(client, db_session, monkeypatch):
     await db_session.commit()
 
     async def mock_get_payment_details(data_id: str, access_token=None):
-        return _make_payment_details("approved", f"booking-{booking.id}", amount=3.22)
+        return _make_payment_details("approved", f"booking-{booking.id}", amount=3.23)
 
     monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_get_payment_details)
 

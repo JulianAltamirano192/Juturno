@@ -1,12 +1,12 @@
 from datetime import datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 
 
 def effective_deposit(price: Decimal, deposit_amount: Decimal | None) -> Decimal:
     """Monto de seña efectivo: el explícito, o 30% del precio si es None."""
     if deposit_amount is not None:
         return deposit_amount
-    return (price * Decimal("0.30")).quantize(Decimal("0.01"))
+    return (price * Decimal("0.30")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
 def calculate_available_slots(
