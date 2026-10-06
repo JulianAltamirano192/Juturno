@@ -22,17 +22,23 @@ def _make_payment_details(
     external_reference: str,
     amount: float = 100.0,
     method: str = "visa",
+    currency_id: str = "ARS",
+    collector_id: str | int | None = None,
 ) -> dict:
     """Construye un dict que simula la respuesta de MP /v1/payments/{id}."""
-    return {
+    d = {
         "status": status,
         "external_reference": external_reference,
         "transaction_amount": amount,
         "payment_method_id": method,
+        "currency_id": currency_id,
         "date_approved": (
             datetime.now(timezone.utc).isoformat() if status == "approved" else None
         ),
     }
+    if collector_id is not None:
+        d["collector_id"] = collector_id
+    return d
 
 
 # Helper para crear un booking listo para pruebas
@@ -663,6 +669,275 @@ async def test_webhook_approved_late_payment_reconfirms_expired(
     assert result.scalar_one() == "pending"
 
 
+# ---------------------------------------------------------------------------
+# Guards de seguridad: tenant mismatch y monto insuficiente (Issue #4)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_webhook_tenant_mismatch(client, db_session, monkeypatch):
+    """collector_id del response de MP difiere del mp_user_id del tenant → TENANT_MISMATCH."""
+    secret = "test-webhook-secret"
+    monkeypatch.setattr(mp_webhooks.settings, "MP_SECRET_KEY", secret)
+
+    booking = await _create_booking(db_session, "book_tenant_mismatch")
+    tenant = await db_session.get(Tenant, booking.tenant_id)
+    tenant.mp_user_id = "my-mp-account"
+    db_session.add(tenant)
+    await db_session.commit()
+
+    async def mock_get_payment_details(data_id: str, access_token=None):
+        return _make_payment_details(
+            "approved", f"booking-{booking.id}", collector_id=99999
+        )  # 99999 ≠ "my-mp-account"
+
+    monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_get_payment_details)
+
+    ts = int(datetime.now(timezone.utc).timestamp())
+    data_id = "pay_mismatch_1"
+    request_id = "req_mismatch_1"
+    signature = _sign_webhook(data_id, request_id, ts, secret)
+    payload = {
+        "id": "evt_mismatch_1",
+        "action": "payment.updated",
+        "data": {"id": data_id},
+    }
+    headers = {"x-signature": signature, "x-request-id": request_id}
+
+    res = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
+    assert res.status_code == 200
+    assert res.text == "TENANT_MISMATCH"
+
+    await db_session.refresh(booking)
+    assert booking.status == "pending"
+
+
+@pytest.mark.asyncio
+async def test_webhook_deposit_amount_zero(client, db_session, monkeypatch):
+    """deposit_amount=0 significa seña gratis; cualquier pago positivo confirma."""
+    from decimal import Decimal
+
+    secret = "test-webhook-secret"
+    monkeypatch.setattr(mp_webhooks.settings, "MP_SECRET_KEY", secret)
+
+    booking = await _create_booking(db_session, "book_deposit_zero")
+    service = await db_session.get(Service, booking.service_id)
+    service.deposit_amount = Decimal("0")
+    db_session.add(service)
+    await db_session.commit()
+
+    async def mock_get_payment_details(data_id: str, access_token=None):
+        return _make_payment_details("approved", f"booking-{booking.id}", amount=0.01)
+
+    monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_get_payment_details)
+
+    ts = int(datetime.now(timezone.utc).timestamp())
+    data_id = "pay_zero_dep"
+    request_id = "req_zero_dep"
+    signature = _sign_webhook(data_id, request_id, ts, secret)
+    payload = {
+        "id": "evt_zero_dep",
+        "action": "payment.updated",
+        "data": {"id": data_id},
+    }
+    headers = {"x-signature": signature, "x-request-id": request_id}
+
+    res = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
+    assert res.status_code == 200
+    assert res.text == "EVENT_PROCESSED"
+
+    await db_session.refresh(booking)
+    assert booking.status == "confirmed"
+
+
+@pytest.mark.asyncio
+async def test_webhook_deposit_null_rounding(client, db_session, monkeypatch):
+    """Precio 10.75, deposit=None → seña efectiva = 3.22 (30% redondeado). Pago exacto confirma."""
+    from decimal import Decimal
+
+    secret = "test-webhook-secret"
+    monkeypatch.setattr(mp_webhooks.settings, "MP_SECRET_KEY", secret)
+
+    booking = await _create_booking(db_session, "book_rounding")
+    service = await db_session.get(Service, booking.service_id)
+    service.price = Decimal("10.75")
+    service.deposit_amount = None
+    db_session.add(service)
+    await db_session.commit()
+
+    async def mock_get_payment_details(data_id: str, access_token=None):
+        return _make_payment_details("approved", f"booking-{booking.id}", amount=3.22)
+
+    monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_get_payment_details)
+
+    ts = int(datetime.now(timezone.utc).timestamp())
+    data_id = "pay_rounding"
+    request_id = "req_rounding"
+    signature = _sign_webhook(data_id, request_id, ts, secret)
+    payload = {
+        "id": "evt_rounding",
+        "action": "payment.updated",
+        "data": {"id": data_id},
+    }
+    headers = {"x-signature": signature, "x-request-id": request_id}
+
+    res = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
+    assert res.status_code == 200
+    assert res.text == "EVENT_PROCESSED"
+
+    await db_session.refresh(booking)
+    assert booking.status == "confirmed"
+
+
+@pytest.mark.asyncio
+async def test_webhook_amount_too_low(client, db_session, monkeypatch):
+    """Pago por debajo de la seña explícita → AMOUNT_INSUFFICIENT, sin confirmar."""
+    from decimal import Decimal
+
+    secret = "test-webhook-secret"
+    monkeypatch.setattr(mp_webhooks.settings, "MP_SECRET_KEY", secret)
+
+    booking = await _create_booking(db_session, "book_amount_low")
+    service = await db_session.get(Service, booking.service_id)
+    service.deposit_amount = Decimal("50.00")
+    db_session.add(service)
+    await db_session.commit()
+
+    async def mock_get_payment_details(data_id: str, access_token=None):
+        return _make_payment_details("approved", f"booking-{booking.id}", amount=10.0)
+
+    monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_get_payment_details)
+
+    ts = int(datetime.now(timezone.utc).timestamp())
+    data_id = "pay_low_1"
+    request_id = "req_low_1"
+    signature = _sign_webhook(data_id, request_id, ts, secret)
+    payload = {"id": "evt_low_1", "action": "payment.updated", "data": {"id": data_id}}
+    headers = {"x-signature": signature, "x-request-id": request_id}
+
+    res = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
+    assert res.status_code == 200
+    assert res.text == "AMOUNT_INSUFFICIENT"
+
+    await db_session.refresh(booking)
+    assert booking.status == "pending"
+
+
+@pytest.mark.asyncio
+async def test_webhook_amount_exact(client, db_session, monkeypatch):
+    """Pago exactamente igual a la seña explícita → confirma normalmente."""
+    from decimal import Decimal
+
+    secret = "test-webhook-secret"
+    monkeypatch.setattr(mp_webhooks.settings, "MP_SECRET_KEY", secret)
+
+    booking = await _create_booking(db_session, "book_amount_exact")
+    service = await db_session.get(Service, booking.service_id)
+    service.deposit_amount = Decimal("50.00")
+    db_session.add(service)
+    await db_session.commit()
+
+    async def mock_get_payment_details(data_id: str, access_token=None):
+        return _make_payment_details("approved", f"booking-{booking.id}", amount=50.0)
+
+    monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_get_payment_details)
+
+    ts = int(datetime.now(timezone.utc).timestamp())
+    data_id = "pay_exact_1"
+    request_id = "req_exact_1"
+    signature = _sign_webhook(data_id, request_id, ts, secret)
+    payload = {
+        "id": "evt_exact_1",
+        "action": "payment.updated",
+        "data": {"id": data_id},
+    }
+    headers = {"x-signature": signature, "x-request-id": request_id}
+
+    res = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
+    assert res.status_code == 200
+    assert res.text == "EVENT_PROCESSED"
+
+    await db_session.refresh(booking)
+    assert booking.status == "confirmed"
+
+
+@pytest.mark.asyncio
+async def test_webhook_amount_overpaid(client, db_session, monkeypatch):
+    """Pago mayor a la seña explícita → confirma normalmente."""
+    from decimal import Decimal
+
+    secret = "test-webhook-secret"
+    monkeypatch.setattr(mp_webhooks.settings, "MP_SECRET_KEY", secret)
+
+    booking = await _create_booking(db_session, "book_amount_over")
+    service = await db_session.get(Service, booking.service_id)
+    service.deposit_amount = Decimal("50.00")
+    db_session.add(service)
+    await db_session.commit()
+
+    async def mock_get_payment_details(data_id: str, access_token=None):
+        return _make_payment_details("approved", f"booking-{booking.id}", amount=200.0)
+
+    monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_get_payment_details)
+
+    ts = int(datetime.now(timezone.utc).timestamp())
+    data_id = "pay_over_1"
+    request_id = "req_over_1"
+    signature = _sign_webhook(data_id, request_id, ts, secret)
+    payload = {"id": "evt_over_1", "action": "payment.updated", "data": {"id": data_id}}
+    headers = {"x-signature": signature, "x-request-id": request_id}
+
+    res = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
+    assert res.status_code == 200
+    assert res.text == "EVENT_PROCESSED"
+
+    await db_session.refresh(booking)
+    assert booking.status == "confirmed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "amount,expected_text,expected_booking_status",
+    [
+        (25.0, "AMOUNT_INSUFFICIENT", "pending"),  # < 30% de 100
+        (35.0, "EVENT_PROCESSED", "confirmed"),  # > 30% de 100
+    ],
+)
+async def test_webhook_deposit_null_service(
+    client, db_session, monkeypatch, amount, expected_text, expected_booking_status
+):
+    """Con deposit_amount=None, la seña efectiva es price * 30%."""
+    secret = "test-webhook-secret"
+    monkeypatch.setattr(mp_webhooks.settings, "MP_SECRET_KEY", secret)
+
+    key = f"book_null_dep_{int(amount)}"
+    booking = await _create_booking(db_session, key)
+    # deposit_amount=None por defecto; price=100 → seña efectiva = 30
+
+    async def mock_get_payment_details(data_id: str, access_token=None):
+        return _make_payment_details("approved", f"booking-{booking.id}", amount=amount)
+
+    monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_get_payment_details)
+
+    ts = int(datetime.now(timezone.utc).timestamp())
+    data_id = f"pay_null_{int(amount)}"
+    request_id = f"req_null_{int(amount)}"
+    signature = _sign_webhook(data_id, request_id, ts, secret)
+    payload = {
+        "id": f"evt_null_{int(amount)}",
+        "action": "payment.updated",
+        "data": {"id": data_id},
+    }
+    headers = {"x-signature": signature, "x-request-id": request_id}
+
+    res = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
+    assert res.status_code == 200
+    assert res.text == expected_text
+
+    await db_session.refresh(booking)
+    assert booking.status == expected_booking_status
+
+
 @pytest.mark.asyncio
 async def test_webhook_approved_late_payment_slot_taken_keeps_expired(
     client, db_session, monkeypatch
@@ -725,3 +1000,315 @@ async def test_webhook_approved_late_payment_slot_taken_keeps_expired(
         ).bindparams(bid=booking.id)
     )
     assert result.scalar_one() == 0
+
+
+# ---------------------------------------------------------------------------
+# Media 3: guards run BEFORE Payment is created
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_webhook_no_payment_on_tenant_mismatch(client, db_session, monkeypatch):
+    """After TENANT_MISMATCH no Payment row must exist in the DB (Media 3)."""
+    secret = "test-webhook-secret"
+    monkeypatch.setattr(mp_webhooks.settings, "MP_SECRET_KEY", secret)
+
+    booking = await _create_booking(db_session, "book_no_pay_mismatch")
+    tenant = await db_session.get(Tenant, booking.tenant_id)
+    tenant.mp_user_id = "tenant-account-123"
+    db_session.add(tenant)
+    await db_session.commit()
+
+    data_id = "pay_no_pay_mismatch"
+
+    async def mock_get_payment_details(did: str, access_token=None):
+        return _make_payment_details(
+            "approved", f"booking-{booking.id}", collector_id=99999
+        )
+
+    monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_get_payment_details)
+
+    ts = int(datetime.now(timezone.utc).timestamp())
+    request_id = "req_no_pay_mismatch"
+    signature = _sign_webhook(data_id, request_id, ts, secret)
+    payload = {
+        "id": "evt_no_pay_mismatch",
+        "action": "payment.updated",
+        "data": {"id": data_id},
+    }
+    headers = {"x-signature": signature, "x-request-id": request_id}
+
+    res = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
+    assert res.status_code == 200
+    assert res.text == "TENANT_MISMATCH"
+
+    result = await db_session.execute(
+        text("SELECT COUNT(*) FROM payment WHERE mp_payment_id = :pid").bindparams(
+            pid=data_id
+        )
+    )
+    assert result.scalar_one() == 0, "Payment must NOT be committed on guard rejection"
+
+
+# ---------------------------------------------------------------------------
+# Media 1: fail-open when mp_user_id is None
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_webhook_no_mp_user_id_production_rejected(
+    client, db_session, monkeypatch
+):
+    """Tenant without mp_user_id in production → TENANT_MISMATCH (fail closed)."""
+    secret = "test-webhook-secret"
+    monkeypatch.setattr(mp_webhooks.settings, "MP_SECRET_KEY", secret)
+    monkeypatch.setattr(mp_webhooks.settings, "ENVIRONMENT", "production")
+
+    booking = await _create_booking(db_session, "book_prod_no_mp")
+    # tenant.mp_user_id is None (default from _create_booking)
+
+    async def mock_get_payment_details(data_id: str, access_token=None):
+        return _make_payment_details("approved", f"booking-{booking.id}")
+
+    monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_get_payment_details)
+
+    ts = int(datetime.now(timezone.utc).timestamp())
+    data_id = "pay_prod_no_mp"
+    request_id = "req_prod_no_mp"
+    signature = _sign_webhook(data_id, request_id, ts, secret)
+    payload = {
+        "id": "evt_prod_no_mp",
+        "action": "payment.updated",
+        "data": {"id": data_id},
+    }
+    headers = {"x-signature": signature, "x-request-id": request_id}
+
+    res = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
+    assert res.status_code == 200
+    assert res.text == "TENANT_MISMATCH"
+
+    await db_session.refresh(booking)
+    assert booking.status == "pending"
+
+
+@pytest.mark.asyncio
+async def test_webhook_no_mp_user_id_sandbox_allowed(client, db_session, monkeypatch):
+    """Tenant without mp_user_id in sandbox → booking is confirmed (guard skipped)."""
+    secret = "test-webhook-secret"
+    monkeypatch.setattr(mp_webhooks.settings, "MP_SECRET_KEY", secret)
+    # ENVIRONMENT is "development" by default in tests → is_production = False
+
+    booking = await _create_booking(db_session, "book_sandbox_no_mp")
+    # tenant.mp_user_id is None (default)
+
+    async def mock_get_payment_details(data_id: str, access_token=None):
+        return _make_payment_details("approved", f"booking-{booking.id}")
+
+    monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_get_payment_details)
+
+    ts = int(datetime.now(timezone.utc).timestamp())
+    data_id = "pay_sandbox_no_mp"
+    request_id = "req_sandbox_no_mp"
+    signature = _sign_webhook(data_id, request_id, ts, secret)
+    payload = {
+        "id": "evt_sandbox_no_mp",
+        "action": "payment.updated",
+        "data": {"id": data_id},
+    }
+    headers = {"x-signature": signature, "x-request-id": request_id}
+
+    res = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
+    assert res.status_code == 200
+    assert res.text == "EVENT_PROCESSED"
+
+    await db_session.refresh(booking)
+    assert booking.status == "confirmed"
+
+
+# ---------------------------------------------------------------------------
+# Baja 1: currency_id must be ARS
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_webhook_currency_not_ars(client, db_session, monkeypatch):
+    """Payment in a non-ARS currency → CURRENCY_NOT_SUPPORTED, booking stays pending."""
+    secret = "test-webhook-secret"
+    monkeypatch.setattr(mp_webhooks.settings, "MP_SECRET_KEY", secret)
+
+    booking = await _create_booking(db_session, "book_currency_usd")
+
+    async def mock_get_payment_details(data_id: str, access_token=None):
+        return _make_payment_details(
+            "approved", f"booking-{booking.id}", currency_id="USD"
+        )
+
+    monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_get_payment_details)
+
+    ts = int(datetime.now(timezone.utc).timestamp())
+    data_id = "pay_currency_usd"
+    request_id = "req_currency_usd"
+    signature = _sign_webhook(data_id, request_id, ts, secret)
+    payload = {
+        "id": "evt_currency_usd",
+        "action": "payment.updated",
+        "data": {"id": data_id},
+    }
+    headers = {"x-signature": signature, "x-request-id": request_id}
+
+    res = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
+    assert res.status_code == 200
+    assert res.text == "CURRENCY_NOT_SUPPORTED"
+
+    await db_session.refresh(booking)
+    assert booking.status == "pending"
+
+
+# ---------------------------------------------------------------------------
+# Media A: tenant guard for non-approved statuses
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_webhook_pending_payment_tenant_mismatch_no_payment(
+    client, db_session, monkeypatch
+):
+    """Pending payment with wrong collector_id → TENANT_MISMATCH, no Payment row (Media A)."""
+    secret = "test-webhook-secret"
+    monkeypatch.setattr(mp_webhooks.settings, "MP_SECRET_KEY", secret)
+
+    booking = await _create_booking(db_session, "book_pending_mismatch")
+    tenant = await db_session.get(Tenant, booking.tenant_id)
+    tenant.mp_user_id = "real-account-456"
+    db_session.add(tenant)
+    await db_session.commit()
+
+    data_id = "pay_pending_mismatch"
+
+    async def mock_get_payment_details(did: str, access_token=None):
+        d = _make_payment_details(
+            "pending", f"booking-{booking.id}", collector_id="attacker-999"
+        )
+        d["status"] = "pending"
+        return d
+
+    monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_get_payment_details)
+
+    ts = int(datetime.now(timezone.utc).timestamp())
+    request_id = "req_pending_mismatch"
+    signature = _sign_webhook(data_id, request_id, ts, secret)
+    payload = {
+        "id": "evt_pending_mismatch",
+        "action": "payment.created",
+        "data": {"id": data_id},
+    }
+    headers = {"x-signature": signature, "x-request-id": request_id}
+
+    res = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
+    assert res.status_code == 200
+    assert res.text == "TENANT_MISMATCH"
+
+    result = await db_session.execute(
+        text("SELECT COUNT(*) FROM payment WHERE mp_payment_id = :pid").bindparams(
+            pid=data_id
+        )
+    )
+    assert (
+        result.scalar_one() == 0
+    ), "Payment must NOT be created for mismatched pending webhook"
+
+
+@pytest.mark.asyncio
+async def test_webhook_production_collector_matches_confirms(
+    client, db_session, monkeypatch
+):
+    """In production, matching collector_id and mp_user_id → booking confirmed (regression guard)."""
+    from decimal import Decimal
+
+    secret = "test-webhook-secret"
+    monkeypatch.setattr(mp_webhooks.settings, "MP_SECRET_KEY", secret)
+    monkeypatch.setattr(mp_webhooks.settings, "ENVIRONMENT", "production")
+
+    booking = await _create_booking(db_session, "book_prod_collector_match")
+    tenant = await db_session.get(Tenant, booking.tenant_id)
+    tenant.mp_user_id = "correct-account-789"
+    db_session.add(tenant)
+    service = await db_session.get(Service, booking.service_id)
+    service.deposit_amount = Decimal("30.00")
+    db_session.add(service)
+    await db_session.commit()
+
+    data_id = "pay_prod_match"
+
+    async def mock_get_payment_details(did: str, access_token=None):
+        return _make_payment_details(
+            "approved",
+            f"booking-{booking.id}",
+            amount=30.0,
+            collector_id="correct-account-789",
+        )
+
+    monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_get_payment_details)
+
+    ts = int(datetime.now(timezone.utc).timestamp())
+    request_id = "req_prod_match"
+    signature = _sign_webhook(data_id, request_id, ts, secret)
+    payload = {
+        "id": "evt_prod_match",
+        "action": "payment.updated",
+        "data": {"id": data_id},
+    }
+    headers = {"x-signature": signature, "x-request-id": request_id}
+
+    res = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
+    assert res.status_code == 200
+    assert res.text == "EVENT_PROCESSED"
+
+    await db_session.refresh(booking)
+    assert booking.status == "confirmed"
+
+
+# ---------------------------------------------------------------------------
+# Baja E: NaN / non-finite transaction_amount must not crash
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_webhook_nan_transaction_amount(client, db_session, monkeypatch):
+    """transaction_amount='NaN' must return AMOUNT_INSUFFICIENT, not crash with 500 (Baja E)."""
+    from decimal import Decimal
+
+    secret = "test-webhook-secret"
+    monkeypatch.setattr(mp_webhooks.settings, "MP_SECRET_KEY", secret)
+
+    booking = await _create_booking(db_session, "book_nan_amount")
+    service = await db_session.get(Service, booking.service_id)
+    service.deposit_amount = Decimal("30.00")
+    db_session.add(service)
+    await db_session.commit()
+
+    data_id = "pay_nan_amount"
+
+    async def mock_get_payment_details(did: str, access_token=None):
+        d = _make_payment_details("approved", f"booking-{booking.id}")
+        d["transaction_amount"] = "NaN"
+        return d
+
+    monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_get_payment_details)
+
+    ts = int(datetime.now(timezone.utc).timestamp())
+    request_id = "req_nan_amount"
+    signature = _sign_webhook(data_id, request_id, ts, secret)
+    payload = {
+        "id": "evt_nan_amount",
+        "action": "payment.updated",
+        "data": {"id": data_id},
+    }
+    headers = {"x-signature": signature, "x-request-id": request_id}
+
+    res = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
+    assert res.status_code == 200
+    assert res.text == "AMOUNT_INSUFFICIENT"
+
+    await db_session.refresh(booking)
+    assert booking.status == "pending"

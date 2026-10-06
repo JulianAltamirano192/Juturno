@@ -151,6 +151,7 @@ async def test_webhook_mp_idempotency(client, db_session, monkeypatch):
             "transaction_amount": 100.0,
             "payment_method_id": "visa",
             "date_approved": datetime.now(timezone.utc).isoformat(),
+            "currency_id": "ARS",
         }
 
     monkeypatch.setattr(mp_webhooks, "get_payment_details", approved_payment_details)
@@ -223,6 +224,7 @@ async def test_outbox_created_only_on_approved_payment(client, db_session, monke
             "transaction_amount": 5000.0,
             "payment_method_id": "pix",
             "date_approved": datetime.now(timezone.utc).isoformat(),
+            "currency_id": "ARS",
         }
 
     monkeypatch.setattr(mp_webhooks, "get_payment_details", approved_payment_details)

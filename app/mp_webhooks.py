@@ -1,6 +1,8 @@
 import hashlib
 import hmac
+import logging
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any
 
 import httpx
@@ -17,9 +19,13 @@ from app.models import (
     NotificationOutbox,
     Payment,
     ProcessedWebhookEvent,
+    Service,
     Tenant,
 )
 from app.mp_crypto import decrypt_token
+from app.services import effective_deposit
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -423,7 +429,90 @@ async def mercadopago_webhook(
             await session.commit()
             return Response(content="NO_BOOKING_LINKED", status_code=200)
 
-        # Buscar el Payment por mp_payment_id
+        # Guards run BEFORE creating the Payment record so a rejected webhook
+        # never commits a Payment row for a fraudulent/invalid payment.
+        # Guard 1 (tenant) applies to ALL statuses to prevent cross-tenant data injection.
+        # Guards 2 and 3 (currency, amount) only apply to approved payments.
+        booking = await session.get(Booking, booking_id)
+        if booking is not None:
+            webhook_event.booking_id = booking.id
+
+            # Guard 1: collector_id from the authenticated MP response must match
+            # the tenant that owns this booking. Applies to every payment status.
+            booking_tenant = await session.get(Tenant, booking.tenant_id)
+            collector_id = str(details.get("collector_id") or "")
+            if booking_tenant is None or not booking_tenant.mp_user_id:
+                if settings.is_production:
+                    logger.warning(
+                        "Webhook MP: tenant %s sin mp_user_id en producción (booking %s)",
+                        booking.tenant_id,
+                        booking_id,
+                    )
+                    webhook_event.status = "processed"
+                    webhook_event.processed_at = datetime.now(timezone.utc)
+                    session.add(webhook_event)
+                    await session.commit()
+                    return Response(content="TENANT_MISMATCH", status_code=200)
+                # sandbox/dev: skip guard (platform-account fallback is expected)
+            elif collector_id != booking_tenant.mp_user_id:
+                logger.warning(
+                    "Webhook MP: tenant mismatch — collector_id %s, "
+                    "booking %s pertenece a tenant %s (mp_user_id %s)",
+                    collector_id,
+                    booking_id,
+                    booking.tenant_id,
+                    booking_tenant.mp_user_id,
+                )
+                webhook_event.status = "processed"
+                webhook_event.processed_at = datetime.now(timezone.utc)
+                session.add(webhook_event)
+                await session.commit()
+                return Response(content="TENANT_MISMATCH", status_code=200)
+
+            if payment_status == "approved":
+                # Guard 2: only ARS payments are valid for Juturno bookings.
+                if details.get("currency_id") != "ARS":
+                    logger.warning(
+                        "Webhook MP: moneda no soportada — %s (booking %s)",
+                        details.get("currency_id"),
+                        booking_id,
+                    )
+                    webhook_event.status = "processed"
+                    webhook_event.processed_at = datetime.now(timezone.utc)
+                    session.add(webhook_event)
+                    await session.commit()
+                    return Response(content="CURRENCY_NOT_SUPPORTED", status_code=200)
+
+                # Guard 3: paid amount must cover the effective deposit.
+                service = await session.get(Service, booking.service_id)
+                if service is None:
+                    # Defensive: CASCADE makes this unreachable normally; fail closed.
+                    logger.warning(
+                        "Webhook MP: service %s no encontrado para booking %s (fail closed)",
+                        booking.service_id,
+                        booking_id,
+                    )
+                    webhook_event.status = "processed"
+                    webhook_event.processed_at = datetime.now(timezone.utc)
+                    session.add(webhook_event)
+                    await session.commit()
+                    return Response(content="AMOUNT_INSUFFICIENT", status_code=200)
+                deposit = effective_deposit(service.price, service.deposit_amount)
+                paid_amount = Decimal(str(details.get("transaction_amount") or 0))
+                if not paid_amount.is_finite() or paid_amount < deposit:
+                    logger.warning(
+                        "Webhook MP: monto insuficiente — pagado %s, seña requerida %s (booking %s)",
+                        paid_amount,
+                        deposit,
+                        booking_id,
+                    )
+                    webhook_event.status = "processed"
+                    webhook_event.processed_at = datetime.now(timezone.utc)
+                    session.add(webhook_event)
+                    await session.commit()
+                    return Response(content="AMOUNT_INSUFFICIENT", status_code=200)
+
+        # All guards passed. Create or update the Payment record.
         stmt = select(Payment).where(Payment.mp_payment_id == data_id)
         payment = (await session.execute(stmt)).scalar_one_or_none()
 
@@ -453,39 +542,35 @@ async def mercadopago_webhook(
                     ) or datetime.now(timezone.utc)
                 session.add(payment)
 
-        # Si el pago está aprobado, confirmar el booking y encolar WhatsApp
-        if payment_status == "approved":
-            booking = await session.get(Booking, booking_id)
-            if booking is not None:
-                webhook_event.booking_id = booking.id
+        # Confirm booking if approved (booking already fetched above).
+        if payment_status == "approved" and booking is not None:
+            # Solo cambiar estado a confirmed si estaba en pending
+            if (
+                booking.status == "pending"
+                or booking.status == "expired"
+                and await _slot_still_free(session, booking)
+            ):
+                await transition_booking_status(
+                    session, booking, "confirmed", actor="webhook_mp"
+                )
 
-                # Solo cambiar estado a confirmed si estaba en pending
-                if (
-                    booking.status == "pending"
-                    or booking.status == "expired"
-                    and await _slot_still_free(session, booking)
-                ):
-                    await transition_booking_status(
-                        session, booking, "confirmed", actor="webhook_mp"
+            # Generar outbox de confirmación si el booking está confirmado y no existe previa
+            if booking.status == "confirmed":
+                outbox_stmt = select(NotificationOutbox).where(
+                    NotificationOutbox.booking_id == booking.id,
+                    NotificationOutbox.notification_type == "confirmation",
+                )
+                existing_outbox = (
+                    await session.execute(outbox_stmt)
+                ).scalar_one_or_none()
+
+                if existing_outbox is None:
+                    outbox_event = NotificationOutbox(
+                        booking_id=booking.id,
+                        notification_type="confirmation",
+                        status="pending",
                     )
-
-                # Generar outbox de confirmación si el booking está confirmado y no existe previa
-                if booking.status == "confirmed":
-                    outbox_stmt = select(NotificationOutbox).where(
-                        NotificationOutbox.booking_id == booking.id,
-                        NotificationOutbox.notification_type == "confirmation",
-                    )
-                    existing_outbox = (
-                        await session.execute(outbox_stmt)
-                    ).scalar_one_or_none()
-
-                    if existing_outbox is None:
-                        outbox_event = NotificationOutbox(
-                            booking_id=booking.id,
-                            notification_type="confirmation",
-                            status="pending",
-                        )
-                        session.add(outbox_event)
+                    session.add(outbox_event)
 
         # 4. Marcar evento como processed y commitear
         webhook_event.status = "processed"
