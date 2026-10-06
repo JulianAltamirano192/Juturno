@@ -66,7 +66,7 @@ Si un doc contradice el código, manda el código: avisá y proponé corregir el
 - Alta autoservicio incompleta: conectar MP (`/mp/connect/start`, `/tenants/me/mp`) y
   `PATCH /tenants/me` exigen API key; el panel con cookie no tiene botón. No hay cambio/recupero
   de contraseña ni verificación de email.
-- CSRF en `/panel/*`: `validate_csrf` solo exige que exista la cookie, no la compara con el form.
+- ~~CSRF en `/panel/*`: `validate_csrf` solo exige que exista la cookie, no la compara con el form.~~ — **Resuelto en `7be0fcd`**: ahora lee el form body y compara con `hmac.compare_digest` (double-submit).
 - ~~`idempotency_key` es UNIQUE global~~ — **Resuelto en `8cfa0d6`** (migración `b0e5b8028ae7`): constraint ahora es `(tenant_id, idempotency_key)`.
 - ~~`BookingCreate` acepta `price_at_booking` del cliente~~ — **Resuelto en `8cfa0d6`**: campo eliminado del schema. Pendiente: montos `float` en schemas públicos (`PublicServiceRead`, `BookingCreate`) — dinero debería ser `Decimal`.
 - ~~Webhook MP: falta validar monto >= seña y `booking.tenant_id == tenant resuelto`.~~
@@ -74,8 +74,8 @@ Si un doc contradice el código, manda el código: avisá y proponé corregir el
   is_finite). Pendiente: `deposit_at_booking`, race condition Payment, CHECK deposit >= 0
   — ver D-019 y roadmap Fase 0.
 - Outbox (D-016): commit por lote → riesgo de reenvíos y mensajes "veneno"; pasar a commit por evento.
-- Sin rate limiting en endpoints públicos; uvicorn sin `--forwarded-allow-ips` detrás de Traefik.
-- CI solo corre pytest (Python 3.12 en CI vs 3.11 en Dockerfile); sin branch protection confirmada.
+- ~~Sin rate limiting en endpoints públicos~~; uvicorn sin `--forwarded-allow-ips` detrás de Traefik. — **Resuelto parcialmente en `6ab9cac`**: slowapi activo (10/min login, 5/min register, 20/min public bookings). **Pendiente ops**: configurar `--forwarded-allow-ips=<IP_Traefik>` en Coolify para que `get_remote_address` reciba la IP real del cliente y no la de Traefik.
+- ~~CI solo corre pytest~~; sin branch protection confirmada. — **Resuelto parcialmente en `614e278`**: ruff y mypy agregados al workflow. Pendiente: confirmar branch protection en GitHub.
 - ~~Backups sin copia externa ni restore probado~~ — **Resuelto en `746778c`**: `backup_db.sh` sube a S3 (condicional a `S3_BACKUP_BUCKET`); nuevo `restore_db.sh` con soporte local y S3.
 - Docs desactualizados: PLAN_MP.
 
