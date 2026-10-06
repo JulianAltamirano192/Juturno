@@ -1,17 +1,21 @@
-from datetime import datetime, timezone, time as time_type
+from datetime import datetime, timezone
+from datetime import time as time_type
 from decimal import Decimal
 from typing import Any
-from sqlmodel import SQLModel, Field, Relationship, Column, JSON
+
 from sqlalchemy import (
     CheckConstraint,
     DateTime,
     Integer,
     Numeric,
     UniqueConstraint,
+    text,
+)
+from sqlalchemy import (
     Time as SATime,
 )
 from sqlalchemy.dialects.postgresql import ExcludeConstraint
-from sqlalchemy import text
+from sqlmodel import JSON, Column, Field, Relationship, SQLModel
 
 
 class Tenant(SQLModel, table=True):

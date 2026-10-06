@@ -9,8 +9,8 @@ import httpx
 import pytest
 import pytest_asyncio
 
-from app.main import app, limiter
 from app.database import get_db
+from app.main import app, limiter
 from tests.conftest import TestingSessionLocal
 
 

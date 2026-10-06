@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     def is_production(self) -> bool:
         return self.ENVIRONMENT.lower() == "production"
 
-    def model_post_init(self, __context) -> None:
+    def model_post_init(self, __context, /) -> None:
         if (
             self.is_production
             and self.SECRET_KEY == "change-this-secret-key-in-production-juturno"

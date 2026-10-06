@@ -1,12 +1,12 @@
 """Tests de integración para el CRUD de personal del panel."""
 
 import pytest
-from httpx import AsyncClient, ASGITransport
+from httpx import ASGITransport, AsyncClient
 
-from app.main import app
-from app.models import Tenant, Staff
-from app.session import create_session_token
 from app.csrf import generate_csrf_token
+from app.main import app
+from app.models import Staff, Tenant
+from app.session import create_session_token
 from tests.conftest import TestingSessionLocal
 
 
@@ -49,7 +49,7 @@ async def test_staff_list_requires_session():
 @pytest.mark.asyncio
 async def test_staff_list_with_valid_session():
     async with TestingSessionLocal() as session:
-        tenant, staff = await make_tenant_with_staff(session)
+        tenant, _staff = await make_tenant_with_staff(session)
 
     cookie = make_session_cookie(tenant)
     async with AsyncClient(

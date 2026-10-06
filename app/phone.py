@@ -47,13 +47,11 @@ def normalize_whatsapp_phone(raw: str) -> str:
     # Con código de país: '54' + (opcional '9') + número nacional
     if digits.startswith("54"):
         national = digits[2:]
-        if national.startswith("0"):
-            national = national[1:]
+        national = national.removeprefix("0")
         if national.startswith("9"):
             # ya trae el 9 de móvil
             number = national[1:]
-            if number.startswith("0"):
-                number = number[1:]
+            number = number.removeprefix("0")
             if len(number) == _NATIONAL_LENGTH:
                 return "549" + number
         elif len(national) == _NATIONAL_LENGTH:

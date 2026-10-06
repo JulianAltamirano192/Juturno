@@ -1,6 +1,6 @@
 import pytest
-from app.phone import InvalidPhoneError, normalize_whatsapp_phone
 
+from app.phone import InvalidPhoneError, normalize_whatsapp_phone
 
 # ---------------------------------------------------------------------------
 # Formatos válidos (como los escribe la gente real)

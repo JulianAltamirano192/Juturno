@@ -1,7 +1,9 @@
+from datetime import datetime, timedelta, timezone
+
 import pytest
-from datetime import datetime, timezone, timedelta
-from app.models import Tenant, Service, Booking
 from sqlalchemy.exc import IntegrityError
+
+from app.models import Booking, Service, Tenant
 
 
 @pytest.mark.asyncio

@@ -1,11 +1,13 @@
-import pytest
-import hmac
 import hashlib
-from datetime import datetime, timezone, timedelta
+import hmac
+from datetime import datetime, timedelta, timezone
+
+import pytest
 from fastapi import HTTPException
-from app.models import Booking, Payment, Tenant, Service
 from sqlalchemy import text
+
 from app import mp_webhooks
+from app.models import Booking, Payment, Service, Tenant
 
 
 # Helper para firmar webhooks
@@ -87,11 +89,11 @@ async def test_webhook_idempotency_retry(client, db_session, monkeypatch):
 
     call_count = 0
 
-    async def mock_get_payment_details(data_id: str, access_token: str = None):
+    async def mock_get_payment_details(data_id: str, access_token: str | None = None):
         nonlocal call_count
         call_count += 1
         if call_count == 1:
-            raise Exception("Simulated network failure")
+            raise RuntimeError("Simulated network failure")
         return _make_payment_details("approved", f"booking-{booking.id}")
 
     monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_get_payment_details)
@@ -146,7 +148,7 @@ async def test_webhook_idempotency_processed(client, db_session, monkeypatch):
 
     booking = await _create_booking(db_session, "book_idx_2")
 
-    async def mock_get_payment_details(data_id: str, access_token: str = None):
+    async def mock_get_payment_details(data_id: str, access_token: str | None = None):
         return _make_payment_details("approved", f"booking-{booking.id}")
 
     monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_get_payment_details)
@@ -210,7 +212,7 @@ async def test_webhook_valid_timestamp(client, db_session, monkeypatch):
 
     booking = await _create_booking(db_session, "book_idx_3")
 
-    async def mock_get_payment_details(data_id: str, access_token: str = None):
+    async def mock_get_payment_details(data_id: str, access_token: str | None = None):
         return _make_payment_details("pending", f"booking-{booking.id}")
 
     monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_get_payment_details)
@@ -249,7 +251,7 @@ async def test_webhook_different_event_ids_same_payment_no_duplication(
 
     booking = await _create_booking(db_session, "book_idx_dup_test")
 
-    async def mock_get_payment_details(data_id: str, access_token: str = None):
+    async def mock_get_payment_details(data_id: str, access_token: str | None = None):
         return _make_payment_details("approved", f"booking-{booking.id}")
 
     monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_get_payment_details)
@@ -399,7 +401,7 @@ async def test_webhook_payment_not_found_on_mp(client, db_session, monkeypatch):
     secret = "test-webhook-secret"
     monkeypatch.setattr(mp_webhooks.settings, "MP_SECRET_KEY", secret)
 
-    async def mock_get_payment_details(data_id: str, access_token: str = None):
+    async def mock_get_payment_details(data_id: str, access_token: str | None = None):
         return None  # get_payment_details devuelve None si MP responde 404
 
     monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_get_payment_details)
@@ -438,7 +440,7 @@ async def test_webhook_payment_without_booking_link_ignored(
     secret = "test-webhook-secret"
     monkeypatch.setattr(mp_webhooks.settings, "MP_SECRET_KEY", secret)
 
-    async def mock_get_payment_details(data_id: str, access_token: str = None):
+    async def mock_get_payment_details(data_id: str, access_token: str | None = None):
         return _make_payment_details("approved", "orden-externa-777")
 
     monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_get_payment_details)
@@ -490,7 +492,7 @@ async def test_webhook_updates_existing_pending_payment(
     db_session.add(payment)
     await db_session.commit()
 
-    async def mock_get_payment_details(data_id: str, access_token: str = None):
+    async def mock_get_payment_details(data_id: str, access_token: str | None = None):
         return _make_payment_details("approved", f"booking-{booking.id}")
 
     monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_get_payment_details)
@@ -542,7 +544,7 @@ async def test_webhook_mp_timeout_marks_event_failed(client, db_session, monkeyp
     secret = "test-webhook-secret"
     monkeypatch.setattr(mp_webhooks.settings, "MP_SECRET_KEY", secret)
 
-    async def mock_get_payment_details(data_id: str, access_token: str = None):
+    async def mock_get_payment_details(data_id: str, access_token: str | None = None):
         raise HTTPException(status_code=504, detail="Timeout consultando Mercado Pago")
 
     monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_get_payment_details)
@@ -635,7 +637,7 @@ async def test_webhook_approved_late_payment_reconfirms_expired(
     db_session.add(booking)
     await db_session.commit()
 
-    async def mock_get_payment_details(data_id: str, access_token: str = None):
+    async def mock_get_payment_details(data_id: str, access_token: str | None = None):
         return _make_payment_details("approved", f"booking-{booking.id}")
 
     monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_get_payment_details)
@@ -722,7 +724,7 @@ async def test_webhook_deposit_amount_zero(client, db_session, monkeypatch):
 
     booking = await _create_booking(db_session, "book_deposit_zero")
     service = await db_session.get(Service, booking.service_id)
-    service.deposit_amount = Decimal("0")
+    service.deposit_amount = Decimal(0)
     db_session.add(service)
     await db_session.commit()
 
@@ -968,7 +970,7 @@ async def test_webhook_approved_late_payment_slot_taken_keeps_expired(
     db_session.add_all([booking, overlapping])
     await db_session.commit()
 
-    async def mock_get_payment_details(data_id: str, access_token: str = None):
+    async def mock_get_payment_details(data_id: str, access_token: str | None = None):
         return _make_payment_details("approved", f"booking-{booking.id}")
 
     monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_get_payment_details)
@@ -1323,6 +1325,7 @@ async def test_webhook_nan_transaction_amount(client, db_session, monkeypatch):
 async def test_payment_mp_payment_id_unique_constraint(db_session):
     """UNIQUE on Payment.mp_payment_id: two rows with the same non-null id must raise IntegrityError."""
     from decimal import Decimal
+
     from sqlalchemy.exc import IntegrityError
 
     booking = await _create_booking(db_session, "book_unique_pay")

@@ -2,13 +2,12 @@
 Tests de autenticación por tenant vía header X-Tenant-API-Key.
 """
 
-import pytest
 from datetime import datetime, timedelta, timezone
 
+import pytest
 
 from app.auth import hash_api_key
 from app.models import ApiKey, Tenant
-
 
 # --- TESTS ---
 

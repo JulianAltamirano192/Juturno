@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from typing import Any
+
 import httpx
 
 logger = logging.getLogger(__name__)
@@ -80,10 +81,10 @@ class WhatsAppService:
 
             except (httpx.TimeoutException, httpx.HTTPStatusError) as e:
                 logger.warning(
-                    f"Error en Meta API (intento {attempt + 1}/{max_retries}): {str(e)}"
+                    f"Error en Meta API (intento {attempt + 1}/{max_retries}): {e!s}"
                 )
                 if attempt == max_retries - 1:
-                    raise e
+                    raise
 
                 await asyncio.sleep(2**attempt)
 

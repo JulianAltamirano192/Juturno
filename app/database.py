@@ -1,8 +1,10 @@
 # app/database.py
-from typing import AsyncGenerator
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
-from app.config import settings
+from collections.abc import AsyncGenerator
+
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
+
+from app.config import settings
 
 # Selector simple en tiempo de import: si TEST_DATABASE_URL está seteada,
 # usamos el engine de test (NullPool), si no, el de producción (pooling normal).

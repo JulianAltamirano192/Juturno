@@ -14,9 +14,10 @@ Diseño:
 import hashlib
 import hmac
 import time
-
 from urllib.parse import urlparse
+
 from fastapi import Response
+
 from app.config import settings
 
 SESSION_COOKIE_NAME = "juturno_session"

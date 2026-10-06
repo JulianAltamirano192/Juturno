@@ -116,9 +116,12 @@ def _parse_business_hours_form(form: dict) -> tuple[dict, dict]:
         except ValueError:
             errors["end_time"] = "Formato de hora inválido (use HH:MM)."
 
-    if "start_time" in data and "end_time" in data:
-        if data["start_time"] >= data["end_time"]:
-            errors["order"] = "La hora de apertura debe ser anterior a la de cierre."
+    if (
+        "start_time" in data
+        and "end_time" in data
+        and data["start_time"] >= data["end_time"]
+    ):
+        errors["order"] = "La hora de apertura debe ser anterior a la de cierre."
 
     return data, errors
 

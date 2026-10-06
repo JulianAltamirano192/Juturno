@@ -12,6 +12,7 @@ Diseño:
 - last_used_at se actualiza con throttle (máximo una vez cada 5 min).
 """
 
+import asyncio
 import hashlib
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
@@ -24,8 +25,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database import get_db
 from app.models import ApiKey, Tenant
-
-import asyncio
 
 _redis_clients: dict[int, "redis.Redis"] = {}
 

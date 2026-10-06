@@ -1,0 +1,9 @@
+line-length = 88
+
+[lint]
+ignore = [
+    "B008",    # FastAPI Depends() in default args — standard pattern
+    "BLE001",  # broad except: intentional in health checks and webhook handlers
+    "DTZ011",  # date.today(): business-logic dates use tenant timezone via zoneinfo
+    "DTZ005",  # datetime.now() without tz: same as above
+]

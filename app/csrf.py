@@ -14,6 +14,7 @@ import hmac
 import secrets
 
 from fastapi import Response
+
 from app.config import settings
 
 CSRF_COOKIE_NAME = "csrf_token"

@@ -12,10 +12,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import NullPool
 
+from app.database import get_db
 from app.main import app
 from app.models import SQLModel
-from app.database import get_db
-
 
 TEST_DATABASE_URL = os.getenv(
     "TEST_DATABASE_URL",

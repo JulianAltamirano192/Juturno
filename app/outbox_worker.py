@@ -36,56 +36,55 @@ async def process_outbox(async_session_maker) -> None:
         access_token=settings.WHATSAPP_TOKEN,
     )
 
-    async with async_session_maker() as session:
-        async with session.begin():
-            result = await session.execute(
-                select(NotificationOutbox)
-                .where(NotificationOutbox.status == "pending")
-                .with_for_update(skip_locked=True)
-            )
-            events = result.scalars().all()
+    async with async_session_maker() as session, session.begin():
+        result = await session.execute(
+            select(NotificationOutbox)
+            .where(NotificationOutbox.status == "pending")
+            .with_for_update(skip_locked=True)
+        )
+        events = result.scalars().all()
 
-            for event in events:
-                booking = await session.get(Booking, event.booking_id)
-                if booking is None:
-                    event.status = "failed"
-                    event.retry_count += 1
-                    event.error_message = "Booking not found"
-                    continue
+        for event in events:
+            booking = await session.get(Booking, event.booking_id)
+            if booking is None:
+                event.status = "failed"
+                event.retry_count += 1
+                event.error_message = "Booking not found"
+                continue
 
-                # Cargar el tenant para obtener su timezone
-                tenant = await session.get(Tenant, booking.tenant_id)
-                tenant_tz = tenant.timezone if tenant else "UTC"
+            # Cargar el tenant para obtener su timezone
+            tenant = await session.get(Tenant, booking.tenant_id)
+            tenant_tz = tenant.timezone if tenant else "UTC"
 
-                # Formatear la fecha en el timezone del tenant
-                fecha_legible = format_booking_datetime(booking.start_time, tenant_tz)
+            # Formatear la fecha en el timezone del tenant
+            fecha_legible = format_booking_datetime(booking.start_time, tenant_tz)
 
-                try:
-                    if event.notification_type == "confirmation":
-                        response = await whatsapp.send_confirmation(
-                            booking.client_phone,
-                            booking.id,
-                            booking.client_name,
-                            fecha_legible,
-                        )
-                    else:
-                        response = await whatsapp.send_reminder(
-                            booking.client_phone,
-                            booking.id,
-                            booking.client_name,
-                            fecha_legible,
-                        )
-                    response.raise_for_status()
-                    event.status = "sent"
-                    event.error_message = None
-                    logger.info(
-                        "Outbox event %s enviado OK (booking_id=%s, type=%s)",
-                        event.id,
-                        event.booking_id,
-                        event.notification_type,
+            try:
+                if event.notification_type == "confirmation":
+                    response = await whatsapp.send_confirmation(
+                        booking.client_phone,
+                        booking.id,
+                        booking.client_name,
+                        fecha_legible,
                     )
-                except Exception as exc:
-                    event.status = "failed"
-                    event.retry_count += 1
-                    event.error_message = str(exc)
-                    logger.exception("No se pudo enviar outbox event %s", event.id)
+                else:
+                    response = await whatsapp.send_reminder(
+                        booking.client_phone,
+                        booking.id,
+                        booking.client_name,
+                        fecha_legible,
+                    )
+                response.raise_for_status()
+                event.status = "sent"
+                event.error_message = None
+                logger.info(
+                    "Outbox event %s enviado OK (booking_id=%s, type=%s)",
+                    event.id,
+                    event.booking_id,
+                    event.notification_type,
+                )
+            except Exception as exc:
+                event.status = "failed"
+                event.retry_count += 1
+                event.error_message = str(exc)
+                logger.exception("No se pudo enviar outbox event %s", event.id)

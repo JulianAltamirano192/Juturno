@@ -1,16 +1,16 @@
 """Tests de integración para el CRUD de servicios del panel."""
 
-import pytest
-from httpx import AsyncClient, ASGITransport
 from decimal import Decimal
+
+import pytest
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy.exc import IntegrityError
 
-from app.main import app
-from app.models import Tenant, Service
-from app.session import create_session_token
 from app.csrf import generate_csrf_token
+from app.main import app
+from app.models import Service, Tenant
+from app.session import create_session_token
 from tests.conftest import TestingSessionLocal
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -65,7 +65,7 @@ async def test_services_list_requires_session():
 @pytest.mark.asyncio
 async def test_services_list_with_valid_session():
     async with TestingSessionLocal() as session:
-        tenant, service = await make_tenant_with_service(session)
+        tenant, _service = await make_tenant_with_service(session)
 
     cookie = make_session_cookie(tenant)
     async with AsyncClient(

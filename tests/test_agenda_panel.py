@@ -1,11 +1,12 @@
 """Tests de integración para la vista de agenda por día (Tarea 7)."""
 
-import pytest
 from datetime import datetime, time, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
-from app.models import Tenant, Service, Booking
+import pytest
+
+from app.models import Booking, Service, Tenant
 from app.session import create_session_token
 
 TENANT_TZ = "America/Argentina/Buenos_Aires"
@@ -87,7 +88,7 @@ async def test_agenda_requires_session(client):
 
 @pytest.mark.asyncio
 async def test_agenda_shows_todays_bookings(client, db_session):
-    tenant, today = await _tenant_with_bookings(db_session)
+    tenant, _today = await _tenant_with_bookings(db_session)
     cookie = make_session_cookie(tenant)
 
     resp = await client.get("/panel/agenda", cookies={"juturno_session": cookie})
@@ -140,7 +141,7 @@ async def test_agenda_empty_day_shows_empty_state(client, db_session):
 @pytest.mark.asyncio
 async def test_agenda_shows_local_time_not_utc(client, db_session):
     """El horario mostrado es en el timezone del tenant (ART = UTC-3)."""
-    tenant, today = await _tenant_with_bookings(db_session)
+    tenant, _today = await _tenant_with_bookings(db_session)
     cookie = make_session_cookie(tenant)
 
     resp = await client.get("/panel/agenda", cookies={"juturno_session": cookie})

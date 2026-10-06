@@ -1,6 +1,6 @@
 from datetime import datetime
-from app.services import calculate_available_slots
 
+from app.services import calculate_available_slots
 
 BASE = "2025-03-15"
 

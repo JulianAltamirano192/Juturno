@@ -84,7 +84,7 @@ async def test_connect_start_requires_api_key(client):
 
 @pytest.mark.asyncio
 async def test_connect_start_returns_authorization_url(client, db_session):
-    tenant, headers = await _tenant_with_api_key(db_session)
+    _tenant, headers = await _tenant_with_api_key(db_session)
 
     res = await client.get("/mp/connect/start", headers=headers)
     assert res.status_code == 200
@@ -156,7 +156,7 @@ async def test_callback_rejects_invalid_state(client):
 @pytest.mark.asyncio
 async def test_callback_state_is_single_use(client, db_session, monkeypatch):
     """Un state consumido no sirve ni para el mismo code ni otro."""
-    tenant, headers = await _tenant_with_api_key(db_session)
+    _tenant, headers = await _tenant_with_api_key(db_session)
     _patch_mp_exchange(monkeypatch)
 
     start = await client.get("/mp/connect/start", headers=headers)
@@ -178,7 +178,7 @@ async def test_callback_handles_mp_cancellation(client):
 
 @pytest.mark.asyncio
 async def test_missing_mp_config_blocks_start(client, db_session, monkeypatch):
-    tenant, headers = await _tenant_with_api_key(db_session)
+    _tenant, headers = await _tenant_with_api_key(db_session)
     monkeypatch.setattr(mp_connect.settings, "MP_MARKETPLACE_CLIENT_ID", "")
 
     res = await client.get("/mp/connect/start", headers=headers)
@@ -192,7 +192,7 @@ async def test_missing_mp_config_blocks_start(client, db_session, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_get_mp_not_connected(client, db_session):
-    tenant, headers = await _tenant_with_api_key(db_session)
+    _tenant, headers = await _tenant_with_api_key(db_session)
 
     res = await client.get("/tenants/me/mp", headers=headers)
     assert res.status_code == 200
@@ -253,7 +253,7 @@ async def test_delete_mp_clears_connection(client, db_session):
 
 @pytest.mark.asyncio
 async def test_delete_mp_is_idempotent_when_never_connected(client, db_session):
-    tenant, headers = await _tenant_with_api_key(db_session)
+    _tenant, headers = await _tenant_with_api_key(db_session)
     # Nunca conectó, pero el DELETE no falla
     res = await client.delete("/tenants/me/mp", headers=headers)
     assert res.status_code == 200

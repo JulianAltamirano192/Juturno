@@ -6,9 +6,10 @@ El módulo bajo test es app/mp_webhooks; get_payment_details queda
 monkeypatcheado para capturar con qué token salió la llamada a MP.
 """
 
-import pytest
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any
+
+import pytest
 
 from app import mp_webhooks
 from app.models import Tenant
@@ -55,8 +56,8 @@ def _patch_payment_fetch(monkeypatch, captured: dict, booking_id: int) -> None:
     """Simula MP devolviendo un pago; captura el access_token usado."""
 
     async def fake_get_details(
-        data_id: str, access_token: Optional[str] = None
-    ) -> Optional[Dict[str, Any]]:
+        data_id: str, access_token: str | None = None
+    ) -> dict[str, Any] | None:
         captured["data_id"] = data_id
         captured["access_token"] = access_token
         return _make_payment_details("approved", f"booking-{booking_id}")
@@ -64,7 +65,7 @@ def _patch_payment_fetch(monkeypatch, captured: dict, booking_id: int) -> None:
     monkeypatch.setattr(mp_webhooks, "get_payment_details", fake_get_details)
 
 
-def _post_webhook(client, data_id: str, mp_user_id: Optional[str]):
+def _post_webhook(client, data_id: str, mp_user_id: str | None):
     ts = int(datetime.now(timezone.utc).timestamp())
     request_id = f"req-{data_id}"
     signature = _sign_webhook(data_id, request_id, ts, "test-secret")
@@ -164,8 +165,8 @@ async def test_two_connected_tenants_webhooks_use_their_own_tokens(
     seen = {}
 
     async def fake_get_details(
-        data_id: str, access_token: Optional[str] = None
-    ) -> Optional[Dict[str, Any]]:
+        data_id: str, access_token: str | None = None
+    ) -> dict[str, Any] | None:
         seen[data_id] = access_token
         return _make_payment_details("approved", f"booking-{booking.id}")
 
