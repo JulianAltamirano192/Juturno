@@ -291,7 +291,13 @@ async def test_deleted_tenant_clears_cookie_and_redirects(client: AsyncClient):
 @pytest.mark.asyncio
 async def test_logout_clears_session(client: AsyncClient):
     """POST /logout elimina la cookie de sesión y redirige a /login."""
-    response = await client.post("/logout", follow_redirects=False)
+    csrf_token = "test-csrf-token-for-logout"
+    response = await client.post(
+        "/logout",
+        data={"csrf_token": csrf_token},
+        cookies={"csrf_token": csrf_token},
+        follow_redirects=False,
+    )
     assert response.status_code == 303
     assert response.headers["location"] == "/login"
 

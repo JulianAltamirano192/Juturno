@@ -1163,6 +1163,7 @@ async def login_submit(
 @app.post("/logout")
 async def logout(request: Request):
     """Cierra la sesión eliminando la cookie."""
+    await validate_csrf(request)
     response = RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
     delete_session_cookie(response)
     return response

@@ -49,7 +49,7 @@ def validate_csrf_double_submit(
         return False
     if not isinstance(form_token, str) or not isinstance(cookie_token, str):
         return False
-    return hmac.compare_digest(form_token, cookie_token)
+    return hmac.compare_digest(form_token.encode(), cookie_token.encode())
 
 
 async def validate_csrf(request) -> bool:
