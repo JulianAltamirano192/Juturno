@@ -204,31 +204,86 @@ gunzip -c backups/saas_db_YYYYMMDD_HHMMSS.sql.gz | docker compose exec -T db psq
 
 ## 7. Backups
 
-**Script:** `scripts/backup_db.sh` (ejecutable)
+**Scripts:** `scripts/backup_db.sh` y `scripts/restore_db.sh` (ejecutables)
+
+### Backup manual
 
 ```bash
-# Backup manual
+# Solo local (backups/saas_db_YYYYMMDD_HHMMSS.sql.gz):
 ./scripts/backup_db.sh
-# Genera: backups/saas_db_YYYYMMDD_HHMMSS.sql.gz
 
-# Rotación automática: borra >30 días (find -mtime +30)
+# Con copia a S3:
+S3_BACKUP_BUCKET=mi-bucket S3_BACKUP_PREFIX=juturno/backups ./scripts/backup_db.sh
 ```
 
-**Restaurar:**
+Rotación automática local: borra archivos >30 días. La rotación en S3 se configura
+con una lifecycle policy en el bucket (recomendado: `Expiration: 90 days`).
+
+### Restore
+
 ```bash
-gunzip -c backups/saas_db_YYYYMMDD_HHMMSS.sql.gz | \
-  docker compose exec -T db psql -U postgres -d saas_db
+# Desde archivo local:
+./scripts/restore_db.sh backups/saas_db_YYYYMMDD_HHMMSS.sql.gz
+
+# Desde S3:
+./scripts/restore_db.sh s3://mi-bucket/juturno/backups/saas_db_YYYYMMDD_HHMMSS.sql.gz
+
+# Sin confirmación interactiva (scripts, CI):
+./scripts/restore_db.sh <archivo> --yes
 ```
 
-> ⚠️ **Backup incluye tokens OAuth MP cifrados**. Para restaurar en otro entorno, **necesitás la misma `MP_TOKEN_ENCRYPTION_KEY`** (ver D-012, D-018).
+> ⚠️ **Backup incluye tokens OAuth MP cifrados**. Para restaurar en otro entorno,
+> **necesitás la misma `MP_TOKEN_ENCRYPTION_KEY`** (ver D-012, D-018).
 
-**Automatizar en prod (cron en VPS):**
+### Automatizar en prod (cron en VPS)
+
+Requiere `awscli` instalado en el VPS (`apt install awscli` o `pip install awscli`)
+y credenciales AWS configuradas en el entorno de root (`~/.aws/credentials` o vars de entorno).
+
 ```bash
 # /etc/cron.d/juturno-backup
-0 3 * * * root cd /opt/juturno && ./scripts/backup_db.sh >> /var/log/juturno-backup.log 2>&1
+# Runs daily at 03:00 UTC — adjust TZ if needed
+0 3 * * * root \
+  cd /opt/juturno && \
+  S3_BACKUP_BUCKET=mi-bucket \
+  S3_BACKUP_PREFIX=juturno/backups \
+  AWS_DEFAULT_REGION=us-east-1 \
+  ./scripts/backup_db.sh >> /var/log/juturno-backup.log 2>&1
 ```
 
-**Deuda:** copiar backups a S3/almacenamiento externo (D-011).
+Para que el cron pueda ver las credenciales AWS sin exponer secretos en cron.d,
+la alternativa recomendada es usar un IAM Role en la instancia (si es EC2/Hetzner Cloud)
+o guardar las credenciales en `/root/.aws/credentials`.
+
+### Test de restore
+
+Después de cada deploy a producción, verificar que el backup más reciente es restaurable:
+
+```bash
+# 1. Hacer backup manual
+./scripts/backup_db.sh
+
+# 2. Levantar un contenedor DB temporal y restaurar ahí (sin tocar prod)
+docker run --rm -d \
+  --name juturno-restore-test \
+  -e POSTGRES_PASSWORD=test \
+  -e POSTGRES_DB=saas_db \
+  postgres:16-alpine
+
+# Esperar que arranque (~2s), luego:
+BACKUP_FILE=$(ls -t backups/saas_db_*.sql.gz | head -1)
+gunzip -c "$BACKUP_FILE" | docker exec -i juturno-restore-test \
+  psql -U postgres -d saas_db
+
+# 3. Verificar que hay datos
+docker exec juturno-restore-test \
+  psql -U postgres -d saas_db -c "SELECT count(*) FROM tenant;"
+
+# 4. Limpiar
+docker stop juturno-restore-test
+```
+
+Un restore exitoso confirma que el backup no está corrupto.
 
 ---
 

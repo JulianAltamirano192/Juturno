@@ -34,4 +34,12 @@ find "$BACKUP_DIR" -name "saas_db_*.sql.gz" -mtime +$RETENTION_DAYS -delete
 REMAINING=$(find "$BACKUP_DIR" -name "saas_db_*.sql.gz" | wc -l)
 echo "Backups activos: $REMAINING"
 
+# Copia a S3 si S3_BACKUP_BUCKET está configurado
+if [ -n "${S3_BACKUP_BUCKET:-}" ]; then
+    S3_KEY="${S3_BACKUP_PREFIX:-juturno/backups}/$(basename "$BACKUP_FILE")"
+    echo "Subiendo a s3://${S3_BACKUP_BUCKET}/${S3_KEY} ..."
+    aws s3 cp "$BACKUP_FILE" "s3://${S3_BACKUP_BUCKET}/${S3_KEY}"
+    echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Upload S3 OK: s3://${S3_BACKUP_BUCKET}/${S3_KEY}"
+fi
+
 echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Backup completado."
