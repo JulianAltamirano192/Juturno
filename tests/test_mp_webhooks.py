@@ -1347,3 +1347,86 @@ async def test_payment_mp_payment_id_unique_constraint(db_session):
     db_session.add(p2)
     with pytest.raises(IntegrityError):
         await db_session.flush()
+
+
+# ---------------------------------------------------------------------------
+# Ítem 4 — deposit_at_booking en Payment
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_webhook_guard_uses_booking_deposit_at_booking(
+    client, db_session, monkeypatch
+):
+    """
+    Guard 3 uses booking.deposit_at_booking when set, not the current service price.
+    Scenario: tenant raised service price after booking was created; the client pays
+    the original deposit amount → must be accepted, not rejected.
+    """
+    from decimal import Decimal
+
+    secret = "test-webhook-secret"
+    monkeypatch.setattr(mp_webhooks.settings, "MP_SECRET_KEY", secret)
+
+    tenant = Tenant(name="Tenant-bk-dep-guard", timezone="UTC")
+    db_session.add(tenant)
+    await db_session.flush()
+
+    service = Service(
+        tenant_id=tenant.id,
+        name="Servicio bk dep",
+        duration_minutes=30,
+        price=Decimal("500.00"),
+        deposit_amount=Decimal("100.00"),
+    )
+    db_session.add(service)
+    await db_session.flush()
+
+    # Booking with deposit_at_booking snapshotted at creation time (100)
+    booking = Booking(
+        tenant_id=tenant.id,
+        service_id=service.id,
+        client_name="Cliente",
+        client_phone="123",
+        start_time=datetime.now(timezone.utc),
+        end_time=datetime.now(timezone.utc) + timedelta(minutes=30),
+        price_at_booking=Decimal("500.00"),
+        deposit_at_booking=Decimal("100.00"),
+        idempotency_key="bk-dep-snap-guard",
+        status="pending",
+    )
+    db_session.add(booking)
+    await db_session.commit()
+    await db_session.refresh(booking)
+
+    # Raise service price — current effective_deposit would now be 300
+    service.price = Decimal("1000.00")
+    service.deposit_amount = Decimal("300.00")
+    db_session.add(service)
+    await db_session.commit()
+
+    data_id = f"pay_bk_dep_{booking.id}"
+
+    async def mock_details(did: str, access_token: str | None = None):
+        return _make_payment_details("approved", f"booking-{booking.id}", amount=100.0)
+
+    monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_details)
+
+    ts = int(datetime.now(timezone.utc).timestamp())
+    request_id = "req_bk_dep"
+    sig = _sign_webhook(data_id, request_id, ts, secret)
+    payload = {
+        "id": f"evt_bk_dep_{booking.id}",
+        "action": "payment.updated",
+        "data": {"id": data_id},
+    }
+
+    res = await client.post(
+        "/webhooks/mercadopago",
+        json=payload,
+        headers={"x-signature": sig, "x-request-id": request_id},
+    )
+    assert res.status_code == 200
+    assert (
+        res.text == "EVENT_PROCESSED"
+    ), f"Expected EVENT_PROCESSED (guard should use booking.deposit_at_booking=100), got: {res.text}"

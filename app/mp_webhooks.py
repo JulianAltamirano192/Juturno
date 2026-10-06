@@ -429,6 +429,13 @@ async def mercadopago_webhook(
             await session.commit()
             return Response(content="NO_BOOKING_LINKED", status_code=200)
 
+        # SELECT FOR UPDATE before the guards to serialize concurrent updates
+        # on the same mp_payment_id. The UNIQUE constraint handles concurrent INSERTs.
+        stmt_pay = (
+            select(Payment).where(Payment.mp_payment_id == data_id).with_for_update()
+        )
+        payment = (await session.execute(stmt_pay)).scalar_one_or_none()
+
         # Guards run BEFORE creating the Payment record so a rejected webhook
         # never commits a Payment row for a fraudulent/invalid payment.
         # Guard 1 (tenant) applies to ALL statuses to prevent cross-tenant data injection.
@@ -484,20 +491,26 @@ async def mercadopago_webhook(
                     return Response(content="CURRENCY_NOT_SUPPORTED", status_code=200)
 
                 # Guard 3: paid amount must cover the effective deposit.
-                service = await session.get(Service, booking.service_id)
-                if service is None:
-                    # Defensive: CASCADE makes this unreachable normally; fail closed.
-                    logger.warning(
-                        "Webhook MP: service %s no encontrado para booking %s (fail closed)",
-                        booking.service_id,
-                        booking_id,
-                    )
-                    webhook_event.status = "processed"
-                    webhook_event.processed_at = datetime.now(timezone.utc)
-                    session.add(webhook_event)
-                    await session.commit()
-                    return Response(content="AMOUNT_INSUFFICIENT", status_code=200)
-                deposit = effective_deposit(service.price, service.deposit_amount)
+                # Use booking.deposit_at_booking (snapshotted at reservation time) so
+                # a service price change after the booking doesn't reject a valid payment.
+                # Fall back to effective_deposit() for older bookings without the snapshot.
+                if booking.deposit_at_booking is not None:
+                    deposit = booking.deposit_at_booking
+                else:
+                    service = await session.get(Service, booking.service_id)
+                    if service is None:
+                        # Defensive: CASCADE makes this unreachable normally; fail closed.
+                        logger.warning(
+                            "Webhook MP: service %s no encontrado para booking %s (fail closed)",
+                            booking.service_id,
+                            booking_id,
+                        )
+                        webhook_event.status = "processed"
+                        webhook_event.processed_at = datetime.now(timezone.utc)
+                        session.add(webhook_event)
+                        await session.commit()
+                        return Response(content="AMOUNT_INSUFFICIENT", status_code=200)
+                    deposit = effective_deposit(service.price, service.deposit_amount)
                 paid_amount = Decimal(str(details.get("transaction_amount") or 0))
                 if not paid_amount.is_finite() or paid_amount < deposit:
                     logger.warning(
@@ -513,12 +526,9 @@ async def mercadopago_webhook(
                     return Response(content="AMOUNT_INSUFFICIENT", status_code=200)
 
         # All guards passed. Create or update the Payment record.
-        # SELECT FOR UPDATE serializes concurrent updates on an existing row.
+        # (payment already fetched via SELECT FOR UPDATE above)
         # For concurrent INSERTs the UNIQUE constraint on mp_payment_id is the
         # safety net; the IntegrityError handler below covers that path.
-        stmt = select(Payment).where(Payment.mp_payment_id == data_id).with_for_update()
-        payment = (await session.execute(stmt)).scalar_one_or_none()
-
         if payment is None:
             # Auto-crear el Payment con los datos de MP
             transaction_amount = details.get("transaction_amount") or 0

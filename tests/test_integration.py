@@ -371,3 +371,48 @@ async def test_booking_creation_idempotency_retry_returns_200(client, db_session
     booking_id_2 = res2.json()["booking_id"]
 
     assert booking_id_1 == booking_id_2
+
+
+@pytest.mark.asyncio
+async def test_booking_creation_snapshots_deposit_at_booking(client, db_session):
+    """POST /bookings must snapshot the effective deposit at creation time."""
+    from decimal import Decimal
+
+    tenant = Tenant(name="Tenant Snapshot", timezone="UTC")
+    db_session.add(tenant)
+    await db_session.flush()
+
+    service = Service(
+        tenant_id=tenant.id,
+        name="Servicio snapshot",
+        duration_minutes=30,
+        price=Decimal("500.00"),
+        deposit_amount=Decimal("100.00"),
+    )
+    db_session.add(service)
+    await db_session.commit()
+
+    raw_key = await _create_api_key(db_session, tenant.id)
+    from datetime import date, timedelta
+
+    day = date.today() + timedelta(days=2)
+    payload = {
+        "tenant_id": tenant.id,
+        "service_id": service.id,
+        "staff_id": None,
+        "client_name": "Ana Lopez",
+        "client_phone": "1234567890",
+        "start_time": f"{day}T14:00:00",
+        "end_time": f"{day}T14:30:00",
+        "price_at_booking": 500.0,
+        "idempotency_key": "snap-dep-idem-01",
+    }
+    res = await client.post("/bookings", json=payload, headers=_auth_headers(raw_key))
+    assert res.status_code == 201
+
+    booking_id = res.json()["booking_id"]
+    booking = await db_session.get(Booking, booking_id)
+    assert booking is not None
+    assert booking.deposit_at_booking == Decimal(
+        "100.00"
+    ), f"Expected deposit_at_booking=100, got {booking.deposit_at_booking}"

@@ -475,6 +475,7 @@ async def create_booking(
         start_time=start_time,
         end_time=end_time,
         price_at_booking=service.price,
+        deposit_at_booking=effective_deposit(service.price, service.deposit_amount),
         idempotency_key=payload.idempotency_key,
         status="pending",
     )
@@ -755,6 +756,7 @@ async def create_public_booking(
         start_time=start_time,
         end_time=end_time,
         price_at_booking=service.price,
+        deposit_at_booking=effective_deposit(service.price, service.deposit_amount),
         idempotency_key=payload.idempotency_key,
         status="pending",
     )

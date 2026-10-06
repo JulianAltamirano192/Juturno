@@ -233,6 +233,11 @@ class Booking(SQLModel, table=True):
     )
 
     price_at_booking: Decimal = Field(sa_column=Column(Numeric(10, 2), nullable=False))
+    deposit_at_booking: Decimal | None = Field(
+        default=None,
+        sa_column=Column(Numeric(10, 2), nullable=True),
+        description="Snapshot del monto de seña exigido al crear la reserva. Inmutable.",
+    )
 
     status: str = Field(
         default="pending",
