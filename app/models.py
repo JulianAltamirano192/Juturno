@@ -2,7 +2,14 @@ from datetime import datetime, timezone, time as time_type
 from decimal import Decimal
 from typing import Any
 from sqlmodel import SQLModel, Field, Relationship, Column, JSON
-from sqlalchemy import DateTime, Integer, Numeric, UniqueConstraint, Time as SATime
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    Integer,
+    Numeric,
+    UniqueConstraint,
+    Time as SATime,
+)
 from sqlalchemy.dialects.postgresql import ExcludeConstraint
 from sqlalchemy import text
 
@@ -96,6 +103,12 @@ class Service(SQLModel, table=True):
     """
 
     __tablename__ = "service"
+    __table_args__ = (
+        CheckConstraint(
+            "deposit_amount IS NULL OR deposit_amount >= 0",
+            name="ck_service_deposit_amount_non_negative",
+        ),
+    )
 
     id: int | None = Field(default=None, primary_key=True)
     tenant_id: int = Field(foreign_key="tenant.id", index=True, ondelete="CASCADE")

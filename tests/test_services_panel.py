@@ -3,6 +3,7 @@
 import pytest
 from httpx import AsyncClient, ASGITransport
 from decimal import Decimal
+from sqlalchemy.exc import IntegrityError
 
 from app.main import app
 from app.models import Tenant, Service
@@ -310,3 +311,29 @@ async def test_edit_service_of_other_tenant_returns_404():
             },
         )
     assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_service_deposit_amount_negative_rejected(db_session):
+    """CHECK (deposit_amount >= 0): insertar un valor negativo debe violar el constraint."""
+    tenant = Tenant(
+        name="Check Biz",
+        slug="check-biz-deposit",
+        owner_email="check@test.com",
+        password_hash="x",
+        session_version=1,
+    )
+    db_session.add(tenant)
+    await db_session.flush()
+
+    service = Service(
+        tenant_id=tenant.id,
+        name="Servicio",
+        duration_minutes=30,
+        price=Decimal("1000.00"),
+        deposit_amount=Decimal("-1.00"),
+        is_active=True,
+    )
+    db_session.add(service)
+    with pytest.raises(IntegrityError):
+        await db_session.flush()
