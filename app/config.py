@@ -42,6 +42,8 @@ class Settings(BaseSettings):
             and self.SECRET_KEY == "change-this-secret-key-in-production-juturno"
         ):
             raise ValueError("SECRET_KEY cannot be the default value in production!")
+        if self.is_production and self.MP_SANDBOX:
+            raise ValueError("MP_SANDBOX must be False in production")
 
     class Config:
         env_file = ".env"

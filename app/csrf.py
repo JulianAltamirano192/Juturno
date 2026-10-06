@@ -54,9 +54,9 @@ def validate_csrf_double_submit(
 
 async def validate_csrf(request) -> bool:
     """
-    Valida CSRF para peticiones que usan el patrón double-submit cookie.
-    Extrae el token de la cookie y del form data.
-    Lanza HTTPException 403 si la validación falla.
+    Valida CSRF para peticiones del panel usando el patrón double-submit cookie.
+    Lee el campo 'csrf_token' del form body y lo compara contra la cookie.
+    Lanza HTTPException 403 si falta o no coincide.
     """
     from fastapi import HTTPException, status
 
@@ -66,6 +66,12 @@ async def validate_csrf(request) -> bool:
             status_code=status.HTTP_403_FORBIDDEN, detail="CSRF cookie missing"
         )
 
-    # El token del formulario ya fue validado por el Form dependency
-    # en los endpoints que usan Form(...). Esta función es un guard adicional.
+    form_data = await request.form()
+    form_token = form_data.get(CSRF_COOKIE_NAME)
+
+    if not validate_csrf_double_submit(form_token, cookie_token):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="CSRF token invalid"
+        )
+
     return True
