@@ -288,6 +288,9 @@ class Payment(SQLModel, table=True):
     """
 
     __tablename__ = "payment"
+    __table_args__ = (
+        UniqueConstraint("mp_payment_id", name="uq_payment_mp_payment_id"),
+    )
 
     id: int | None = Field(default=None, primary_key=True)
     booking_id: int = Field(foreign_key="booking.id", index=True, ondelete="CASCADE")

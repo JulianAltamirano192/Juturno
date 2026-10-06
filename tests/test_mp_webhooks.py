@@ -1312,3 +1312,38 @@ async def test_webhook_nan_transaction_amount(client, db_session, monkeypatch):
 
     await db_session.refresh(booking)
     assert booking.status == "pending"
+
+
+# ---------------------------------------------------------------------------
+# Media B — UNIQUE constraint on mp_payment_id
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_payment_mp_payment_id_unique_constraint(db_session):
+    """UNIQUE on Payment.mp_payment_id: two rows with the same non-null id must raise IntegrityError."""
+    from decimal import Decimal
+    from sqlalchemy.exc import IntegrityError
+
+    booking = await _create_booking(db_session, "book_unique_pay")
+
+    p1 = Payment(
+        booking_id=booking.id,
+        amount=Decimal("100.00"),
+        mp_payment_id="pay_unique_constraint_test",
+        method="visa",
+        status="pending",
+    )
+    db_session.add(p1)
+    await db_session.flush()
+
+    p2 = Payment(
+        booking_id=booking.id,
+        amount=Decimal("100.00"),
+        mp_payment_id="pay_unique_constraint_test",
+        method="visa",
+        status="approved",
+    )
+    db_session.add(p2)
+    with pytest.raises(IntegrityError):
+        await db_session.flush()

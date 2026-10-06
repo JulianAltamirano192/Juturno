@@ -513,7 +513,10 @@ async def mercadopago_webhook(
                     return Response(content="AMOUNT_INSUFFICIENT", status_code=200)
 
         # All guards passed. Create or update the Payment record.
-        stmt = select(Payment).where(Payment.mp_payment_id == data_id)
+        # SELECT FOR UPDATE serializes concurrent updates on an existing row.
+        # For concurrent INSERTs the UNIQUE constraint on mp_payment_id is the
+        # safety net; the IntegrityError handler below covers that path.
+        stmt = select(Payment).where(Payment.mp_payment_id == data_id).with_for_update()
         payment = (await session.execute(stmt)).scalar_one_or_none()
 
         if payment is None:
@@ -531,7 +534,22 @@ async def mercadopago_webhook(
                 paid_at=paid_at if payment_status == "approved" else None,
             )
             session.add(payment)
-            await session.flush()
+            try:
+                await session.flush()
+            except IntegrityError:
+                # A concurrent webhook beat us to the INSERT for this mp_payment_id.
+                # Treat as idempotent: mark this event processed and return.
+                await session.rollback()
+                stmt_ev = select(ProcessedWebhookEvent).where(
+                    ProcessedWebhookEvent.event_id == event_id
+                )
+                wh = (await session.execute(stmt_ev)).scalar_one_or_none()
+                if wh is not None:
+                    wh.status = "processed"
+                    wh.processed_at = datetime.now(timezone.utc)
+                    session.add(wh)
+                    await session.commit()
+                return Response(content="EVENT_PROCESSED", status_code=200)
         else:
             # Actualizar el estado si cambió
             if payment.status != payment_status:
