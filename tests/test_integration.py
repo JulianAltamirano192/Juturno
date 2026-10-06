@@ -416,3 +416,36 @@ async def test_booking_creation_snapshots_deposit_at_booking(client, db_session)
     assert booking.deposit_at_booking == Decimal(
         "100.00"
     ), f"Expected deposit_at_booking=100, got {booking.deposit_at_booking}"
+
+
+@pytest.mark.asyncio
+async def test_idempotency_key_scoped_to_tenant(client, db_session):
+    """Two different tenants can use the same idempotency_key without conflict."""
+    day = date.today() + timedelta(days=3)
+
+    async def _make_tenant_with_booking(name: str, key: str) -> int:
+        tenant = Tenant(name=name, timezone="UTC")
+        db_session.add(tenant)
+        await db_session.flush()
+        service = Service(
+            tenant_id=tenant.id, name="Servicio", duration_minutes=30, price=100.0
+        )
+        db_session.add(service)
+        await db_session.commit()
+        raw_key = await _create_api_key(db_session, tenant.id)
+        payload = {
+            "tenant_id": tenant.id,
+            "service_id": service.id,
+            "client_name": "Cliente",
+            "client_phone": "1122334455",
+            "start_time": f"{day}T09:00:00",
+            "idempotency_key": key,
+        }
+        res = await client.post(
+            "/bookings", json=payload, headers=_auth_headers(raw_key)
+        )
+        return res.status_code
+
+    shared_key = "shared-idempotency-key"
+    assert await _make_tenant_with_booking("Tenant A", shared_key) == 201
+    assert await _make_tenant_with_booking("Tenant B", shared_key) == 201

@@ -204,7 +204,9 @@ class Booking(SQLModel, table=True):
     __tablename__ = "booking"
 
     __table_args__ = (
-        UniqueConstraint("idempotency_key", name="uq_booking_idempotency_key"),
+        UniqueConstraint(
+            "tenant_id", "idempotency_key", name="uq_booking_idempotency_key"
+        ),
         ExcludeConstraint(
             (text("tenant_id"), "="),
             (text("(COALESCE(staff_id, -1))"), "="),
@@ -251,7 +253,7 @@ class Booking(SQLModel, table=True):
         sa_column_kwargs={"server_default": text("false")},
     )
 
-    idempotency_key: str = Field(index=True, unique=True)
+    idempotency_key: str
 
     # --- Auditoría de acciones (Tarea 8) ---
     status_changed_at: datetime | None = Field(

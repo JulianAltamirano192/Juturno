@@ -294,7 +294,6 @@ class BookingCreate(BaseModel):
     client_phone: str
     start_time: datetime
     end_time: datetime | None = None
-    price_at_booking: float | None = None
     idempotency_key: str
 
 
