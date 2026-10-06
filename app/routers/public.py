@@ -244,7 +244,7 @@ async def create_public_booking(
 
     end_time = start_time + timedelta(minutes=service.duration_minutes)
 
-    deposit = float(effective_deposit(service.price, service.deposit_amount))
+    deposit_decimal = effective_deposit(service.price, service.deposit_amount)
 
     new_booking = Booking(
         tenant_id=payload.tenant_id,
@@ -255,7 +255,7 @@ async def create_public_booking(
         start_time=start_time,
         end_time=end_time,
         price_at_booking=service.price,
-        deposit_at_booking=effective_deposit(service.price, service.deposit_amount),
+        deposit_at_booking=deposit_decimal,
         idempotency_key=payload.idempotency_key,
         status="pending",
     )
@@ -305,7 +305,7 @@ async def create_public_booking(
     try:
         mp_result = await create_mp_preference(
             booking_id=new_booking.id,
-            amount=deposit,
+            amount=float(deposit_decimal),
             client_name=payload.client_name,
             back_url=(
                 f"{settings.PUBLIC_BASE_URL}/t/{tenant.slug}"
@@ -319,7 +319,7 @@ async def create_public_booking(
 
     new_payment = Payment(
         booking_id=new_booking.id,
-        amount=deposit,
+        amount=deposit_decimal,
         method="mercado_pago",
         status="pending",
         mp_preference_id=mp_result["preference_id"],

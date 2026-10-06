@@ -440,7 +440,8 @@ async def mercadopago_webhook(
         # never commits a Payment row for a fraudulent/invalid payment.
         # Guard 1 (tenant) applies to ALL statuses to prevent cross-tenant data injection.
         # Guards 2 and 3 (currency, amount) only apply to approved payments.
-        booking = await session.get(Booking, booking_id)
+        stmt_booking = select(Booking).where(Booking.id == booking_id).with_for_update()
+        booking = (await session.execute(stmt_booking)).scalar_one_or_none()
         if booking is not None:
             webhook_event.booking_id = booking.id
 

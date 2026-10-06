@@ -125,6 +125,7 @@ async def process_deposit_expiration(async_session_maker):
                         Tenant.deposit_expiration_minutes.is_not(None),
                     )
                 )
+                .with_for_update(skip_locked=True, of=Booking)
             )
             result = await session.execute(stmt)
             rows = result.all()

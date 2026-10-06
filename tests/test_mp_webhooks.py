@@ -1433,3 +1433,119 @@ async def test_webhook_guard_uses_booking_deposit_at_booking(
     assert (
         res.text == "EVENT_PROCESSED"
     ), f"Expected EVENT_PROCESSED (guard should use booking.deposit_at_booking=100), got: {res.text}"
+
+
+# ---------------------------------------------------------------------------
+# Locking: SELECT FOR UPDATE en booking (MEDIA #2)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_webhook_already_confirmed_booking_no_duplicate_outbox(
+    client, db_session, monkeypatch
+):
+    """
+    Test B-LOCK1: booking ya confirmado cuando llega un webhook aprobado.
+    Simula la carrera en que otro webhook (o proceso) confirmó el booking
+    justo antes. El SELECT FOR UPDATE garantiza que leemos el estado
+    comprometido ('confirmed'), por lo que la transición se saltea y NO se
+    crea un outbox duplicado.
+    """
+    secret = "test-webhook-secret"
+    monkeypatch.setattr(mp_webhooks.settings, "MP_SECRET_KEY", secret)
+
+    booking = await _create_booking(db_session, "already-confirmed-lock")
+    booking.status = "confirmed"
+    db_session.add(booking)
+    await db_session.commit()
+
+    async def mock_get_payment_details(data_id: str, access_token: str | None = None):
+        return _make_payment_details("approved", f"booking-{booking.id}")
+
+    monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_get_payment_details)
+
+    ts = int(datetime.now(timezone.utc).timestamp())
+    data_id = f"pay-confirmed-{booking.id}"
+    request_id = "req_confirmed_lock"
+    signature = _sign_webhook(data_id, request_id, ts, secret)
+
+    payload = {
+        "id": f"evt-confirmed-lock-{booking.id}",
+        "action": "payment.updated",
+        "data": {"id": data_id},
+    }
+    headers = {"x-signature": signature, "x-request-id": request_id}
+
+    res = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
+    assert res.status_code == 200
+    assert res.text == "EVENT_PROCESSED"
+
+    await db_session.refresh(booking)
+    assert booking.status == "confirmed"
+
+    # El booking ya estaba confirmado: no hubo doble transición.
+    # Sí se crea exactamente un outbox (no había ninguno; la deduplicación
+    # la hace el guard existing_outbox is None, no el estado del booking).
+    outbox_count = await db_session.execute(
+        text(
+            "SELECT COUNT(*) FROM notification_outbox "
+            f"WHERE booking_id = {booking.id} AND notification_type = 'confirmation'"
+        )
+    )
+    assert outbox_count.scalar_one() == 1
+
+
+@pytest.mark.asyncio
+async def test_webhook_confirmed_booking_with_existing_outbox_no_duplicate(
+    client, db_session, monkeypatch
+):
+    """
+    Test B-LOCK2: booking confirmado con outbox de confirmación ya creado.
+    El webhook no debe crear un segundo outbox (guard existing_outbox is None).
+    """
+    from app.models import NotificationOutbox
+
+    secret = "test-webhook-secret"
+    monkeypatch.setattr(mp_webhooks.settings, "MP_SECRET_KEY", secret)
+
+    booking = await _create_booking(db_session, "confirmed-with-outbox")
+    booking.status = "confirmed"
+    db_session.add(booking)
+    await db_session.flush()
+
+    existing_outbox = NotificationOutbox(
+        booking_id=booking.id,
+        notification_type="confirmation",
+        status="sent",
+    )
+    db_session.add(existing_outbox)
+    await db_session.commit()
+
+    async def mock_get_payment_details(data_id: str, access_token: str | None = None):
+        return _make_payment_details("approved", f"booking-{booking.id}")
+
+    monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_get_payment_details)
+
+    ts = int(datetime.now(timezone.utc).timestamp())
+    data_id = f"pay-conf-outbox-{booking.id}"
+    request_id = "req_conf_outbox"
+    signature = _sign_webhook(data_id, request_id, ts, secret)
+
+    payload = {
+        "id": f"evt-conf-outbox-{booking.id}",
+        "action": "payment.updated",
+        "data": {"id": data_id},
+    }
+    headers = {"x-signature": signature, "x-request-id": request_id}
+
+    res = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
+    assert res.status_code == 200
+    assert res.text == "EVENT_PROCESSED"
+
+    outbox_count = await db_session.execute(
+        text(
+            "SELECT COUNT(*) FROM notification_outbox "
+            f"WHERE booking_id = {booking.id} AND notification_type = 'confirmation'"
+        )
+    )
+    assert outbox_count.scalar_one() == 1

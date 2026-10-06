@@ -74,8 +74,13 @@ Si un doc contradice el código, manda el código: avisá y proponé corregir el
 - ~~`BookingCreate` acepta `price_at_booking` del cliente~~ — **Resuelto en `8cfa0d6`**: campo eliminado del schema. Pendiente: montos `float` en schemas públicos (`PublicServiceRead`, `BookingCreate`) — dinero debería ser `Decimal`.
 - ~~Webhook MP: falta validar monto >= seña y `booking.tenant_id == tenant resuelto`.~~
   **Resuelto en `4e3af49`** (guard de collector_id para todos los estados, currency ARS, amount
-  is_finite). Pendiente: `deposit_at_booking`, race condition Payment, CHECK deposit >= 0
-  — ver D-019 y roadmap Fase 0.
+  is_finite). ~~Pendiente: `deposit_at_booking`, race condition Payment, CHECK deposit >= 0~~
+  **Resuelto en `f128344`**: `deposit_at_booking` snapshotted en creación, webhook lee el valor
+  fijo, migration backfill + CHECK >= 0, SELECT FOR UPDATE serializa webhooks concurrentes.
+  ~~MEDIA #2: booking cargado sin SELECT FOR UPDATE; race con job de expiración.~~
+  **Resuelto**: `app/mp_webhooks.py` usa `select(Booking).with_for_update()`; scheduler usa
+  `.with_for_update(skip_locked=True, of=Booking)`. Também: CHECK en `__table_args__` para
+  `deposit_at_booking >= 0` (BAJA #2); doble cálculo `effective_deposit` eliminado (BAJA #4).
 - Outbox (D-016): commit por lote → riesgo de reenvíos y mensajes "veneno"; pasar a commit por evento.
 - ~~Sin rate limiting en endpoints públicos~~; uvicorn sin `--forwarded-allow-ips` detrás de Traefik. — **Resuelto parcialmente en `6ab9cac`**: slowapi activo (10/min login, 5/min register, 20/min public bookings). **Pendiente ops**: configurar `--forwarded-allow-ips=<IP_Traefik>` en Coolify para que `get_remote_address` reciba la IP real del cliente y no la de Traefik.
 - ~~CI solo corre pytest~~; sin branch protection confirmada. — **Resuelto parcialmente en `614e278`**: ruff y mypy agregados al workflow. Pendiente: confirmar branch protection en GitHub.

@@ -219,6 +219,10 @@ class Booking(SQLModel, table=True):
             using="gist",
             where=text("status IN ('pending', 'confirmed')"),
         ),
+        CheckConstraint(
+            "deposit_at_booking IS NULL OR deposit_at_booking >= 0",
+            name="ck_booking_deposit_at_booking_non_negative",
+        ),
     )
 
     id: int | None = Field(default=None, primary_key=True)
