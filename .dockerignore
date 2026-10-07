@@ -1,0 +1,34 @@
+# Secrets: never bake them into the image (Coolify injects env vars at runtime)
+.env
+.env.*
+!.env.example
+
+# Database dumps
+backups/
+
+# VCS, virtualenvs and caches
+.git/
+.venv/
+venv/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Tooling and editor/agent config, not needed at runtime
+.github/
+.claude/
+.opencode/
+.agents/
+.atl/
+.codegraph/
+.impeccable/
+.gentle-ai-default-agent.json
+opencode.json
+.Rhistory
+
+# Separate frontend project (not served by the API image)
+frontend/
