@@ -1,8 +1,19 @@
-# Juturno
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/brand/juturno-logo-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="docs/brand/juturno-logo-light.png">
+    <img alt="Juturno" src="docs/brand/juturno-logo-light.png" width="360">
+  </picture>
+</p>
 
-> SaaS multi-tenant de gestión de turnos con cobro de seña (Mercado Pago) y notificaciones WhatsApp. En producción en https://api.juturno.com desde septiembre 2026.
+<p align="center">
+  SaaS multi-tenant de gestión de turnos con cobro de seña (Mercado Pago) y notificaciones WhatsApp.<br>
+  En producción en <a href="https://api.juturno.com">api.juturno.com</a> desde septiembre 2026.
+</p>
 
-[![CI](https://github.com/JulianAltamirano192/Juturno/actions/workflows/ci.yml/badge.svg)](https://github.com/JulianAltamirano192/Juturno/actions/workflows/ci.yml)
+<p align="center">
+  <a href="https://github.com/JulianAltamirano192/Juturno/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/JulianAltamirano192/Juturno/actions/workflows/ci.yml/badge.svg"></a>
+</p>
 
 ---
 
