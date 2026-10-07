@@ -20,6 +20,87 @@
         ],
         "createdAt": "2026-10-07T18:53:33.030Z",
         "reason": "user confirmed: chose 'quieter' (keep current violet/cyan identity) over 'bolder' redesign on 2026-10-07"
+      },
+      {
+        "rule": "codex-grid-background",
+        "value": "*",
+        "files": [
+          "app/templates/landing.html"
+        ],
+        "createdAt": "2026-10-07T19:00:28.724Z",
+        "reason": "user confirmed 2026-10-07: reverted the quieter pass, wants the original glow/gradient landing style kept"
+      },
+      {
+        "rule": "dark-glow",
+        "value": "*",
+        "files": [
+          "app/templates/landing.html"
+        ],
+        "createdAt": "2026-10-07T19:00:28.764Z",
+        "reason": "user confirmed 2026-10-07: reverted the quieter pass, wants the original glow/gradient landing style kept"
+      },
+      {
+        "rule": "gpt-thin-border-wide-shadow",
+        "value": "*",
+        "files": [
+          "app/templates/landing.html"
+        ],
+        "createdAt": "2026-10-07T19:00:28.803Z",
+        "reason": "user confirmed 2026-10-07: reverted the quieter pass, wants the original glow/gradient landing style kept"
+      },
+      {
+        "rule": "gradient-text",
+        "value": "*",
+        "files": [
+          "app/templates/landing.html"
+        ],
+        "createdAt": "2026-10-07T19:00:28.858Z",
+        "reason": "user confirmed 2026-10-07: reverted the quieter pass, wants the original glow/gradient landing style kept"
+      },
+      {
+        "rule": "icon-tile-stack",
+        "value": "*",
+        "files": [
+          "app/templates/landing.html"
+        ],
+        "createdAt": "2026-10-07T19:00:28.904Z",
+        "reason": "user confirmed 2026-10-07: reverted the quieter pass, wants the original glow/gradient landing style kept"
+      },
+      {
+        "rule": "kicker-above-heading",
+        "value": "*",
+        "files": [
+          "app/templates/landing.html"
+        ],
+        "createdAt": "2026-10-07T19:00:28.948Z",
+        "reason": "user confirmed 2026-10-07: reverted the quieter pass, wants the original glow/gradient landing style kept"
+      },
+      {
+        "rule": "nested-cards",
+        "value": "*",
+        "files": [
+          "app/templates/landing.html"
+        ],
+        "createdAt": "2026-10-07T19:00:28.988Z",
+        "reason": "user confirmed 2026-10-07: reverted the quieter pass, wants the original glow/gradient landing style kept"
+      },
+      {
+        "rule": "radial-halo",
+        "value": "*",
+        "files": [
+          "app/templates/landing.html"
+        ],
+        "createdAt": "2026-10-07T19:00:29.031Z",
+        "reason": "user confirmed 2026-10-07: reverted the quieter pass, wants the original glow/gradient landing style kept"
+      },
+      {
+        "rule": "radial-spotlight-glow",
+        "value": "*",
+        "files": [
+          "app/templates/landing.html"
+        ],
+        "createdAt": "2026-10-07T19:00:29.077Z",
+        "reason": "user confirmed 2026-10-07: reverted the quieter pass, wants the original glow/gradient landing style kept"
       }
     ]
   }

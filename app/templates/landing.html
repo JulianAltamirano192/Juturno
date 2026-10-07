@@ -8,32 +8,33 @@
 <link rel="stylesheet" href="/static/fonts/fonts.css">
 <style>
 *{box-sizing:border-box}
-:root{--bg:#08080b;--ink:#eef0f6;--ink-2:#cfd3dd;--ink-muted:#b4b8c5;--ink-faint:#a9aebb;--ink-dim:#8f95a3;--accent:#67e8f9;--accent-soft:#a5f3fc;--violet:#c4b5fd;--surface:rgba(255,255,255,.04);--line:rgba(255,255,255,.1);--line-strong:rgba(255,255,255,.16);--cta:linear-gradient(90deg,#9333ea,#4f46e5 55%,#0e7490)}
 html{scroll-behavior:smooth}
-body{margin:0;background:var(--bg);color:var(--ink);font-family:'DM Sans',system-ui,sans-serif}
-a{color:var(--accent)}a:hover{color:var(--accent-soft)}
+body{margin:0;background:#08080b;color:#eef0f6;font-family:'DM Sans',system-ui,sans-serif}
+a{color:#67e8f9}a:hover{color:#a5f3fc}
 .lp{position:relative;width:100%;overflow:hidden;container-type:inline-size}
 .lp h1,.lp h2,.lp h3{font-family:'Sora',system-ui,sans-serif}
-@keyframes lp-float{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
+@keyframes lp-float{0%,100%{transform:translateY(0)}50%{transform:translateY(-14px)}}
+@keyframes lp-pulse{0%,100%{transform:scale(1);opacity:.8}50%{transform:scale(1.1);opacity:1}}
+@keyframes lp-twinkle{0%,100%{opacity:.35;transform:scale(.8)}50%{opacity:1;transform:scale(1.15)}}
 @keyframes lp-pending{0%,100%{box-shadow:0 0 0 0 rgba(168,85,247,.7)}50%{box-shadow:0 0 0 8px rgba(168,85,247,0)}}
 @keyframes lp-pop{0%{opacity:0;transform:translateY(14px) scale(.96)}100%{opacity:1;transform:none}}
 @keyframes lp-spin{to{transform:rotate(360deg)}}
 .wrap{position:relative;z-index:2;max-width:1200px;margin:0 auto;padding-left:clamp(16px,4vw,48px);padding-right:clamp(16px,4vw,48px)}
 .sec{padding-top:112px;display:flex;flex-direction:column;gap:44px}
 .sec-head{display:flex;flex-direction:column;align-items:center;gap:14px;text-align:center}
+.eyebrow{font-size:14px;letter-spacing:.14em;text-transform:uppercase;color:#67e8f9;font-weight:700}
 .lp-h2{margin:0;font-size:44px;line-height:1.1;font-weight:700;letter-spacing:-.03em}
-.lead{margin:0;font-size:18px;line-height:1.55;color:var(--ink-muted);max-width:640px}
-.muted{color:var(--ink-muted)}
-.card{display:flex;flex-direction:column;gap:18px;padding:28px;border-radius:22px;background:var(--surface);border:1px solid var(--line);box-shadow:inset 0 1px 0 rgba(255,255,255,.06)}
+.lead{margin:0;font-size:18px;line-height:1.55;color:#b4b8c5;max-width:640px}
+.muted{color:#b4b8c5}
+.card{display:flex;flex-direction:column;gap:18px;padding:28px;border-radius:22px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);box-shadow:inset 0 1px 0 rgba(255,255,255,.06)}
 .card h3{margin:0;font-size:22px;line-height:1.25;font-weight:700}
-.card p{margin:0;font-size:16px;line-height:1.55;color:var(--ink-muted)}
-.ben{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;gap:12px;padding:26px;border-radius:20px;box-shadow:none}
-.ben p{grid-column:1/-1}
+.card p{margin:0;font-size:16px;line-height:1.55;color:#b4b8c5}
+.ben{gap:14px;padding:26px;border-radius:20px;box-shadow:none}
 .ben h3{font-size:19px}.ben p{font-size:15px}
-.ben-ic{display:flex}
-.btn-grad{display:inline-flex;align-items:center;gap:10px;height:56px;padding:0 28px;border-radius:999px;background:var(--cta);color:#fff;text-decoration:none;font-size:17px;font-weight:700;box-shadow:0 0 0 1px rgba(255,255,255,.14) inset}
+.ben-ic{width:48px;height:48px;border-radius:14px;display:flex;align-items:center;justify-content:center}
+.btn-grad{display:inline-flex;align-items:center;gap:10px;height:56px;padding:0 28px;border-radius:999px;background:linear-gradient(90deg,#c026d3 0%,#9333ea 50%,#4f46e5 78%,#0e7490 112%);color:#fff;text-decoration:none;font-size:17px;font-weight:700;box-shadow:0 0 0 1px rgba(255,255,255,.14) inset,0 0 16px rgba(217,70,239,.8),0 0 40px rgba(168,85,247,.55),0 0 80px rgba(139,92,246,.3)}
 .btn-grad:hover{color:#fff}
-.btn-ghost{display:inline-flex;align-items:center;height:56px;padding:0 22px;border-radius:999px;border:1px solid var(--line-strong);color:var(--ink);text-decoration:none;font-size:16px;font-weight:500}
+.btn-ghost{display:inline-flex;align-items:center;height:56px;padding:0 22px;border-radius:999px;border:1px solid rgba(255,255,255,.16);color:#eef0f6;text-decoration:none;font-size:16px;font-weight:500}
 .btn-ghost:hover{color:#fff;background:rgba(255,255,255,.06)}
 .lp-hero{display:grid;grid-template-columns:minmax(0,46fr) minmax(0,54fr);align-items:center;gap:24px;padding:40px 0 24px}
 .lp-stage{position:absolute;left:50%;top:50%;width:640px;height:600px;margin-left:-350px;margin-top:-300px;transform-origin:center center;transform:scale(1.12)}
@@ -44,54 +45,54 @@ a{color:var(--accent)}a:hover{color:var(--accent-soft)}
 .lp-btn{transition:transform .2s ease,filter .2s ease}
 .lp-btn:hover{transform:translateY(-2px);filter:brightness(1.12)}
 .lp :focus-visible{outline:2px solid #67e8f9;outline-offset:3px}
-.chip{display:flex;flex-direction:column;align-items:flex-start;gap:2px;min-height:56px;padding:10px 18px;border-radius:16px;border:1px solid rgba(255,255,255,.12);background:var(--surface);color:var(--ink);font-family:'DM Sans',sans-serif;cursor:pointer;text-align:left}
+.chip{display:flex;flex-direction:column;align-items:flex-start;gap:2px;min-height:56px;padding:10px 18px;border-radius:16px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.04);color:#eef0f6;font-family:'DM Sans',sans-serif;cursor:pointer;text-align:left}
 .chip:hover{background:rgba(255,255,255,.08)}
-.chip.on{border-color:rgba(192,132,252,.9);background:rgba(168,85,247,.16)}
+.chip.on{border-color:rgba(192,132,252,.9);background:rgba(168,85,247,.16);box-shadow:0 0 18px rgba(168,85,247,.35)}
 .chip b{font-family:'Sora',sans-serif;font-size:15px;font-weight:600}
-.chip small{font-size:13px;color:var(--ink-faint)}
-.svc{display:flex;justify-content:space-between;align-items:center;gap:10px;width:100%;min-height:64px;padding:12px 14px;border-radius:14px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font-family:'DM Sans',sans-serif;cursor:pointer;text-align:left}
+.chip small{font-size:13px;color:#a9aebb}
+.svc{display:flex;justify-content:space-between;align-items:center;gap:10px;width:100%;min-height:64px;padding:12px 14px;border-radius:14px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.04);color:#eef0f6;font-family:'DM Sans',sans-serif;cursor:pointer;text-align:left}
 .svc:hover{border-color:rgba(103,232,249,.6);background:rgba(34,211,238,.08)}
 .svc-name{display:block;font-size:16px;font-weight:600}
-.svc-meta{display:block;font-size:13px;color:var(--ink-faint);margin-top:3px}
-.svc-dep{flex-shrink:0;font-size:12px;font-weight:600;color:var(--accent-soft);padding:4px 9px;border-radius:999px;background:rgba(34,211,238,.12)}
-.day{display:flex;flex-direction:column;align-items:center;gap:2px;min-width:48px;min-height:56px;padding:6px 4px;border-radius:12px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);font-family:'DM Sans',sans-serif;cursor:pointer}
-.day.on{border-color:#22d3ee;background:rgba(34,211,238,.14);color:#fff}
+.svc-meta{display:block;font-size:13px;color:#a9aebb;margin-top:3px}
+.svc-dep{flex-shrink:0;font-size:12px;font-weight:600;color:#a5f3fc;padding:4px 9px;border-radius:999px;background:rgba(34,211,238,.12)}
+.day{display:flex;flex-direction:column;align-items:center;gap:2px;min-width:48px;min-height:56px;padding:6px 4px;border-radius:12px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.04);color:#cfd3dd;font-family:'DM Sans',sans-serif;cursor:pointer}
+.day.on{border-color:#22d3ee;background:rgba(34,211,238,.14);color:#fff;box-shadow:0 0 14px rgba(34,211,238,.35)}
 .day small{font-size:12px}.day b{font-family:'Sora',sans-serif;font-size:17px}
-.slot{min-height:44px;border-radius:12px;border:1px solid rgba(255,255,255,.12);background:var(--surface);color:var(--ink);font-family:'DM Sans',sans-serif;font-size:15px;font-weight:500;cursor:pointer}
+.slot{min-height:44px;border-radius:12px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.04);color:#eef0f6;font-family:'DM Sans',sans-serif;font-size:15px;font-weight:500;cursor:pointer}
 .slot:hover{border-color:rgba(103,232,249,.6)}
-.slot.on{border-color:#22d3ee;background:rgba(34,211,238,.18)}
+.slot.on{border-color:#22d3ee;background:linear-gradient(135deg,rgba(168,85,247,.35),rgba(34,211,238,.35));box-shadow:0 0 14px rgba(34,211,238,.4)}
 .slot:disabled{opacity:.35;cursor:not-allowed;text-decoration:line-through}
 .cell{width:22px;height:22px;border-radius:50%;margin:0 auto;background:rgba(255,255,255,.08)}
 .cell.taken{background:rgba(255,255,255,.3)}
 .cell.pending{background:#a855f7;animation:lp-pending 1.4s ease-in-out infinite}
-.cell.booked{background:#22d3ee;transform:scale(1.15)}
+.cell.booked{background:#22d3ee;box-shadow:0 0 12px 3px rgba(34,211,238,.7);transform:scale(1.15)}
 .dot-step{width:8px;height:8px;border-radius:50%;background:rgba(255,255,255,.2)}
-.dot-step.on{background:#22d3ee}
-.link-back{align-self:flex-start;min-height:44px;padding:0 4px;border:0;background:none;color:var(--accent-soft);font-family:'DM Sans',sans-serif;font-size:14px;cursor:pointer}
+.dot-step.on{background:#22d3ee;box-shadow:0 0 8px rgba(34,211,238,.8)}
+.link-back{align-self:flex-start;min-height:44px;padding:0 4px;border:0;background:none;color:#a5f3fc;font-family:'DM Sans',sans-serif;font-size:14px;cursor:pointer}
 .ph-title{font-family:'Sora',sans-serif;font-size:18px;font-weight:700}
-.note{font-size:12px;color:var(--ink-dim)}
+.note{font-size:12px;color:#8f95a3}
 .btn-pill{min-height:52px;border:0;border-radius:999px;color:#fff;font-family:'DM Sans',sans-serif;font-size:16px;font-weight:700;cursor:pointer}
 .btn-pill:disabled{opacity:.45;cursor:not-allowed}
 .row{display:flex;justify-content:space-between;gap:10px}
-.row span:first-child{color:var(--ink-faint)}
+.row span:first-child{color:#a9aebb}
 .pop{animation:lp-pop .45s cubic-bezier(.2,.8,.2,1) both}
-.check{display:flex;gap:12px;align-items:flex-start;font-size:16px;line-height:1.55;color:var(--ink-2)}
+.check{display:flex;gap:12px;align-items:flex-start;font-size:16px;line-height:1.55;color:#cfd3dd}
 .check svg{flex-shrink:0;margin-top:2px}
-details.faq{border-radius:18px;background:var(--surface);border:1px solid var(--line)}
-details.faq summary{display:flex;justify-content:space-between;align-items:center;gap:16px;min-height:64px;padding:16px 20px;color:var(--ink);font-family:'Sora',sans-serif;font-size:17px;font-weight:600;cursor:pointer;list-style:none}
+details.faq{border-radius:18px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1)}
+details.faq summary{display:flex;justify-content:space-between;align-items:center;gap:16px;min-height:64px;padding:16px 20px;color:#eef0f6;font-family:'Sora',sans-serif;font-size:17px;font-weight:600;cursor:pointer;list-style:none}
 details.faq summary::-webkit-details-marker{display:none}
-details.faq summary::after{content:"+";flex-shrink:0;font-size:22px;color:var(--accent)}
+details.faq summary::after{content:"+";flex-shrink:0;font-size:22px;color:#67e8f9}
 details.faq[open] summary::after{content:"−"}
-details.faq p{margin:0;padding:0 20px 18px;font-size:16px;line-height:1.6;color:var(--ink-muted)}
-.foot a{color:var(--ink-2);text-decoration:none}.foot a:hover{color:#fff}
+details.faq p{margin:0;padding:0 20px 18px;font-size:16px;line-height:1.6;color:#b4b8c5}
+.foot a{color:#cfd3dd;text-decoration:none}.foot a:hover{color:#fff}
 .lp-menu{display:none}
-.lp-menu summary{display:flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:999px;border:1px solid var(--line-strong);background:rgba(255,255,255,.06);color:var(--ink);cursor:pointer;list-style:none}
+.lp-menu summary{display:flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:999px;border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.06);color:#eef0f6;cursor:pointer;list-style:none}
 .lp-menu summary::-webkit-details-marker{display:none}
 .lp-menu[open] summary{background:rgba(255,255,255,.14)}
 .lp-menu-panel{position:absolute;left:0;right:0;top:calc(100% + 8px);z-index:50;display:flex;flex-direction:column;padding:8px;border-radius:18px;background:#121219;border:1px solid rgba(255,255,255,.12);box-shadow:0 18px 40px rgba(0,0,0,.55)}
-.lp-menu-panel a{display:flex;align-items:center;min-height:48px;padding:0 14px;border-radius:12px;color:var(--ink);text-decoration:none;font-size:16px}
+.lp-menu-panel a{display:flex;align-items:center;min-height:48px;padding:0 14px;border-radius:12px;color:#eef0f6;text-decoration:none;font-size:16px}
 .lp-menu-panel a:hover{background:rgba(255,255,255,.06)}
-.lp-menu-panel .lp-menu-login{justify-content:center;margin-top:6px;border:1px solid var(--line-strong);font-weight:600}
+.lp-menu-panel .lp-menu-login{justify-content:center;margin-top:6px;border:1px solid rgba(255,255,255,.16);font-weight:600}
 @container (max-width:1200px){.lp-stage{transform:scale(1)}}
 @container (max-width:1020px){
 .lp-hero{grid-template-columns:minmax(0,1fr)}
@@ -119,22 +120,25 @@ details.faq p{margin:0;padding:0 20px 18px;font-size:16px;line-height:1.6;color:
 </head>
 <body>
 <div class="lp">
+  <div aria-hidden="true" style="position:absolute;left:0;right:0;top:0;height:1100px;background-image:linear-gradient(rgba(255,255,255,.045) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.045) 1px,transparent 1px);background-size:48px 48px;pointer-events:none;-webkit-mask-image:radial-gradient(ellipse 50% 55% at 66% 45%,#000 30%,transparent 85%);mask-image:radial-gradient(ellipse 50% 55% at 66% 45%,#000 30%,transparent 85%)"></div>
+  <div aria-hidden="true" style="position:absolute;left:-10%;top:-200px;width:60%;height:600px;background:radial-gradient(ellipse at center,rgba(255,255,255,.05),rgba(8,8,11,0) 65%);pointer-events:none"></div>
 
   <div class="wrap" style="padding-top:24px;z-index:10">
-    <nav aria-label="Principal" style="position:relative;display:flex;align-items:center;justify-content:space-between;gap:20px;height:72px;padding:0 12px 0 20px;border-radius:18px;background:linear-gradient(180deg,rgba(255,255,255,.09),rgba(255,255,255,.04));border:1px solid rgba(255,255,255,.12);box-shadow:inset 0 1px 0 rgba(255,255,255,.1)">
-      <a href="#inicio" aria-label="Juturno, inicio" style="display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--ink)">
+    <nav aria-label="Principal" style="position:relative;display:flex;align-items:center;justify-content:space-between;gap:20px;height:72px;padding:0 12px 0 20px;border-radius:18px;background:linear-gradient(180deg,rgba(255,255,255,.09),rgba(255,255,255,.04));border:1px solid rgba(255,255,255,.12);box-shadow:inset 0 1px 0 rgba(255,255,255,.1),0 12px 40px rgba(0,0,0,.45);backdrop-filter:blur(14px)">
+      <span aria-hidden="true" style="position:absolute;left:14%;top:-1px;width:160px;height:2px;border-radius:2px;background:linear-gradient(90deg,rgba(168,85,247,0),#c084fc,rgba(168,85,247,0));box-shadow:0 0 14px 3px rgba(168,85,247,.55)"></span>
+      <a href="#inicio" aria-label="Juturno, inicio" style="display:flex;align-items:center;gap:10px;text-decoration:none;color:#eef0f6">
         <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#c4b5fd" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.5 20.5 7v10L12 21.5 3.5 17V7z"/><path d="M3.5 7 12 11.5 20.5 7M12 11.5v10"/></svg>
         <span class="lp-wordmark" style="font-family:'Sora',sans-serif;font-size:21px;font-weight:700;letter-spacing:-.02em">Juturno</span>
       </a>
       <div class="lp-navlinks" style="display:flex;align-items:center;gap:30px;font-size:15px">
-        <a href="#como-funciona" style="color:var(--ink-2);text-decoration:none">Cómo funciona</a>
-        <a href="#demo" style="color:var(--ink-2);text-decoration:none">Demo</a>
-        <a href="#beneficios" style="color:var(--ink-2);text-decoration:none">Beneficios</a>
-        <a href="#preguntas" style="color:var(--ink-2);text-decoration:none">Preguntas</a>
+        <a href="#como-funciona" style="color:#d4d7e0;text-decoration:none">Cómo funciona</a>
+        <a href="#demo" style="color:#d4d7e0;text-decoration:none">Demo</a>
+        <a href="#beneficios" style="color:#d4d7e0;text-decoration:none">Beneficios</a>
+        <a href="#preguntas" style="color:#d4d7e0;text-decoration:none">Preguntas</a>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
-        <a class="lp-hide-sm" href="/login" style="display:inline-flex;align-items:center;height:44px;padding:0 18px;border-radius:999px;border:1px solid var(--line-strong);background:rgba(255,255,255,.06);color:var(--ink);text-decoration:none;font-size:15px;font-weight:500;white-space:nowrap">Ingresar</a>
-        <a class="lp-btn" href="/register" style="display:inline-flex;align-items:center;height:44px;padding:0 20px;border-radius:999px;background:var(--cta);color:#fff;text-decoration:none;font-size:15px;font-weight:700;white-space:nowrap">Crear cuenta</a>
+        <a class="lp-hide-sm" href="/login" style="display:inline-flex;align-items:center;height:44px;padding:0 18px;border-radius:999px;border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.06);color:#eef0f6;text-decoration:none;font-size:15px;font-weight:500;white-space:nowrap">Ingresar</a>
+        <a class="lp-btn" href="/register" style="display:inline-flex;align-items:center;height:44px;padding:0 20px;border-radius:999px;background:linear-gradient(90deg,#0e7490,#7c3aed 60%,#a21caf);color:#fff;text-decoration:none;font-size:15px;font-weight:700;white-space:nowrap;box-shadow:0 0 16px rgba(34,211,238,.45),0 0 30px rgba(168,85,247,.4)">Crear cuenta</a>
         <details class="lp-menu">
           <summary aria-label="Menú"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></summary>
           <div class="lp-menu-panel">
@@ -153,26 +157,34 @@ details.faq p{margin:0;padding:0 20px 18px;font-size:16px;line-height:1.6;color:
   <div class="wrap">
     <section id="inicio" class="lp-hero" aria-label="Presentación">
       <div class="lp-copy" style="display:flex;flex-direction:column;align-items:flex-start;gap:26px">
-        <span style="display:inline-flex;align-items:center;gap:8px;height:34px;padding:0 14px;border-radius:999px;border:1px solid rgba(103,232,249,.35);background:rgba(34,211,238,.08);color:var(--accent-soft);font-size:14px;font-weight:500"><span style="width:7px;height:7px;border-radius:50%;background:#22d3ee"></span>Beta abierta · sin costo</span>
-        <h1 class="lp-h1" style="margin:0;font-size:60px;line-height:1.04;font-weight:800;letter-spacing:-.035em">Tus clientes reservan y pagan <span style="color:var(--violet)">la seña</span> solos</h1>
-        <p style="margin:0;font-size:19px;line-height:1.55;color:var(--ink-muted);max-width:500px">Juturno es tu agenda online: eligen el horario, dejan la seña con Mercado Pago y reciben la confirmación por WhatsApp. Vos solo atendés.</p>
+        <span style="display:inline-flex;align-items:center;gap:8px;height:34px;padding:0 14px;border-radius:999px;border:1px solid rgba(103,232,249,.35);background:rgba(34,211,238,.08);color:#a5f3fc;font-size:14px;font-weight:500"><span style="width:7px;height:7px;border-radius:50%;background:#22d3ee;box-shadow:0 0 8px #22d3ee"></span>Beta abierta · sin costo</span>
+        <h1 class="lp-h1" style="margin:0;font-size:60px;line-height:1.04;font-weight:800;letter-spacing:-.035em">Tus clientes reservan y pagan <span style="background:linear-gradient(90deg,#e879f9,#a78bfa 45%,#22d3ee);-webkit-background-clip:text;background-clip:text;color:transparent">la seña</span> solos</h1>
+        <p style="margin:0;font-size:19px;line-height:1.55;color:#b4b8c5;max-width:500px">Juturno es tu agenda online: eligen el horario, dejan la seña con Mercado Pago y reciben la confirmación por WhatsApp. Vos solo atendés.</p>
         <div style="display:flex;flex-wrap:wrap;align-items:center;gap:14px">
           <a class="lp-btn btn-grad" href="#demo">Probar una reserva
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
           </a>
           <a class="btn-ghost" href="#como-funciona">Cómo funciona</a>
         </div>
-        <p style="margin:0;font-size:15px;line-height:1.5;color:var(--ink-dim);max-width:480px">Para peluquerías, centros de kinesiología, estudios de tatuaje, lavaderos, estética y cualquier negocio que trabaje con turnos.</p>
+        <p style="margin:0;font-size:15px;line-height:1.5;color:#9aa0ae;max-width:480px">Para peluquerías, centros de kinesiología, estudios de tatuaje, lavaderos, estética y cualquier negocio que trabaje con turnos.</p>
       </div>
 
       <div class="lp-scene" style="position:relative;min-height:640px;width:100%">
         <div class="lp-stage">
+          <div aria-hidden="true" style="position:absolute;left:0;top:0;width:640px;height:600px;z-index:1;pointer-events:none">
+            <div style="position:absolute;left:110px;top:110px;width:340px;height:380px;border-radius:50%;background:radial-gradient(circle,rgba(168,85,247,.6),rgba(168,85,247,0) 70%);filter:blur(46px);animation:lp-pulse 9s ease-in-out 0s infinite"></div>
+            <div style="position:absolute;left:250px;top:90px;width:280px;height:300px;border-radius:50%;background:radial-gradient(circle,rgba(34,211,238,.42),rgba(34,211,238,0) 70%);filter:blur(48px);animation:lp-pulse 11s ease-in-out -4s infinite"></div>
+            <div style="position:absolute;left:170px;top:400px;width:170px;height:120px;border-radius:50%;background:radial-gradient(circle,rgba(192,38,211,.7),rgba(192,38,211,0) 70%);filter:blur(26px);animation:lp-pulse 7s ease-in-out -2s infinite"></div>
+          </div>
           <div style="position:absolute;left:calc(50% + 61px);top:calc(50% - 123px);width:342px;z-index:10;animation:lp-float 7.4s ease-in-out -2.1s infinite">
             <img src="/static/landing/hero-calendar.webp" width="684" height="587" alt="Calendario de turnos con horarios reservados" style="display:block;width:100%;height:auto;filter:drop-shadow(0 18px 30px rgba(0,0,0,.5))">
           </div>
           <div style="position:absolute;left:calc(50% - 244px);top:calc(50% - 206px);width:465px;z-index:20;animation:lp-float 6.2s ease-in-out 0s infinite">
             <img src="/static/landing/hero-phone.webp" width="930" height="914" alt="Teléfono con el chat de reserva, el comprobante de seña y la notificación de WhatsApp" fetchpriority="high" style="display:block;width:100%;height:auto;filter:drop-shadow(0 26px 40px rgba(0,0,0,.55))">
           </div>
+          <span aria-hidden="true" style="position:absolute;left:calc(50% - 262px);top:calc(50% - 120px);width:5px;height:5px;border-radius:50%;z-index:5;background:#67e8f9;box-shadow:0 0 8px 3px rgba(103,232,249,.7);animation:lp-twinkle 4.6s ease-in-out -1.2s infinite"></span>
+          <span aria-hidden="true" style="position:absolute;left:calc(50% + 120px);top:calc(50% - 230px);width:4px;height:4px;border-radius:50%;z-index:5;background:#67e8f9;box-shadow:0 0 8px 3px rgba(103,232,249,.7);animation:lp-twinkle 5.2s ease-in-out -2.4s infinite"></span>
+          <span aria-hidden="true" style="position:absolute;left:calc(50% + 330px);top:calc(50% + 150px);width:4px;height:4px;border-radius:50%;z-index:5;background:#e879f9;box-shadow:0 0 8px 3px rgba(232,121,249,.7);animation:lp-twinkle 4.2s ease-in-out -3s infinite"></span>
         </div>
       </div>
     </section>
@@ -180,24 +192,25 @@ details.faq p{margin:0;padding:0 20px 18px;font-size:16px;line-height:1.6;color:
 
   <section id="como-funciona" class="wrap sec" aria-labelledby="t-como" style="padding-top:96px;gap:48px">
     <div class="sec-head">
+      <span class="eyebrow">Cómo funciona</span>
       <h2 id="t-como" class="lp-h2">De la reserva al WhatsApp, sin que muevas un dedo</h2>
       <p class="lead">Compartís tu link de reservas y Juturno hace el resto: agenda, cobra la seña y avisa.</p>
     </div>
     <div class="lp-steps">
       <article class="card">
-        <div aria-hidden="true" style="height:150px;border-radius:16px;background:rgba(255,255,255,.03);display:flex;align-items:center;justify-content:center">
-          <div id="step1-grid" style="display:grid;grid-template-columns:repeat(5,16px);gap:10px;padding:16px;border-radius:14px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14)"></div>
+        <div aria-hidden="true" style="height:150px;border-radius:16px;background:radial-gradient(ellipse at 50% 60%,rgba(34,211,238,.16),rgba(255,255,255,.02) 70%);border:1px solid rgba(255,255,255,.06);display:flex;align-items:center;justify-content:center">
+          <div id="step1-grid" style="display:grid;grid-template-columns:repeat(5,16px);gap:10px;padding:16px;border-radius:14px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);box-shadow:0 0 20px rgba(34,211,238,.15)"></div>
         </div>
-        <span style="font-family:'Sora',sans-serif;font-size:14px;font-weight:700;color:var(--accent)">Paso 1</span>
+        <span style="font-family:'Sora',sans-serif;font-size:14px;font-weight:700;color:#67e8f9">Paso 1</span>
         <h3>Tu cliente elige el horario</h3>
         <p>Desde tu link de reservas ve solo los horarios libres. Nunca se pisan dos turnos.</p>
       </article>
       <article class="card">
-        <div aria-hidden="true" style="height:150px;border-radius:16px;background:rgba(255,255,255,.03);display:flex;align-items:center;justify-content:center">
-          <div style="display:flex;flex-direction:column;gap:10px;width:170px;padding:16px;border-radius:14px;background:rgba(255,255,255,.07);border:1px solid var(--line-strong)">
-            <div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:12px;color:var(--ink-muted)">Seña</span><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#22d3ee" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></div>
+        <div aria-hidden="true" style="height:150px;border-radius:16px;background:radial-gradient(ellipse at 50% 60%,rgba(168,85,247,.2),rgba(255,255,255,.02) 70%);border:1px solid rgba(255,255,255,.06);display:flex;align-items:center;justify-content:center">
+          <div style="display:flex;flex-direction:column;gap:10px;width:170px;padding:16px;border-radius:14px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.16);box-shadow:0 0 22px rgba(168,85,247,.25)">
+            <div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:12px;color:#b4b8c5">Seña</span><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#22d3ee" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></div>
             <span style="font-family:'Sora',sans-serif;font-size:24px;font-weight:700">$ 5.000</span>
-            <span style="height:26px;border-radius:999px;background:linear-gradient(90deg,#22d3ee,#a855f7,#d946ef)"></span>
+            <span style="height:26px;border-radius:999px;background:linear-gradient(90deg,#22d3ee,#a855f7,#d946ef);box-shadow:0 0 12px rgba(168,85,247,.6)"></span>
           </div>
         </div>
         <span style="font-family:'Sora',sans-serif;font-size:14px;font-weight:700;color:#c084fc">Paso 2</span>
@@ -205,8 +218,8 @@ details.faq p{margin:0;padding:0 20px 18px;font-size:16px;line-height:1.6;color:
         <p>La seña va directo a tu cuenta. Si no la paga a tiempo, el horario se libera solo.</p>
       </article>
       <article class="card">
-        <div aria-hidden="true" style="height:150px;border-radius:16px;background:rgba(255,255,255,.03);display:flex;align-items:center;justify-content:center">
-          <div style="display:flex;align-items:center;gap:12px;width:200px;padding:14px 16px;border-radius:16px 16px 16px 4px;background:rgba(74,222,128,.14);border:1px solid rgba(74,222,128,.55)">
+        <div aria-hidden="true" style="height:150px;border-radius:16px;background:radial-gradient(ellipse at 50% 60%,rgba(74,222,128,.18),rgba(255,255,255,.02) 70%);border:1px solid rgba(255,255,255,.06);display:flex;align-items:center;justify-content:center">
+          <div style="display:flex;align-items:center;gap:12px;width:200px;padding:14px 16px;border-radius:16px 16px 16px 4px;background:rgba(74,222,128,.14);border:1px solid rgba(74,222,128,.55);box-shadow:0 0 22px rgba(74,222,128,.3)">
             <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#86efac" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11.5a8 8 0 0 1-11.6 7.1L4 20l1.4-4.2A8 8 0 1 1 20 11.5z"/></svg>
             <div style="display:flex;flex-direction:column;gap:7px;flex-grow:1"><span style="height:8px;border-radius:4px;background:rgba(255,255,255,.85)"></span><span style="height:8px;width:70%;border-radius:4px;background:rgba(255,255,255,.5)"></span></div>
           </div>
@@ -219,7 +232,9 @@ details.faq p{margin:0;padding:0 20px 18px;font-size:16px;line-height:1.6;color:
   </section>
 
   <section id="demo" class="wrap sec" aria-labelledby="t-demo" style="gap:36px">
+    <div aria-hidden="true" style="position:absolute;left:50%;top:260px;width:900px;height:600px;margin-left:-450px;background:radial-gradient(ellipse at center,rgba(168,85,247,.16),rgba(8,8,11,0) 65%);pointer-events:none;z-index:-1"></div>
     <div class="sec-head">
+      <span class="eyebrow">Demo interactiva</span>
       <h2 id="t-demo" class="lp-h2">Probalo como si fueras el cliente</h2>
       <p class="lead">Elegí un negocio de ejemplo y reservá un turno. Es una simulación: no se cobra nada.</p>
     </div>
@@ -228,14 +243,14 @@ details.faq p{margin:0;padding:0 20px 18px;font-size:16px;line-height:1.6;color:
 
     <div class="lp-demo">
       <div style="display:flex;justify-content:center">
-        <div class="phone" style="position:relative;width:340px;height:620px;padding:14px;border-radius:48px;background:rgba(255,255,255,.08);box-shadow:0 0 0 1px rgba(255,255,255,.12),0 30px 60px rgba(0,0,0,.6)">
+        <div class="phone" style="position:relative;width:340px;height:620px;padding:14px;border-radius:48px;background:linear-gradient(160deg,rgba(196,181,253,.35),rgba(34,211,238,.35));box-shadow:0 0 0 1px rgba(255,255,255,.12),0 0 30px rgba(168,85,247,.45),0 0 70px rgba(34,211,238,.2),0 30px 60px rgba(0,0,0,.6)">
           <div style="position:relative;width:100%;height:100%;border-radius:36px;background:#0d0e14;overflow:hidden;display:flex;flex-direction:column">
             <div aria-hidden="true" style="position:absolute;left:50%;top:10px;width:96px;height:26px;margin-left:-48px;border-radius:999px;background:#000;z-index:3"></div>
             <div style="display:flex;align-items:center;gap:12px;padding:48px 18px 14px;border-bottom:1px solid rgba(255,255,255,.08)">
               <span id="d-initial" style="width:42px;height:42px;flex-shrink:0;border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:'Sora',sans-serif;font-weight:700;font-size:17px;color:#fff;background:linear-gradient(135deg,#a855f7,#22d3ee)"></span>
               <div style="display:flex;flex-direction:column;gap:1px;min-width:0">
                 <span id="d-name" style="font-family:'Sora',sans-serif;font-size:16px;font-weight:700"></span>
-                <span id="d-rubro" style="font-size:13px;color:var(--ink-faint)"></span>
+                <span id="d-rubro" style="font-size:13px;color:#a9aebb"></span>
               </div>
             </div>
             <div aria-hidden="true" style="display:flex;justify-content:center;gap:8px;padding:12px 0 4px">
@@ -255,32 +270,32 @@ details.faq p{margin:0;padding:0 20px 18px;font-size:16px;line-height:1.6;color:
                 <div id="d-days" role="group" aria-label="Día" style="display:flex;gap:6px;justify-content:space-between"></div>
                 <div id="d-slots" role="group" aria-label="Horario" style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px"></div>
                 <span class="note">Tachados: horarios ya ocupados.</span>
-                <button type="button" class="lp-btn btn-pill" id="d-continue" style="margin-top:auto;background:var(--cta)">Continuar</button>
+                <button type="button" class="lp-btn btn-pill" id="d-continue" style="margin-top:auto;background:linear-gradient(90deg,#c026d3,#9333ea 55%,#0e7490 115%)">Continuar</button>
               </div>
 
               <div id="s-pay" hidden style="flex-direction:column;gap:12px">
                 <button type="button" class="link-back" id="d-back-time">← Cambiar horario</button>
                 <span class="ph-title">Confirmá tu turno</span>
-                <div style="display:flex;flex-direction:column;gap:10px;padding:16px;border-radius:16px;background:rgba(255,255,255,.05);border:1px solid var(--line);font-size:14px">
+                <div style="display:flex;flex-direction:column;gap:10px;padding:16px;border-radius:16px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);font-size:14px">
                   <div class="row"><span>Servicio</span><span id="d-sum-svc" style="text-align:right"></span></div>
                   <div class="row"><span>Cuándo</span><span id="d-sum-when" style="text-align:right"></span></div>
                   <div class="row"><span>Precio total</span><span id="d-sum-price"></span></div>
                   <div style="height:1px;background:rgba(255,255,255,.1)"></div>
-                  <div class="row" style="font-size:16px;font-weight:700"><span style="color:var(--ink)">Seña ahora</span><span id="d-sum-dep" style="color:var(--accent)"></span></div>
-                  <div class="row" style="color:var(--ink-faint)"><span>Pagás en el local</span><span id="d-sum-rest"></span></div>
+                  <div class="row" style="font-size:16px;font-weight:700"><span style="color:#eef0f6">Seña ahora</span><span id="d-sum-dep" style="color:#67e8f9"></span></div>
+                  <div class="row" style="color:#a9aebb"><span>Pagás en el local</span><span id="d-sum-rest"></span></div>
                 </div>
-                <div id="d-paying" role="status" hidden style="align-items:center;justify-content:center;gap:10px;min-height:52px;border-radius:999px;background:rgba(255,255,255,.06);font-size:15px;color:var(--ink-2)">
+                <div id="d-paying" role="status" hidden style="align-items:center;justify-content:center;gap:10px;min-height:52px;border-radius:999px;background:rgba(255,255,255,.06);font-size:15px;color:#cfd3dd">
                   <span style="width:18px;height:18px;border-radius:50%;border:2px solid rgba(255,255,255,.2);border-top-color:#22d3ee;animation:lp-spin .8s linear infinite"></span>Procesando la seña…
                 </div>
-                <button type="button" class="lp-btn btn-pill" id="d-pay" style="background:linear-gradient(90deg,#0e7490,#2563eb)">Pagar seña con Mercado Pago</button>
+                <button type="button" class="lp-btn btn-pill" id="d-pay" style="background:linear-gradient(90deg,#0e7490,#2563eb);box-shadow:0 0 18px rgba(34,211,238,.45)">Pagar seña con Mercado Pago</button>
                 <span class="note" style="text-align:center">Simulación: no se cobra nada.</span>
               </div>
 
               <div id="s-done" hidden class="pop" style="flex-direction:column;align-items:center;gap:14px;padding-top:24px;text-align:center">
-                <span style="width:72px;height:72px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:rgba(34,211,238,.14);border:1px solid rgba(34,211,238,.6)"><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#67e8f9" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>
+                <span style="width:72px;height:72px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:rgba(34,211,238,.14);border:1px solid rgba(34,211,238,.6);box-shadow:0 0 24px rgba(34,211,238,.45)"><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#67e8f9" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>
                 <span style="font-family:'Sora',sans-serif;font-size:22px;font-weight:700">¡Turno reservado!</span>
-                <span id="d-done-text" style="font-size:15px;line-height:1.5;color:var(--ink-muted)"></span>
-                <button type="button" id="d-reset" style="min-height:48px;padding:0 22px;border-radius:999px;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.06);color:var(--ink);font-family:'DM Sans',sans-serif;font-size:15px;font-weight:600;cursor:pointer">Reservar otro turno</button>
+                <span id="d-done-text" style="font-size:15px;line-height:1.5;color:#b4b8c5"></span>
+                <button type="button" id="d-reset" style="min-height:48px;padding:0 22px;border-radius:999px;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.06);color:#eef0f6;font-family:'DM Sans',sans-serif;font-size:15px;font-weight:600;cursor:pointer">Reservar otro turno</button>
               </div>
 
             </div>
@@ -289,35 +304,35 @@ details.faq p{margin:0;padding:0 20px 18px;font-size:16px;line-height:1.6;color:
       </div>
 
       <div style="display:flex;flex-direction:column;gap:20px">
-        <div style="display:flex;flex-direction:column;gap:16px;padding:24px;border-radius:22px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);box-shadow:inset 0 1px 0 rgba(255,255,255,.08)">
+        <div style="display:flex;flex-direction:column;gap:16px;padding:24px;border-radius:22px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);box-shadow:inset 0 1px 0 rgba(255,255,255,.08),0 0 40px rgba(34,211,238,.08)">
           <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
             <div style="display:flex;flex-direction:column;gap:2px">
-              <span style="font-size:13px;color:var(--ink-faint)">Lo que ve el negocio</span>
+              <span style="font-size:13px;color:#a9aebb">Lo que ve el negocio</span>
               <span style="font-family:'Sora',sans-serif;font-size:18px;font-weight:700">Agenda · <span id="d-agenda-name"></span></span>
             </div>
-            <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--ink-faint)">
+            <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:#a9aebb">
               <span style="display:flex;align-items:center;gap:6px"><span style="width:10px;height:10px;border-radius:50%;background:rgba(255,255,255,.3)"></span>Ocupado</span>
               <span style="display:flex;align-items:center;gap:6px"><span style="width:10px;height:10px;border-radius:50%;background:#a855f7"></span>Esperando seña</span>
-              <span style="display:flex;align-items:center;gap:6px"><span style="width:10px;height:10px;border-radius:50%;background:#22d3ee"></span>Confirmado</span>
+              <span style="display:flex;align-items:center;gap:6px"><span style="width:10px;height:10px;border-radius:50%;background:#22d3ee;box-shadow:0 0 6px #22d3ee"></span>Confirmado</span>
             </div>
           </div>
           <div id="d-cal" style="display:grid;grid-template-columns:64px repeat(5,minmax(0,1fr));gap:10px 6px;align-items:center"></div>
         </div>
 
         <div id="d-wa-box" hidden style="flex-direction:column;gap:20px">
-          <div class="pop" style="display:flex;gap:14px;padding:18px 20px;border-radius:20px 20px 20px 6px;background:rgba(74,222,128,.12);border:1px solid rgba(74,222,128,.5)">
+          <div class="pop" style="display:flex;gap:14px;padding:18px 20px;border-radius:20px 20px 20px 6px;background:rgba(74,222,128,.12);border:1px solid rgba(74,222,128,.5);box-shadow:0 0 30px rgba(74,222,128,.22)">
             <span style="width:40px;height:40px;flex-shrink:0;border-radius:50%;display:flex;align-items:center;justify-content:center;background:rgba(74,222,128,.2)"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#86efac" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11.5a8 8 0 0 1-11.6 7.1L4 20l1.4-4.2A8 8 0 1 1 20 11.5z"/></svg></span>
             <div style="display:flex;flex-direction:column;gap:6px;min-width:0">
               <div style="display:flex;gap:10px;align-items:baseline"><span style="font-weight:700;color:#bbf7d0">WhatsApp · Juturno</span><span class="note">ahora</span></div>
               <span id="d-wa" style="font-size:15px;line-height:1.5;color:#e6f9ec"></span>
             </div>
           </div>
-          <div class="pop" style="display:flex;align-items:center;gap:10px;padding:12px 16px;border-radius:14px;background:var(--surface);border:1px dashed rgba(255,255,255,.18);font-size:14px;color:var(--ink-muted);animation-delay:.25s">
+          <div class="pop" style="display:flex;align-items:center;gap:10px;padding:12px 16px;border-radius:14px;background:rgba(255,255,255,.04);border:1px dashed rgba(255,255,255,.18);font-size:14px;color:#b4b8c5;animation-delay:.25s">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#c084fc" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
             Recordatorio programado: le llega 24 h antes del turno.
           </div>
         </div>
-        <div id="d-hint-box" style="display:flex;align-items:center;gap:12px;padding:18px 20px;border-radius:18px;border:1px dashed rgba(255,255,255,.16);font-size:15px;line-height:1.5;color:var(--ink-faint)">
+        <div id="d-hint-box" style="display:flex;align-items:center;gap:12px;padding:18px 20px;border-radius:18px;border:1px dashed rgba(255,255,255,.16);font-size:15px;line-height:1.5;color:#a9aebb">
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#86efac" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex-shrink:0"><path d="M20 11.5a8 8 0 0 1-11.6 7.1L4 20l1.4-4.2A8 8 0 1 1 20 11.5z"/></svg>
           <span id="d-hint"></span>
         </div>
@@ -327,26 +342,27 @@ details.faq p{margin:0;padding:0 20px 18px;font-size:16px;line-height:1.6;color:
 
   <section id="beneficios" class="wrap sec" aria-labelledby="t-ben">
     <div class="sec-head">
+      <span class="eyebrow">Beneficios</span>
       <h2 id="t-ben" class="lp-h2">Dejá de perseguir turnos por chat</h2>
     </div>
     <div class="lp-benefits">
       <article class="card ben">
-        <span class="ben-ic"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#d8b4fe" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7 3v5c0 4.5-3 8.3-7 10-4-1.7-7-5.5-7-10V6z"/><path d="M9 12l2 2 4-4"/></svg></span>
+        <span class="ben-ic" style="background:rgba(168,85,247,.16);border:1px solid rgba(192,132,252,.4)"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#d8b4fe" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7 3v5c0 4.5-3 8.3-7 10-4-1.7-7-5.5-7-10V6z"/><path d="M9 12l2 2 4-4"/></svg></span>
         <h3>Menos ausencias</h3>
         <p>Pedir seña al reservar filtra a quien no piensa venir. El que paga, aparece.</p>
       </article>
       <article class="card ben">
-        <span class="ben-ic"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#86efac" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11.5a8 8 0 0 1-11.6 7.1L4 20l1.4-4.2A8 8 0 1 1 20 11.5z"/></svg></span>
+        <span class="ben-ic" style="background:rgba(74,222,128,.14);border:1px solid rgba(74,222,128,.4)"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#86efac" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11.5a8 8 0 0 1-11.6 7.1L4 20l1.4-4.2A8 8 0 1 1 20 11.5z"/></svg></span>
         <h3>WhatsApp automático</h3>
         <p>Confirmación al pagar y recordatorio 24 h antes, sin que escribas un solo mensaje.</p>
       </article>
       <article class="card ben">
-        <span class="ben-ic"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#a5f3fc" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span>
+        <span class="ben-ic" style="background:rgba(34,211,238,.14);border:1px solid rgba(103,232,249,.4)"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#a5f3fc" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span>
         <h3>Reservas 24/7</h3>
         <p>Tu propia página de turnos trabaja mientras dormís, sin turnos superpuestos.</p>
       </article>
       <article class="card ben">
-        <span class="ben-ic"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#f0abfc" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 9h18M9 9v11"/></svg></span>
+        <span class="ben-ic" style="background:rgba(217,70,239,.14);border:1px solid rgba(232,121,249,.4)"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#f0abfc" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 9h18M9 9v11"/></svg></span>
         <h3>Panel simple</h3>
         <p>Servicios, equipo, horarios y agenda en un solo lugar. Confirmás o cancelás en un clic.</p>
       </article>
@@ -356,6 +372,7 @@ details.faq p{margin:0;padding:0 20px 18px;font-size:16px;line-height:1.6;color:
   <div id="preguntas" class="wrap" style="padding-top:112px">
     <div class="lp-faq">
       <section aria-labelledby="t-trust" style="display:flex;flex-direction:column;gap:22px">
+        <span class="eyebrow">Confianza</span>
         <h2 id="t-trust" class="lp-h2" style="font-size:40px">Tu plata, en tu cuenta</h2>
         <div style="display:flex;flex-direction:column;gap:16px">
           <div class="check"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#67e8f9" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>La seña se acredita directo en tu cuenta de Mercado Pago. Juturno nunca toca ese dinero.</span></div>
@@ -376,9 +393,9 @@ details.faq p{margin:0;padding:0 20px 18px;font-size:16px;line-height:1.6;color:
   </div>
 
   <section class="wrap" aria-labelledby="t-cta" style="padding-top:112px">
-    <div style="position:relative;overflow:hidden;display:flex;flex-direction:column;align-items:center;gap:20px;padding:64px 24px;border-radius:28px;text-align:center;background:linear-gradient(135deg,rgba(168,85,247,.22),rgba(34,211,238,.12));border:1px solid rgba(255,255,255,.14)">
+    <div style="position:relative;overflow:hidden;display:flex;flex-direction:column;align-items:center;gap:20px;padding:64px 24px;border-radius:28px;text-align:center;background:linear-gradient(135deg,rgba(168,85,247,.22),rgba(34,211,238,.12));border:1px solid rgba(255,255,255,.14);box-shadow:0 0 60px rgba(168,85,247,.2)">
       <h2 id="t-cta" class="lp-h2" style="max-width:720px">Mirá cómo reservan tus clientes</h2>
-      <p class="lead" style="color:var(--ink-2);max-width:560px">Probá la demo en un minuto. Juturno está en beta abierta y por ahora no tiene costo.</p>
+      <p class="lead" style="color:#cfd3dd;max-width:560px">Probá la demo en un minuto. Juturno está en beta abierta y por ahora no tiene costo.</p>
       <div style="display:flex;flex-wrap:wrap;justify-content:center;gap:14px">
         <a class="lp-btn btn-grad" href="/register">Crear mi cuenta gratis</a>
         <a class="btn-ghost" href="#demo">Probar una reserva</a>
@@ -391,7 +408,7 @@ details.faq p{margin:0;padding:0 20px 18px;font-size:16px;line-height:1.6;color:
   <footer class="wrap foot" style="padding-top:64px;padding-bottom:40px;display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:20px;border-top:1px solid rgba(255,255,255,.08);margin-top:96px">
     <div style="display:flex;flex-direction:column;gap:6px">
       <span style="font-family:'Sora',sans-serif;font-size:19px;font-weight:700">Juturno</span>
-      <span style="font-size:14px;color:var(--ink-dim)">Turnos, señas y recordatorios en un solo lugar.</span>
+      <span style="font-size:14px;color:#9aa0ae">Turnos, señas y recordatorios en un solo lugar.</span>
     </div>
     <div style="display:flex;flex-wrap:wrap;gap:24px;font-size:14px">
       <a href="#como-funciona">Cómo funciona</a>
@@ -399,7 +416,7 @@ details.faq p{margin:0;padding:0 20px 18px;font-size:16px;line-height:1.6;color:
       <a href="#preguntas">Preguntas</a>
       <a href="/login">Ingresar</a>
     </div>
-    <span style="font-size:13px;color:var(--ink-dim);width:100%">© 2026 Juturno</span>
+    <span style="font-size:13px;color:#8f95a3;width:100%">© 2026 Juturno</span>
   </footer>
 </div>
 
@@ -472,7 +489,7 @@ details.faq p{margin:0;padding:0 20px 18px;font-size:16px;line-height:1.6;color:
   grid.forEach(function (v) {
     var s = el("span");
     s.style.cssText = "width:16px;height:16px;border-radius:50%;background:" +
-      (v === 2 ? "#22d3ee" : v ? "rgba(255,255,255,.28)" : "rgba(255,255,255,.1)");
+      (v === 2 ? "#22d3ee;box-shadow:0 0 10px 2px rgba(34,211,238,.8)" : v ? "rgba(255,255,255,.28)" : "rgba(255,255,255,.1)");
     $("step1-grid").appendChild(s);
   });
 
@@ -558,12 +575,12 @@ details.faq p{margin:0;padding:0 20px 18px;font-size:16px;line-height:1.6;color:
     cal.appendChild(el("span"));
     days.forEach(function (d) {
       var h = el("span", null, d.dow + " " + d.num);
-      h.style.cssText = "text-align:center;font-size:13px;color:var(--ink-2)";
+      h.style.cssText = "text-align:center;font-size:13px;color:#cfd3dd";
       cal.appendChild(h);
     });
     TIMES.forEach(function (t, ti) {
       var lab = el("span", null, t);
-      lab.style.cssText = "font-size:13px;color:var(--ink-faint)";
+      lab.style.cssText = "font-size:13px;color:#a9aebb";
       cal.appendChild(lab);
       days.forEach(function (d, di) {
         var mine = st.time !== null && di === st.day && ti === st.time;
