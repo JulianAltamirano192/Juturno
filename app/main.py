@@ -1,12 +1,15 @@
 # app/main.py
 import logging
+import mimetypes
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import sentry_sdk
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.httpx import HttpxIntegration
 from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
@@ -129,6 +132,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# The slim image has no /etc/mime.types, so .webp would be served as octet-stream.
+mimetypes.add_type("image/webp", ".webp")
+app.mount(
+    "/static",
+    StaticFiles(directory=Path(__file__).parent / "static"),
+    name="static",
+)
 app.include_router(public_router)
 app.include_router(auth_router)
 app.include_router(api_router)

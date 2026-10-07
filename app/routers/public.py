@@ -56,6 +56,11 @@ class PublicBookingResponse(BaseModel):
     payment_url: str
 
 
+@router.get("/", response_class=HTMLResponse, include_in_schema=False)
+async def landing_page(request: Request):
+    return templates.TemplateResponse(request, "landing.html")
+
+
 @router.get("/health")
 async def health(session: AsyncSession = Depends(get_db)):
     """Health check profundo: verifica API, DB y Redis."""
