@@ -1,52 +1,79 @@
 {% extends "base.html" %}
+{% import "_ui.html" as ui %}
 
 {% block title %}Crear cuenta de negocio - Juturno{% endblock %}
 
+{% block auth_chip %}<span class="chip-beta">Beta abierta · sin costo</span>{% endblock %}
 {% block auth_title %}Registrá tu negocio{% endblock %}
-{% block auth_sub %}Empezá a gestionar tus turnos y cobros de seña{% endblock %}
+{% block auth_sub %}Empezá a recibir turnos y cobrar señas online.{% endblock %}
+{% block auth_visual_title %}Creá tu cuenta, cargá tus servicios y compartí tu link.{% endblock %}
+{% block auth_visual_text %}Tus clientes eligen el horario, dejan la seña con Mercado Pago y les llega la confirmación por WhatsApp.{% endblock %}
 
 {% block auth_content %}
-<div class="card">
-  {% if error_message %}
-  <div class="banner-danger">{{ error_message }}</div>
-  {% endif %}
+{% if error_message %}
+<div class="banner banner-danger" role="alert">{{ ui.icon('alerta') }}<span>{{ error_message }}</span></div>
+{% endif %}
 
-  <form method="POST" action="/register">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+<form method="POST" action="/register">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
-    <div class="field">
-      <label for="name">Nombre del negocio *</label>
-      <input type="text" id="name" name="name" required placeholder="Ej: Mi Negocio" value="{{ form_data.name if form_data else '' }}">
+  <div class="field">
+    <label for="name">Nombre del negocio</label>
+    <input type="text" id="name" name="name" required placeholder="Ej: Mi Negocio" value="{{ form_data.name if form_data else '' }}">
+  </div>
+
+  <div class="field">
+    <label for="owner_email">Correo electrónico</label>
+    <input type="email" id="owner_email" name="owner_email" required inputmode="email" autocomplete="email" placeholder="dueno@ejemplo.com" value="{{ form_data.owner_email if form_data else '' }}">
+  </div>
+
+  <div class="field">
+    <label for="password">Contraseña</label>
+    <input type="password" id="password" name="password" required minlength="8" autocomplete="new-password" placeholder="••••••••" aria-describedby="pw-rule">
+    <p class="field-hint" id="pw-rule">Mínimo 8 caracteres</p>
+  </div>
+
+  <div class="field">
+    <label for="whatsapp_number">WhatsApp del negocio <span class="opt">(opcional)</span></label>
+    <p class="field-desc">Para coordinar con tus clientes.</p>
+    <input type="tel" id="whatsapp_number" name="whatsapp_number" inputmode="tel" autocomplete="tel" placeholder="Ej: 11 5555 5555" value="{{ form_data.whatsapp_number if form_data else '' }}">
+  </div>
+
+  <div class="field">
+    <label for="slug">Tu link de reservas <span class="opt">(opcional)</span></label>
+    <p class="field-desc">Se completa con el nombre del negocio. Podés cambiarlo.</p>
+    <div class="input-group">
+      <span>juturno.com/t/</span>
+      <input type="text" id="slug" name="slug" placeholder="mi-negocio" value="{{ form_data.slug if form_data else '' }}" autocapitalize="off" spellcheck="false">
     </div>
+  </div>
 
-    <div class="field">
-      <label for="owner_email">Correo electrónico del dueño *</label>
-      <input type="email" id="owner_email" name="owner_email" required placeholder="dueno@ejemplo.com" value="{{ form_data.owner_email if form_data else '' }}">
-    </div>
-
-    <div class="field">
-      <label for="password">Contraseña *</label>
-      <div class="field-desc">Mínimo 8 caracteres</div>
-      <input type="password" id="password" name="password" required minlength="8" placeholder="••••••••">
-    </div>
-
-    <div class="field">
-      <label for="whatsapp_number">Teléfono / WhatsApp de contacto</label>
-      <div class="field-desc">Para coordinar con clientes y notificaciones</div>
-      <input type="tel" id="whatsapp_number" name="whatsapp_number" placeholder="Ej: 11 5555 5555" value="{{ form_data.whatsapp_number if form_data else '' }}">
-    </div>
-
-    <div class="field">
-      <label for="slug">Identificador del link (opcional)</label>
-      <div class="field-desc">juturno.com/t/<span style="color:var(--primary)">identificador</span> (se autogenera si lo dejás vacío)</div>
-      <input type="text" id="slug" name="slug" placeholder="mi-negocio" value="{{ form_data.slug if form_data else '' }}">
-    </div>
-
-    <button type="submit" class="btn-submit">Crear cuenta</button>
-  </form>
-</div>
+  <button type="submit" class="btn-p block">Crear cuenta</button>
+</form>
 
 <div class="footer-links">
   ¿Ya tenés una cuenta? <a href="/login">Iniciar sesión</a>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // Mismas reglas que app/slug.py: sin acentos, minúsculas, a-z0-9 separados por guiones.
+  const slugify = (s) => s.normalize("NFKD").replace(/[̀-ͯ]/g, "")
+    .toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  const nameInput = document.getElementById("name");
+  const slugInput = document.getElementById("slug");
+  let slugTouched = slugInput.value.trim() !== "";
+  slugInput.addEventListener("input", () => { slugTouched = true; });
+  slugInput.addEventListener("blur", () => { slugInput.value = slugify(slugInput.value); });
+  nameInput.addEventListener("input", () => {
+    if (!slugTouched) slugInput.value = slugify(nameInput.value);
+  });
+
+  const pw = document.getElementById("password");
+  const rule = document.getElementById("pw-rule");
+  pw.addEventListener("input", () => {
+    rule.style.color = pw.value.length >= 8 ? "#86efac" : "";
+  });
+</script>
 {% endblock %}

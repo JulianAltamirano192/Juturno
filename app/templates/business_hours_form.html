@@ -1,69 +1,102 @@
 {% extends "base.html" %}
+{% import "_ui.html" as ui %}
 
 {% block title %}{% if bh %}Editar horario{% else %}Nuevo horario{% endif %} - {{ tenant.name }}{% endblock %}
 
-{% block dash_content %}
+{% block head %}
 <style>
-  .back-link{display:inline-flex;align-items:center;gap:6px;color:var(--muted);font-size:.88rem;font-weight:600;text-decoration:none;margin-bottom:20px}
-  .back-link:hover{color:var(--text)}
-  .field-error{font-size:.78rem;color:var(--danger);margin-top:4px;font-weight:600}
-  .field-hint{font-size:.78rem;color:var(--muted);margin-top:4px}
-  input.has-error{border-color:var(--danger)}
-  select.has-error{border-color:var(--danger)}
-  .time-inputs{display:flex;gap:12px;align-items:center}
-  .time-inputs > div{flex:1}
-  .error-banner{background:var(--danger-bg);border:1px solid var(--danger);color:var(--danger);padding:12px 16px;border-radius:8px;margin-bottom:16px;font-size:.85rem}
+  .hours-form{max-width:640px}
+  .days{display:flex;gap:6px;flex-wrap:wrap;border:0}
+  .days legend{font-size:14px;font-weight:600;color:#e3e5ec;margin-bottom:8px}
+  .days input{position:absolute;opacity:0;width:1px;height:1px}
+  .days label{display:inline-flex;align-items:center;justify-content:center;min-width:52px;min-height:48px;margin:0;padding:0 10px;border-radius:12px;border:1px solid var(--border-2);background:var(--surface);color:var(--text-2);font-size:14px;font-weight:600;cursor:pointer}
+  .days input:checked + label{border-color:var(--cyan);background:rgba(34,211,238,.16);color:#fff;box-shadow:0 0 12px rgba(34,211,238,.35)}
+  .days input:focus-visible + label{outline:2px solid var(--cyan-l);outline-offset:2px}
+  .times{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+  .pv{display:flex;flex-direction:column;gap:8px;margin:4px 0 18px;padding:16px;border-radius:16px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08)}
+  .pv > span{font-size:13px;font-weight:600;color:var(--muted)}
+  .pv-bar{position:relative;height:14px;border-radius:7px;background:rgba(255,255,255,.06)}
+  .pv-bar span{position:absolute;top:-3px;bottom:-3px;border-radius:9px;background:linear-gradient(90deg,var(--purple),var(--cyan));box-shadow:0 0 12px rgba(34,211,238,.5)}
+  .pv-bar span.bad{background:#f87171;box-shadow:0 0 12px rgba(248,113,113,.5)}
+  .pv-scale{display:flex;justify-content:space-between;font-size:11px;color:#8f95a3}
+  @media (max-width:900px){
+    .days{flex-wrap:nowrap;gap:4px}
+    .days label{flex:1 1 0;min-width:0;padding:0;font-size:13px}
+    .times input{height:56px;font-size:18px}
+    .form-actions .btn-p{width:100%;min-height:54px}
+  }
 </style>
+{% endblock %}
 
-<a href="/panel/horarios" class="back-link">← Volver a horarios</a>
+{% block dash_content %}
+{% set day_labels = [('Lunes', 'Lun'), ('Martes', 'Mar'), ('Miércoles', 'Mié'), ('Jueves', 'Jue'), ('Viernes', 'Vie'), ('Sábado', 'Sáb'), ('Domingo', 'Dom')] %}
+{% set selected_day = form.get('day_of_week', '0')|string %}
+<a href="/panel/horarios" class="back-link">{{ ui.icon('izq') }}Volver a horarios</a>
+<div class="ph"><h1>{% if bh %}Editar horario{% else %}Nuevo horario{% endif %}</h1></div>
 
-<div class="card">
-  <h1>{% if bh %}Editar horario{% else %}Nuevo horario{% endif %}</h1>
+<form method="POST" action="{% if bh %}/panel/horarios/{{ bh.id }}/edit{% else %}/panel/horarios/new{% endif %}" class="form-card hours-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
   {% if form_errors %}
-  <div class="error-banner">
-    <strong>Error:</strong> {% for err in form_errors %}{{ err }}{% if not loop.last %}<br>{% endif %}{% endfor %}
+  <div class="banner banner-danger" role="alert">{{ ui.icon('alerta') }}
+    <span>{% for err in form_errors %}{{ err }}{% if not loop.last %}<br>{% endif %}{% endfor %}</span>
   </div>
   {% endif %}
 
-  <form method="POST" action="{% if bh %}/panel/horarios/{{ bh.id }}/edit{% else %}/panel/horarios/new{% endif %}" style="margin-top:24px">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <fieldset class="field days">
+    <legend>Día de la semana</legend>
+    {% for full, short in day_labels %}
+    <input type="radio" id="day-{{ loop.index0 }}" name="day_of_week" value="{{ loop.index0 }}"{% if selected_day == loop.index0|string %} checked{% endif %}>
+    <label for="day-{{ loop.index0 }}" title="{{ full }}"><span aria-hidden="true">{{ short }}</span><span class="sr-only">{{ full }}</span></label>
+    {% endfor %}
+  </fieldset>
+  {% if errors.day_of_week %}<div class="field-error" style="margin:-10px 0 14px">{{ errors.day_of_week }}</div>{% endif %}
 
-    <div class="field">
-      <label for="day_of_week">Día de la semana</label>
-      <select id="day_of_week" name="day_of_week" class="{% if errors.day_of_week %}has-error{% endif %}">
-        <option value="0" {% if form.get('day_of_week') == '0' %}selected{% endif %}>Lunes</option>
-        <option value="1" {% if form.get('day_of_week') == '1' %}selected{% endif %}>Martes</option>
-        <option value="2" {% if form.get('day_of_week') == '2' %}selected{% endif %}>Miércoles</option>
-        <option value="3" {% if form.get('day_of_week') == '3' %}selected{% endif %}>Jueves</option>
-        <option value="4" {% if form.get('day_of_week') == '4' %}selected{% endif %}>Viernes</option>
-        <option value="5" {% if form.get('day_of_week') == '5' %}selected{% endif %}>Sábado</option>
-        <option value="6" {% if form.get('day_of_week') == '6' %}selected{% endif %}>Domingo</option>
-      </select>
-      {% if errors.day_of_week %}<div class="field-error">{{ errors.day_of_week }}</div>{% endif %}
+  <div class="field times">
+    <div>
+      <label for="start_time">Apertura</label>
+      <input type="time" id="start_time" name="start_time" value="{{ form.get('start_time', '') }}" class="{% if errors.start_time or errors.order or errors.overlap %}has-error{% endif %}">
     </div>
-
-    <div class="field">
-      <label>Horario</label>
-      <div class="time-inputs">
-        <div>
-          <label for="start_time">Apertura</label>
-          <input type="time" id="start_time" name="start_time" value="{{ form.get('start_time', '') }}" class="{% if errors.start_time %}has-error{% endif %}">
-        </div>
-        <div style="color:var(--muted);font-size:1.2rem;font-weight:700">–</div>
-        <div>
-          <label for="end_time">Cierre</label>
-          <input type="time" id="end_time" name="end_time" value="{{ form.get('end_time', '') }}" class="{% if errors.end_time %}has-error{% endif %}">
-        </div>
-      </div>
-      {% if errors.start_time %}<div class="field-error">{{ errors.start_time }}</div>{% endif %}
-      {% if errors.end_time %}<div class="field-error">{{ errors.end_time }}</div>{% endif %}
-      {% if errors.overlap %}<div class="field-error">{{ errors.overlap }}</div>{% endif %}
-      {% if errors.order %}<div class="field-error">{{ errors.order }}</div>{% endif %}
-      <div class="field-hint">El horario de apertura debe ser anterior al de cierre. No pueden superponerse horarios en el mismo día.</div>
+    <div>
+      <label for="end_time">Cierre</label>
+      <input type="time" id="end_time" name="end_time" value="{{ form.get('end_time', '') }}" class="{% if errors.end_time or errors.order or errors.overlap %}has-error{% endif %}">
     </div>
+  </div>
+  {% if errors.start_time %}<div class="field-error">{{ errors.start_time }}</div>{% endif %}
+  {% if errors.end_time %}<div class="field-error">{{ errors.end_time }}</div>{% endif %}
+  {% if errors.overlap %}<div class="field-error">{{ errors.overlap }}</div>{% endif %}
+  {% if errors.order %}<div class="field-error">{{ errors.order }}</div>{% endif %}
 
-    <button type="submit" class="btn-submit">{% if bh %}Guardar cambios{% else %}Crear horario{% endif %}</button>
-  </form>
-</div>
+  <div class="pv" aria-hidden="true">
+    <span>Así queda la franja</span>
+    <div class="pv-bar"><span id="pv-range" style="left:0;width:0"></span></div>
+    <div class="pv-scale"><span>06</span><span>10</span><span>14</span><span>18</span><span>22</span></div>
+  </div>
+  <p class="field-hint" style="margin:-6px 0 18px">La apertura tiene que ser antes del cierre y no se puede pisar con otro horario del mismo día.</p>
+
+  <div class="form-actions">
+    <button type="submit" class="btn-p">{% if bh %}Guardar cambios{% else %}Crear horario{% endif %}</button>
+  </div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const start = document.getElementById("start_time");
+  const end = document.getElementById("end_time");
+  const bar = document.getElementById("pv-range");
+  const toH = (v) => { const [h, m] = (v || "").split(":").map(Number); return isNaN(h) ? null : h + (m || 0) / 60; };
+  const pct = (h) => Math.max(0, Math.min(100, (h - 6) / 16 * 100));
+  function update() {
+    const s = toH(start.value), e = toH(end.value);
+    if (s === null || e === null) { bar.style.width = "0"; return; }
+    const ok = s < e;
+    bar.classList.toggle("bad", !ok);
+    bar.style.left = pct(Math.min(s, e)) + "%";
+    bar.style.width = Math.max(pct(Math.max(s, e)) - pct(Math.min(s, e)), 1) + "%";
+  }
+  start.addEventListener("input", update);
+  end.addEventListener("input", update);
+  update();
+</script>
 {% endblock %}

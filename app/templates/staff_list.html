@@ -1,77 +1,70 @@
 {% extends "base.html" %}
+{% import "_ui.html" as ui %}
 
 {% block title %}Personal - {{ tenant.name }}{% endblock %}
 
-{% block dash_content %}
+{% block head %}
 <style>
-  .section-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px}
-  .btn-primary{background:var(--primary);color:#fff;border:none;border-radius:10px;padding:10px 18px;font-size:.9rem;font-weight:700;cursor:pointer;text-decoration:none;font-family:inherit;display:inline-block}
-  .btn-primary:hover{background:var(--primary-dark)}
-  table{width:100%;border-collapse:collapse;font-size:.92rem}
-  th{text-align:left;padding:10px 12px;font-size:.78rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;border-bottom:2px solid var(--border)}
-  td{padding:12px;border-bottom:1px solid var(--border);vertical-align:middle}
-  tr:last-child td{border-bottom:none}
-  .badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:.75rem;font-weight:700}
-  .badge-active{background:var(--ok-bg);color:var(--ok)}
-  .badge-inactive{background:#f1f5f9;color:var(--muted)}
-  .actions{display:flex;gap:8px;flex-wrap:wrap}
-  .btn-sm{padding:6px 12px;border-radius:8px;font-size:.8rem;font-weight:600;cursor:pointer;text-decoration:none;display:inline-block;font-family:inherit}
-  .btn-outline{background:none;border:1px solid var(--border);color:var(--text)}
-  .btn-outline:hover{background:#f8fafc}
-  .btn-toggle-off{background:none;border:1px solid var(--border);color:var(--muted)}
-  .btn-toggle-off:hover{background:var(--danger-bg);border-color:var(--danger);color:var(--danger)}
-  .btn-toggle-on{background:none;border:1px solid var(--border);color:var(--muted)}
-  .btn-toggle-on:hover{background:var(--ok-bg);border-color:var(--ok);color:var(--ok)}
-  .empty-state{text-align:center;padding:48px 0;color:var(--muted)}
+  .pgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+  .pc{display:flex;flex-direction:column;gap:16px;padding:20px;border-radius:20px;background:var(--surface);border:1px solid rgba(255,255,255,.09)}
+  .pc.off{opacity:.55}
+  .pc-top{display:flex;align-items:center;gap:14px;min-width:0}
+  .pc-top .avatar{width:52px;height:52px;font-size:18px}
+  .pc.off .avatar{background:linear-gradient(135deg,#6b7280,#374151)}
+  .pc-top div{display:flex;flex-direction:column;gap:3px;min-width:0}
+  .pc-top strong{font-size:16px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pc-state{font-size:13px;color:var(--green)}
+  .pc.off .pc-state{color:var(--muted-2)}
+  .pc-bottom{display:flex;justify-content:space-between;align-items:center;gap:10px}
+  .pc-bottom .sw-form span{font-size:14px;color:var(--text-2)}
+  @media (max-width:1100px){.pgrid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+  @media (max-width:900px){
+    .pgrid{grid-template-columns:minmax(0,1fr);gap:10px}
+    .pc{flex-direction:row;align-items:center;justify-content:space-between;padding:12px 14px;border-radius:16px}
+    .pc-top .avatar{width:46px;height:46px;font-size:16px}
+    .pc-bottom .sw-form span{display:none}
+    .pc-bottom .btn-sm{min-height:44px}
+  }
 </style>
+{% endblock %}
 
-<div class="card">
-  <div class="section-header">
+{% block dash_content %}
+<div class="ph">
+  <div>
     <h1>Personal</h1>
-    <a href="/panel/staff/new" class="btn-primary">+ Nuevo miembro</a>
+    <p>Las personas que atienden en tu negocio.</p>
   </div>
-
-  {% if staff_members %}
-  <table>
-    <thead>
-      <tr>
-        <th>Nombre</th>
-        <th>Estado</th>
-        <th>Acciones</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for member in staff_members %}
-      <tr>
-        <td><strong>{{ member.name }}</strong></td>
-        <td>
-          {% if member.is_active %}
-          <span class="badge badge-active">Activo</span>
-          {% else %}
-          <span class="badge badge-inactive">Inactivo</span>
-          {% endif %}
-        </td>
-        <td>
-          <div class="actions">
-            <a href="/panel/staff/{{ member.id }}/edit" class="btn-sm btn-outline">Editar</a>
-            <form method="POST" action="/panel/staff/{{ member.id }}/toggle" style="margin:0">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-              {% if member.is_active %}
-              <button type="submit" class="btn-sm btn-toggle-off">Desactivar</button>
-              {% else %}
-              <button type="submit" class="btn-sm btn-toggle-on">Activar</button>
-              {% endif %}
-            </form>
-          </div>
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% else %}
-  <div class="empty-state">
-    <p>Todavía no hay personal. <a href="/panel/staff/new" style="color:var(--primary);font-weight:600">Agregá el primero.</a></p>
-  </div>
-  {% endif %}
+  <a href="/panel/staff/new" class="btn-p fab" aria-label="Nuevo miembro">{{ ui.icon('mas') }}<span class="fab-label">Nuevo miembro</span></a>
 </div>
+
+{% if staff_members %}
+<div class="pgrid">
+  {% for member in staff_members %}
+  {% set initials = member.name.split()|map('first')|join('')|upper %}
+  <div class="pc{% if not member.is_active %} off{% endif %}">
+    <div class="pc-top">
+      <span class="avatar round" aria-hidden="true">{{ initials[:2] }}</span>
+      <div>
+        <strong>{{ member.name }}</strong>
+        <span class="pc-state">{% if member.is_active %}Atiende turnos{% else %}Inactivo{% endif %}</span>
+      </div>
+    </div>
+    <div class="pc-bottom">
+      <form method="POST" action="/panel/staff/{{ member.id }}/toggle" class="sw-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit" class="sw{% if member.is_active %} on{% endif %}" role="switch" aria-checked="{{ 'true' if member.is_active else 'false' }}" aria-label="{{ 'Desactivar a' if member.is_active else 'Activar a' }} {{ member.name }}"></button>
+        <span aria-hidden="true">Activo</span>
+      </form>
+      <a href="/panel/staff/{{ member.id }}/edit" class="btn-sm">Editar</a>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="empty-state">
+  <h2>Todavía no hay personal</h2>
+  <p>Sumá a las personas que atienden en tu negocio.</p>
+  <a href="/panel/staff/new" class="btn-p">{{ ui.icon('mas') }}Agregá el primero</a>
+</div>
+{% endif %}
 {% endblock %}

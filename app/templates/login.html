@@ -1,39 +1,53 @@
 {% extends "base.html" %}
+{% import "_ui.html" as ui %}
 
 {% block title %}Iniciar sesión - Juturno{% endblock %}
 
 {% block auth_title %}Iniciar sesión{% endblock %}
-{% block auth_sub %}Accedé al panel de control de tu negocio{% endblock %}
+{% block auth_sub %}Accedé al panel de tu negocio.{% endblock %}
 
 {% block auth_content %}
-<div class="card">
-  {% if info_message %}
-  <div class="banner-ok">{{ info_message }}</div>
-  {% endif %}
+{% if info_message %}
+<div class="banner banner-ok" role="status">{{ ui.icon('check') }}<span>{{ info_message }}</span></div>
+{% endif %}
+{% if error_message %}
+<div class="banner banner-danger" role="alert">{{ ui.icon('alerta') }}<span>{{ error_message }}</span></div>
+{% endif %}
 
-  {% if error_message %}
-  <div class="banner-danger">{{ error_message }}</div>
-  {% endif %}
+<form method="POST" action="/login">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="next" value="{{ next_url or '/dashboard' }}">
 
-  <form method="POST" action="/login">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <input type="hidden" name="next" value="{{ next_url or '/dashboard' }}">
+  <div class="field">
+    <label for="owner_email">Correo electrónico</label>
+    <input type="email" id="owner_email" name="owner_email" required inputmode="email" autocomplete="email" placeholder="dueno@ejemplo.com" value="{{ owner_email or '' }}" autofocus>
+  </div>
 
-    <div class="field">
-      <label for="owner_email">Correo electrónico</label>
-      <input type="email" id="owner_email" name="owner_email" required placeholder="dueno@ejemplo.com" value="{{ owner_email or '' }}" autofocus>
+  <div class="field">
+    <label for="password">Contraseña</label>
+    <div class="pw-wrap">
+      <input type="password" id="password" name="password" required autocomplete="current-password" placeholder="••••••••">
+      <button type="button" class="pw-toggle" data-pw-toggle="password" aria-label="Mostrar contraseña">{{ ui.icon('ojo') }}</button>
     </div>
+  </div>
 
-    <div class="field">
-      <label for="password">Contraseña</label>
-      <input type="password" id="password" name="password" required placeholder="••••••••">
-    </div>
-
-    <button type="submit" class="btn-submit">Ingresar al panel</button>
-  </form>
-</div>
+  <button type="submit" class="btn-p block">Ingresar al panel</button>
+</form>
 
 <div class="footer-links">
   ¿No tenés una cuenta? <a href="/register">Registrá tu negocio</a>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  document.querySelectorAll("[data-pw-toggle]").forEach((btn) => {
+    const input = document.getElementById(btn.dataset.pwToggle);
+    btn.addEventListener("click", () => {
+      const show = input.type === "password";
+      input.type = show ? "text" : "password";
+      btn.setAttribute("aria-label", show ? "Ocultar contraseña" : "Mostrar contraseña");
+    });
+  });
+</script>
 {% endblock %}

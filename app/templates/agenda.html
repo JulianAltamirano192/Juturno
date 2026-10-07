@@ -1,120 +1,130 @@
 {% extends "base.html" %}
+{% import "_ui.html" as ui %}
 
 {% block title %}Agenda - {{ tenant.name }}{% endblock %}
 
-{% block dash_content %}
+{% block head %}
 <style>
-  .agenda-nav{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:20px}
-  .agenda-nav a{padding:8px 14px;border:1px solid var(--border);border-radius:8px;font-size:.85rem;font-weight:600;color:var(--text);text-decoration:none;white-space:nowrap}
-  .agenda-nav a:hover{background:#f8fafc}
-  .agenda-date{font-size:1.05rem;font-weight:800;text-align:center;flex:1;text-transform:capitalize}
-  .btn-today{background:var(--primary-bg);color:var(--primary);border-color:transparent!important}
-  table{width:100%;border-collapse:collapse;font-size:.92rem}
-  th{text-align:left;padding:10px 12px;font-size:.78rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;border-bottom:2px solid var(--border)}
-  td{padding:12px;border-bottom:1px solid var(--border);vertical-align:middle}
-  tr:last-child td{border-bottom:none}
-  .time-cell{font-family:monospace;font-size:.9rem;white-space:nowrap}
-  .client-cell strong{display:block}
-  .client-cell small{color:var(--muted);font-size:.8rem}
-  .badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:.75rem;font-weight:700;white-space:nowrap}
-  .badge-confirmed{background:var(--ok-bg);color:var(--ok)}
-  .badge-pending{background:#fffbeb;color:#b45309}
-  .badge-expired{background:#f1f5f9;color:var(--muted)}
-  .badge-cancelled{background:var(--danger-bg);color:var(--danger)}
-  .badge-no_show{background:#fef2f2;color:#b91c1c}
-  .badge-completed{background:#dbeafe;color:#1e40af}
-  .actions-cell{display:flex;gap:6px;flex-wrap:wrap}
-  .inline-form{display:inline}
-  .btn-action{padding:5px 10px;border-radius:6px;font-size:.75rem;font-weight:600;border:1px solid var(--border);background:#fff;color:var(--text);cursor:pointer;white-space:nowrap}
-  .btn-action:hover{background:#f8fafc}
-  .btn-action-confirm{color:#065f46;border-color:#a7f3d0}
-  .btn-action-confirm:hover{background:#ecfdf5}
-  .btn-action-ok{color:#1e40af;border-color:#bfdbfe}
-  .btn-action-ok:hover{background:#eff6ff}
-  .btn-action-warn{color:#b45309;border-color:#fde68a}
-  .btn-action-warn:hover{background:#fffbeb}
-  .btn-action-danger{color:var(--danger);border-color:#fecaca}
-  .btn-action-danger:hover{background:var(--danger-bg)}
-  .empty-state{text-align:center;padding:48px 0;color:var(--muted)}
+  .day-nav{display:flex;align-items:center;gap:8px}
+  .day-nav .dn-label{display:flex;flex-direction:column;align-items:center;min-width:220px;padding:0 8px;text-align:center}
+  .day-nav .dn-label strong{font-family:var(--font-display);font-size:16px}
+  .day-nav .dn-label span{font-size:12px;color:var(--cyan-l)}
+  .ag-list{display:flex;flex-direction:column;gap:10px}
+  .ag-row{display:grid;grid-template-columns:96px minmax(0,1.2fr) minmax(0,1fr) 170px 300px;gap:16px;align-items:center;padding:16px 18px;border-radius:16px;background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.08)}
+  .ag-row.dim{opacity:.6}
+  .ag-time{display:flex;flex-direction:column}
+  .ag-time strong{font-family:var(--font-display);font-size:17px}
+  .ag-time span{font-size:13px;color:var(--muted-2)}
+  .ag-who{display:flex;flex-direction:column;gap:3px;min-width:0}
+  .ag-who strong{font-size:15px}
+  .ag-who a{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--green)}
+  .ag-who a svg{width:14px;height:14px}
+  .ag-svc{font-size:14px;color:var(--text-2)}
+  .ag-actions{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end}
+  .ag-actions form{margin:0}
+  @media (max-width:1240px){
+    .ag-row{grid-template-columns:96px minmax(0,1fr) 170px}
+    .ag-svc{display:none}
+    .ag-actions{grid-column:1 / -1}
+  }
+  @media (max-width:900px){
+    .ph{flex-direction:column;align-items:stretch;flex-wrap:wrap}
+    .day-nav{justify-content:space-between}
+    .day-nav .dn-label{min-width:0;flex-grow:1}
+    .day-nav .icon-btn{width:44px}
+    .day-nav .today{display:none}
+    .ag-row{grid-template-columns:52px minmax(0,1fr);gap:4px 12px;padding:14px}
+    .ag-row .ag-time{grid-row:span 2}
+    .ag-time strong{font-size:16px}
+    .ag-svc{display:block;grid-column:2;font-size:13px;color:var(--muted)}
+    .ag-badge{grid-column:2;margin-top:6px}
+    .ag-actions{grid-column:1 / -1;justify-content:stretch;margin-top:10px}
+    .ag-actions form{flex:1 1 0}
+    .ag-actions .btn-sm{width:100%;min-height:44px}
+  }
 </style>
+{% endblock %}
 
-<div class="card">
-  <div class="agenda-nav">
-    <a href="/panel/agenda?day={{ prev_day }}">← Anterior</a>
-    <span class="agenda-date">{{ day_label }}</span>
-    <div style="display:flex;gap:8px">
-      {% if not is_today %}
-      <a href="/panel/agenda" class="btn-today">Hoy</a>
+{% block dash_content %}
+{% set active_items = agenda_items|rejectattr("status", "in", ["cancelled", "expired"])|list %}
+<div class="ph">
+  <div>
+    <h1>Agenda</h1>
+    <p>Confirmá, completá o cancelá los turnos del día.</p>
+  </div>
+  <div class="day-nav">
+    <a class="icon-btn" href="/panel/agenda?day={{ prev_day }}" aria-label="Día anterior">{{ ui.icon('izq') }}</a>
+    <div class="dn-label">
+      <strong>{{ day_label }}</strong>
+      {% if is_today %}<span>Hoy · {{ active_items|length }} turnos</span>{% else %}<span>{{ active_items|length }} turnos</span>{% endif %}
+    </div>
+    <a class="icon-btn" href="/panel/agenda?day={{ next_day }}" aria-label="Día siguiente">{{ ui.icon('der') }}</a>
+    {% if not is_today %}<a class="btn-sm today" href="/panel/agenda">Hoy</a>{% endif %}
+  </div>
+</div>
+
+{% if agenda_items %}
+<div class="stats">
+  <div class="stat"><span>Turnos del día</span><strong>{{ active_items|length }}</strong></div>
+  <div class="stat cy"><span>Confirmados</span><strong>{{ agenda_items|selectattr("status", "equalto", "confirmed")|list|length }}</strong></div>
+  <div class="stat pu"><span>Pendientes de pago</span><strong>{{ agenda_items|selectattr("status", "equalto", "pending")|list|length }}</strong></div>
+  <div class="stat gr"><span>Completados</span><strong>{{ agenda_items|selectattr("status", "equalto", "completed")|list|length }}</strong></div>
+</div>
+
+<div class="ag-list">
+  {% for item in agenda_items %}
+  <div class="ag-row{% if item.status in ['cancelled', 'expired'] %} dim{% endif %}">
+    <div class="ag-time"><strong>{{ item.start_local }}</strong><span>hasta {{ item.end_local }}</span></div>
+    <div class="ag-who">
+      <strong>{{ item.client_name }}</strong>
+      <a href="https://wa.me/{{ item.client_phone }}" target="_blank" rel="noopener" aria-label="Escribirle a {{ item.client_name }} por WhatsApp">{{ ui.icon('whatsapp') }}{{ item.client_phone }}</a>
+    </div>
+    <span class="ag-svc">{{ item.service_name }}</span>
+    <span class="ag-badge"><span class="badge badge-{{ item.status }}">{{ item.status_label }}</span></span>
+    <div class="ag-actions">
+      {% if item.status == 'pending' %}
+        <form method="POST" action="/panel/agenda/{{ item.booking_id }}/confirm">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="day" value="{{ target_day.isoformat() }}">
+          <button type="submit" class="btn-sm ok">Confirmar</button>
+        </form>
+        <form method="POST" action="/panel/agenda/{{ item.booking_id }}/cancel"
+              onsubmit="this.reason.value = prompt('Motivo de cancelación (opcional):') || '';">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="day" value="{{ target_day.isoformat() }}">
+          <input type="hidden" name="reason" value="">
+          <button type="submit" class="btn-sm danger">Cancelar</button>
+        </form>
+      {% elif item.status == 'confirmed' %}
+        <form method="POST" action="/panel/agenda/{{ item.booking_id }}/complete"
+              onsubmit="return confirm('¿Marcar este turno como completado?');">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="day" value="{{ target_day.isoformat() }}">
+          <button type="submit" class="btn-sm done">Completar</button>
+        </form>
+        <form method="POST" action="/panel/agenda/{{ item.booking_id }}/no-show"
+              onsubmit="return confirm('¿Marcar que el cliente no vino?');">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="day" value="{{ target_day.isoformat() }}">
+          <button type="submit" class="btn-sm warn">No vino</button>
+        </form>
+        <form method="POST" action="/panel/agenda/{{ item.booking_id }}/cancel"
+              onsubmit="this.reason.value = prompt('Motivo de cancelación (opcional):') || '';">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="day" value="{{ target_day.isoformat() }}">
+          <input type="hidden" name="reason" value="">
+          <button type="submit" class="btn-sm danger">Cancelar</button>
+        </form>
       {% endif %}
-      <a href="/panel/agenda?day={{ next_day }}">Siguiente →</a>
     </div>
   </div>
-
-  {% if agenda_items %}
-  <table>
-    <thead>
-      <tr>
-        <th>Horario</th>
-        <th>Cliente</th>
-        <th>Servicio</th>
-        <th>Estado</th>
-        <th>Acciones</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for item in agenda_items %}
-      <tr>
-        <td class="time-cell">{{ item.start_local }}–{{ item.end_local }}</td>
-        <td class="client-cell">
-          <strong>{{ item.client_name }}</strong>
-          <small>{{ item.client_phone }}</small>
-        </td>
-        <td>{{ item.service_name }}</td>
-        <td><span class="badge badge-{{ item.status }}">{{ item.status_label }}</span></td>
-        <td class="actions-cell">
-          {% if item.status == 'pending' %}
-            <form method="POST" action="/panel/agenda/{{ item.booking_id }}/confirm" class="inline-form">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-              <input type="hidden" name="day" value="{{ target_day.isoformat() }}">
-              <button type="submit" class="btn-action btn-action-confirm">Confirmar</button>
-            </form>
-            <form method="POST" action="/panel/agenda/{{ item.booking_id }}/cancel" class="inline-form"
-                  onsubmit="this.reason.value = prompt('Motivo de cancelación (opcional):') || '';">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-              <input type="hidden" name="day" value="{{ target_day.isoformat() }}">
-              <input type="hidden" name="reason" value="">
-              <button type="submit" class="btn-action btn-action-danger">Cancelar</button>
-            </form>
-          {% elif item.status == 'confirmed' %}
-            <form method="POST" action="/panel/agenda/{{ item.booking_id }}/complete" class="inline-form"
-                  onsubmit="return confirm('¿Marcar este turno como completado?');">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-              <input type="hidden" name="day" value="{{ target_day.isoformat() }}">
-              <button type="submit" class="btn-action btn-action-ok">Completar</button>
-            </form>
-            <form method="POST" action="/panel/agenda/{{ item.booking_id }}/no-show" class="inline-form"
-                  onsubmit="return confirm('¿Marcar como no-show? El cliente no se presentó.');">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-              <input type="hidden" name="day" value="{{ target_day.isoformat() }}">
-              <button type="submit" class="btn-action btn-action-warn">No-show</button>
-            </form>
-            <form method="POST" action="/panel/agenda/{{ item.booking_id }}/cancel" class="inline-form"
-                  onsubmit="this.reason.value = prompt('Motivo de cancelación (opcional):') || '';">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-              <input type="hidden" name="day" value="{{ target_day.isoformat() }}">
-              <input type="hidden" name="reason" value="">
-              <button type="submit" class="btn-action btn-action-danger">Cancelar</button>
-            </form>
-          {% endif %}
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% else %}
-  <div class="empty-state">
-    <p>No hay turnos para este día.</p>
-  </div>
-  {% endif %}
+  {% endfor %}
 </div>
+{% else %}
+<div class="empty-state">
+  <h2>No hay turnos para este día</h2>
+  <p>Compartí tu link de reservas para empezar a recibir turnos.</p>
+  <a class="btn-sm ok" href="/dashboard">Ver mi link</a>
+</div>
+{% endif %}
 {% endblock %}
