@@ -19,6 +19,7 @@ Seguridad: ningún endpoint de este router expone tokens; la respuesta del
 callback trae únicamente datos de estado (conectado, user_id, alias).
 """
 
+import json
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -27,6 +28,7 @@ from urllib.parse import urlencode
 import httpx
 import redis.asyncio as redis
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_tenant
@@ -51,29 +53,44 @@ def _state_key(state: str) -> str:
     return f"{_STATE_PREFIX}{state}"
 
 
-async def _store_state(state: str, tenant_id: int) -> None:
+async def _store_state(state: str, tenant_id: int, panel: bool = False) -> None:
     """Guarda el state en Redis. Se crea el cliente por llamada para
-    evitar clientes atados a otro event loop en tests (patrón health)."""
+    evitar clientes atados a otro event loop en tests (patrón health).
+    `panel` es solo un flag: la URL de vuelta la arma el callback en el
+    servidor, nunca viaja en el state."""
     client = redis.from_url(settings.REDIS_URL, decode_responses=True)
     try:
-        await client.set(_state_key(state), str(tenant_id), ex=_STATE_TTL_SECONDS)
+        if panel:
+            value = json.dumps({"tenant_id": tenant_id, "panel": True})
+        else:
+            value = str(tenant_id)
+        await client.set(_state_key(state), value, ex=_STATE_TTL_SECONDS)
     finally:
         await client.aclose()
 
 
-async def _consume_state(state: str) -> int | None:
-    """Devuelve el tenant_id del state y lo borra (un solo uso), o None."""
+async def _consume_state(state: str) -> tuple[int | None, bool]:
+    """Devuelve (tenant_id, panel) del state y lo borra (un solo uso)."""
     client = redis.from_url(settings.REDIS_URL, decode_responses=True)
     try:
         raw = await client.getdel(_state_key(state))
     finally:
         await client.aclose()
     if raw is None:
-        return None
+        return None, False
     try:
-        return int(raw)
+        data = json.loads(raw)
+        return int(data["tenant_id"]), data.get("panel") is True
+    except (ValueError, KeyError, TypeError):
+        pass
+    try:
+        return int(raw), False
     except (TypeError, ValueError):
-        return None
+        return None, False
+
+
+def _panel_settings_url(mp_flag: str) -> str:
+    return f"{settings.PUBLIC_BASE_URL.rstrip('/')}/panel/settings?mp={mp_flag}"
 
 
 async def _exchange_code_for_tokens(code: str) -> dict[str, Any]:
@@ -238,24 +255,19 @@ async def refresh_tenant_mp_token(session: AsyncSession, tenant: Tenant) -> bool
 # ─────────────────────────────────────────────────────────────────
 
 
-@router.get("/mp/connect/start")
-async def mp_connect_start(
-    current_tenant: Tenant = Depends(get_current_tenant),
-):
+async def build_mp_authorization_url(tenant_id: int, panel: bool = False) -> str:
     """
-    Devuelve la URL de autorización de Mercado Pago para el tenant
-    autenticado. El dueño del negocio abre esa URL en el navegador,
-    autoriza, y MP redirige al callback.
+    Genera la URL de autorización de MP y registra el state en Redis.
+    Con `panel=True` el callback redirige a /panel/settings en lugar de
+    devolver JSON (uso exclusivo de rutas del panel).
     """
     if not settings.MP_MARKETPLACE_CLIENT_ID:
         raise HTTPException(
             status_code=503,
             detail="OAuth de Mercado Pago no está configurado en la plataforma.",
         )
-
     state = secrets.token_urlsafe(32)
-    await _store_state(state, current_tenant.id)
-
+    await _store_state(state, tenant_id, panel=panel)
     params = urlencode(
         {
             "client_id": settings.MP_MARKETPLACE_CLIENT_ID,
@@ -265,10 +277,20 @@ async def mp_connect_start(
             "redirect_uri": settings.MP_MARKETPLACE_REDIRECT_URL,
         }
     )
-    return {
-        "authorization_url": f"{_MP_AUTH_URL}?{params}",
-        "expires_in_seconds": _STATE_TTL_SECONDS,
-    }
+    return f"{_MP_AUTH_URL}?{params}"
+
+
+@router.get("/mp/connect/start")
+async def mp_connect_start(
+    current_tenant: Tenant = Depends(get_current_tenant),
+):
+    """
+    Devuelve la URL de autorización de Mercado Pago para el tenant
+    autenticado. El dueño del negocio abre esa URL en el navegador,
+    autoriza, y MP redirige al callback.
+    """
+    url = await build_mp_authorization_url(current_tenant.id)
+    return {"authorization_url": url, "expires_in_seconds": _STATE_TTL_SECONDS}
 
 
 @router.get("/mp/connect/callback")
@@ -284,7 +306,12 @@ async def mp_connect_callback(
     cifrados en el tenant. Nunca devuelve tokens.
     """
     if error is not None:
-        # El dueño canceló o MP rechazó la autorización (p. ej. access_denied)
+        # El dueño canceló o MP rechazó la autorización (p. ej. access_denied).
+        # Se consume el state igual; si vino del panel, se vuelve al panel.
+        if state:
+            _, panel = await _consume_state(state)
+            if panel:
+                return RedirectResponse(_panel_settings_url("error"), status_code=302)
         raise HTTPException(
             status_code=400,
             detail=f"Autorización de Mercado Pago cancelada o rechazada: {error}.",
@@ -295,7 +322,7 @@ async def mp_connect_callback(
             detail="Callback de Mercado Pago incompleto (falta code o state).",
         )
 
-    tenant_id = await _consume_state(state)
+    tenant_id, panel = await _consume_state(state)
     if tenant_id is None:
         raise HTTPException(
             status_code=400,
@@ -335,6 +362,9 @@ async def mp_connect_callback(
     session.add(tenant)
     await session.commit()
     await session.refresh(tenant)
+
+    if panel:
+        return RedirectResponse(_panel_settings_url("connected"), status_code=302)
 
     return {
         "connected": True,

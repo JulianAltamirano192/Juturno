@@ -24,7 +24,7 @@
 - **Campo formulario**: `<input type="hidden" name="csrf_token" value="...">`
 - **Dos flujos de validación**:
   - **`/register` y `/login` (double-submit completo)**: `validate_csrf_double_submit` compara form vs cookie con `hmac.compare_digest` → si falla, **400** con formulario re-renderizado (nuevo token) y mensaje de error.
-  - **Endpoints `/panel/*` (guard adicional)**: `validate_csrf` exige que la cookie `csrf_token` exista → **403** si falta. El token del formulario llega por `Form(...)` pero no se compara contra la cookie en este helper.
+  - **Endpoints `/panel/*`**: `validate_csrf` lee el form body y compara el token contra la cookie `csrf_token` con `hmac.compare_digest` (double-submit) → **403** si falta o no coincide.
 
 ---
 
@@ -50,6 +50,9 @@
 | GET | `/login` | Formulario login (redirige a `/dashboard` si sesión válida) | — |
 | POST | `/login` | Validar credenciales, setear cookie `juturno_session` | CSRF |
 | POST | `/logout` | Borrar cookie sesión | — |
+| GET | `/panel/settings` | Ajustes: estado de la conexión con Mercado Pago. `?mp=connected\|disconnected\|pending\|error` muestra un mensaje fijo (nunca se refleja el valor del query) | Cookie |
+| POST | `/panel/mp/connect/start` | Genera la URL de autorización de MP (state con flag `panel`) → 302 a MP. 503 si falta `MP_MARKETPLACE_CLIENT_ID` | Cookie + CSRF |
+| POST | `/panel/mp/disconnect` | Borra localmente tokens y metadata MP → 302 `/panel/settings?mp=disconnected`. Bloqueado con 302 `?mp=pending` si hay un turno `pending` con `Payment.mp_preference_id` y plazo de seña vigente (`created_at + deposit_expiration_minutes`; minutos `NULL` = siempre bloquea). No revoca la autorización en MP | Cookie + CSRF |
 | GET | `/dashboard` | Vista principal: resumen del día, próximos turnos, checklist de configuración y link público de reserva (oculto si el tenant no tiene slug). Todo filtrado por `tenant_id` | Cookie |
 | GET | `/panel/services` | Listar servicios (activos/inactivos) | Cookie |
 | GET | `/panel/services/new` | Formulario nuevo servicio | Cookie |
@@ -283,12 +286,14 @@ Igual que público pero **requiere API Key** y valida que `tenant_id` coincida c
 }
 ```
 - `state` = nonce 32 bytes → Redis `mp_connect_state:{state}: tenant_id` (TTL 600s, un solo uso).
+- Desde el panel (`POST /panel/mp/connect/start`, cookie + CSRF) el valor es `{"tenant_id": N, "panel": true}` y la respuesta es un 302 a la `authorization_url`. Ver sección 3.
 
 ### 7.2 `GET /mp/connect/callback`
 
 **Query:** `code`, `state`, `error?`
-- Si `error` → 400 "Autorización cancelada: {error}"
+- Si `error` → 400 "Autorización cancelada: {error}". Si el `state` era de panel → 302 a `PUBLIC_BASE_URL/panel/settings?mp=error`.
 - Valida `state` (Redis `GETDEL` → un solo uso) → 400 si inválido/vencido.
+- Si el `state` era de panel, en vez del JSON responde 302 a `PUBLIC_BASE_URL/panel/settings?mp=connected` (la URL la arma el servidor; no viaja en el state). `PUBLIC_BASE_URL` tiene que estar bien seteada en cada entorno.
 - Canjea `code` en `POST /oauth/token` con `client_id`, `client_secret`, `redirect_uri`, `test_token=true` si `MP_SANDBOX`.
 - Cifra tokens (Fernet) → guarda en tenant: `mp_access_token_enc`, `mp_refresh_token_enc`, `mp_user_id`, `mp_alias`, `mp_token_expires_at`.
 

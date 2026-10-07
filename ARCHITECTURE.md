@@ -279,6 +279,8 @@ REQUIRE_STARTED = {"no_show", "completed"}  # solo si start_time <= now
   4. Callback consume `state` (Redis `GETDEL` → un solo uso), canjea `code` por tokens en `POST /oauth/token`.
   5. Cifra `access_token` y `refresh_token` con **Fernet** (`MP_TOKEN_ENCRYPTION_KEY`) → guarda en `tenant.mp_access_token_enc`, `mp_refresh_token_enc`.
   6. Guarda `mp_user_id` (collector_id), `mp_alias` (nickname), `mp_token_expires_at = now + expires_in`.
+- **Conexión desde el panel (sin API key)**: `GET /panel/settings` (cookie) + `POST /panel/mp/connect/start` (cookie + CSRF) reusan `build_mp_authorization_url(tenant_id, panel=True)`. El state en Redis pasa a ser `{"tenant_id", "panel": true}` (el formato viejo, un entero, se sigue leyendo) y el callback responde 302 a `PUBLIC_BASE_URL/panel/settings?mp=connected|error` en lugar de JSON.
+- **Desconexión desde el panel** (`POST /panel/mp/disconnect`): limpia en local `mp_access_token_enc`, `mp_refresh_token_enc`, `mp_token_expires_at`, `mp_user_id`, `mp_public_key` y `mp_alias`; no revoca la autorización en MP. Se bloquea (302 `?mp=pending`) si hay un turno `pending` con `Payment.mp_preference_id` y el plazo de seña (`created_at + deposit_expiration_minutes`, mismo criterio que `process_deposit_expiration`) no venció; con minutos `NULL` siempre bloquea, porque el webhook necesita el token para verificar el pago.
 - **Regla de cobro (D-012)**: `resolve_mp_access_token(tenant)`:
   - Tenant con cuenta → su `access_token` descifrado.
   - Sandbox + sin cuenta → `MP_ACCESS_TOKEN` de la plataforma (dinero de prueba).
