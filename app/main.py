@@ -132,8 +132,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# The slim image has no /etc/mime.types, so .webp would be served as octet-stream.
+# The slim image has no /etc/mime.types, so these would be served as octet-stream.
 mimetypes.add_type("image/webp", ".webp")
+mimetypes.add_type("font/woff2", ".woff2")
 app.mount(
     "/static",
     StaticFiles(directory=Path(__file__).parent / "static"),
