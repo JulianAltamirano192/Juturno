@@ -168,3 +168,19 @@ async def test_dashboard_setup_checklist_and_link(client, db_session):
     assert 'data-setup="staff" data-done="false"' in text
     assert 'data-setup="mp" data-done="false"' in text
     assert f"/t/{tenant.slug}" in text
+
+
+@pytest.mark.asyncio
+async def test_dashboard_hides_public_link_without_slug(client, db_session):
+    tenant = _tenant("Sin Slug", "noslug")
+    tenant.slug = None
+    db_session.add(tenant)
+    await db_session.commit()
+
+    resp = await client.get(
+        "/dashboard", cookies={"juturno_session": make_session_cookie(tenant)}
+    )
+
+    assert resp.status_code == 200
+    assert "/t/None" not in resp.text
+    assert "Tu link de reservas" not in resp.text

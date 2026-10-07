@@ -46,6 +46,7 @@
   </div>
 </div>
 
+{% if public_url %}
 <section class="link-card" aria-label="Tu link de reservas">
   <div>
     <span class="lc-label">Tu link de reservas</span>
@@ -58,6 +59,7 @@
     <a class="btn-o lc-open" href="{{ public_url }}" target="_blank" rel="noopener">Abrir</a>
   </div>
 </section>
+{% endif %}
 
 <div class="stats">
   <div class="stat"><span>Turnos de hoy</span><strong data-stat="total">{{ stats.total }}</strong></div>
@@ -88,7 +90,7 @@
   <section class="card" aria-labelledby="h-setup">
     <h2 id="h-setup" style="font-size:18px">Dejá tu negocio listo</h2>
     <p style="font-size:13px;color:var(--muted)">{{ setup_done }} de {{ setup|length }} pasos completos</p>
-    <div class="progress" aria-hidden="true"><div style="width:{{ (setup_done * 100 // setup|length) }}%"></div></div>
+    <div class="progress" aria-hidden="true"><div style="width:{{ (setup_done * 100 // ((setup|length) or 1)) }}%"></div></div>
     {% for item in setup %}
     <div class="setup-item" data-setup="{{ item.key }}" data-done="{{ 'true' if item.done else 'false' }}">
       <span class="si-label">
