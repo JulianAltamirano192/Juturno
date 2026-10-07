@@ -1,0 +1,26 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "clipped-overflow-container",
+        "value": "*",
+        "files": [
+          "app/templates/landing.html"
+        ],
+        "createdAt": "2026-10-07T18:49:28.690Z",
+        "reason": "verified in headless render at 375px: nav dropdown panel stays within .lp height, not clipped"
+      },
+      {
+        "rule": "ai-color-palette",
+        "value": "*",
+        "files": [
+          "app/templates/landing.html"
+        ],
+        "createdAt": "2026-10-07T18:53:33.030Z",
+        "reason": "user confirmed: chose 'quieter' (keep current violet/cyan identity) over 'bolder' redesign on 2026-10-07"
+      }
+    ]
+  }
+}
