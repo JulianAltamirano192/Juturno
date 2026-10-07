@@ -1,74 +1,88 @@
 {% extends "base.html" %}
+{% import "_ui.html" as ui %}
 
 {% block title %}Horarios de atención - {{ tenant.name }}{% endblock %}
 
-{% block dash_content %}
+{% block head %}
 <style>
-  .section-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px}
-  .btn-primary{background:var(--primary);color:#fff;border:none;border-radius:10px;padding:10px 18px;font-size:.9rem;font-weight:700;cursor:pointer;text-decoration:none;font-family:inherit;display:inline-block}
-  .btn-primary:hover{background:var(--primary-dark)}
-  table{width:100%;border-collapse:collapse;font-size:.92rem}
-  th{text-align:left;padding:10px 12px;font-size:.78rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;border-bottom:2px solid var(--border)}
-  td{padding:12px;border-bottom:1px solid var(--border);vertical-align:middle}
-  tr:last-child td{border-bottom:none}
-  .badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:.75rem;font-weight:700}
-  .badge-active{background:var(--ok-bg);color:var(--ok)}
-  .actions{display:flex;gap:8px;flex-wrap:wrap}
-  .btn-sm{padding:6px 12px;border-radius:8px;font-size:.8rem;font-weight:600;cursor:pointer;text-decoration:none;display:inline-block;font-family:inherit}
-  .btn-outline{background:none;border:1px solid var(--border);color:var(--text)}
-  .btn-outline:hover{background:#f8fafc}
-  .btn-danger{background:none;border:1px solid var(--danger);color:var(--danger)}
-  .btn-danger:hover{background:var(--danger-bg);color:var(--danger)}
-  .empty-state{text-align:center;padding:48px 0;color:var(--muted)}
-  .day-badge{display:inline-block;padding:2px 8px;border-radius:6px;font-size:.7rem;font-weight:700;background:var(--primary-bg);color:var(--primary);font-weight:700}
-  .time-range{font-family:monospace;font-size:.85rem;color:var(--text)}
+  .wk{display:flex;flex-direction:column;gap:8px}
+  .dr{display:grid;grid-template-columns:120px minmax(0,1fr) minmax(0,340px);gap:18px;align-items:center;padding:14px 18px;border-radius:16px;background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.08)}
+  .dr.scale{background:none;border-color:transparent;padding-top:0;padding-bottom:0}
+  .dr-day{font-family:var(--font-display);font-size:15px;font-weight:700}
+  .dr-ranges{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  .rg{display:inline-flex;align-items:center;height:40px;border-radius:999px;background:rgba(34,211,238,.1);border:1px solid rgba(103,232,249,.3);overflow:hidden}
+  .rg a{display:inline-flex;align-items:center;gap:6px;height:100%;padding:0 8px 0 14px;font-size:14px;font-weight:600;color:#cffafe}
+  .rg a svg{width:15px;height:15px;opacity:.7}
+  .rg form{margin:0;height:100%}
+  .rg button{width:40px;height:100%;border:0;background:none;color:var(--muted);cursor:pointer;display:inline-flex;align-items:center;justify-content:center}
+  .rg button:hover{color:#fca5a5}
+  .rg button svg{width:16px;height:16px}
+  .closed{display:inline-flex;align-items:center;height:40px;padding:0 14px;border-radius:999px;border:1px dashed rgba(255,255,255,.2);font-size:14px;color:var(--muted-2)}
+  .bar{position:relative;height:12px;border-radius:6px;background:rgba(255,255,255,.06)}
+  .bar span{position:absolute;top:0;bottom:0;border-radius:6px;background:linear-gradient(90deg,var(--purple),var(--cyan));box-shadow:0 0 10px rgba(34,211,238,.45)}
+  .scale-lbl{display:flex;justify-content:space-between;font-size:11px;color:#8f95a3}
+  @media (max-width:1050px){.dr{grid-template-columns:100px minmax(0,1fr)}.dr .bar,.dr.scale{display:none}}
+  @media (max-width:900px){
+    .dr{grid-template-columns:minmax(0,1fr) 140px;gap:10px;padding:12px 14px}
+    .dr .bar{display:block;height:8px;grid-column:2;grid-row:1}
+    .dr-ranges{grid-column:1 / -1}
+    .rg,.closed{height:44px}
+    .rg button{width:44px}
+  }
 </style>
+{% endblock %}
 
-<div class="card">
-  <div class="section-header">
-    <h1>Horarios de atención del negocio</h1>
-    <a href="/panel/horarios/new" class="btn-primary">+ Agregar horario</a>
+{% block dash_content %}
+<div class="ph">
+  <div>
+    <h1>Horarios de atención</h1>
+    <p>Tus clientes solo pueden reservar dentro de estos horarios.</p>
   </div>
-
-  <p style="color:var(--muted);font-size:.85rem;margin-bottom:16px">
-    Estos horarios definen la disponibilidad general del negocio.
-    <strong>Si no hay horarios configurados</strong>, se usa el fallback 09:00–18:00.
-    Si hay horarios cargados pero un día no tiene fila, ese día está <strong>cerrado</strong>.
-  </p>
-
-  {% if business_hours %}
-  <table>
-    <thead>
-      <tr>
-        <th>Día</th>
-        <th>Apertura</th>
-        <th>Cierre</th>
-        <th>Acciones</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for bh in business_hours %}
-      <tr>
-        <td><span class="day-badge">{{ day_names[bh.day_of_week] }}</span></td>
-        <td class="time-range">{{ bh.start_time.strftime('%H:%M') }}</td>
-        <td class="time-range">{{ bh.end_time.strftime('%H:%M') }}</td>
-        <td>
-          <div class="actions">
-            <a href="/panel/horarios/{{ bh.id }}/edit" class="btn-sm btn-outline">Editar</a>
-            <form method="POST" action="/panel/horarios/{{ bh.id }}/delete" style="margin:0">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-              <button type="submit" class="btn-sm btn-danger">Eliminar</button>
-            </form>
-          </div>
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% else %}
-  <div class="empty-state">
-    <p>No hay horarios configurados. <a href="/panel/horarios/new" style="color:var(--primary);font-weight:600">Agregá el primero.</a></p>
-  </div>
-  {% endif %}
+  <a href="/panel/horarios/new" class="btn-p fab" aria-label="Agregar horario">{{ ui.icon('mas') }}<span class="fab-label">Agregar horario</span></a>
 </div>
+
+<div class="banner banner-info">{{ ui.icon('info') }}
+  <span>{% if business_hours %}Los días sin horario figuran como <strong>cerrados</strong>.{% else %}Todavía no cargaste horarios: mientras tanto se usa de <strong>09:00 a 18:00</strong> todos los días.{% endif %}</span>
+</div>
+
+{% if business_hours %}
+<div class="wk">
+  <div class="dr scale" aria-hidden="true"><span></span><span></span><div class="scale-lbl"><span>06</span><span>10</span><span>14</span><span>18</span><span>22</span></div></div>
+  {% for d in range(7) %}
+  {% set ranges = business_hours|selectattr("day_of_week", "equalto", d)|list %}
+  <div class="dr">
+    <span class="dr-day">{{ day_names[d] }}</span>
+    <div class="dr-ranges">
+      {% for bh in ranges %}
+      {% set label = bh.start_time.strftime('%H:%M') ~ ' – ' ~ bh.end_time.strftime('%H:%M') %}
+      <span class="rg">
+        <a href="/panel/horarios/{{ bh.id }}/edit" aria-label="Editar {{ day_names[d] }} {{ label }}">{{ label }}{{ ui.icon('editar') }}</a>
+        <form method="POST" action="/panel/horarios/{{ bh.id }}/delete" onsubmit="return confirm('¿Eliminar este horario?');">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button type="submit" aria-label="Eliminar {{ day_names[d] }} {{ label }}">{{ ui.icon('borrar') }}</button>
+        </form>
+      </span>
+      {% else %}
+      <span class="closed">Cerrado</span>
+      {% endfor %}
+    </div>
+    <div class="bar" aria-hidden="true">
+      {% for bh in ranges %}
+      {% set s = bh.start_time.hour + bh.start_time.minute / 60 %}
+      {% set e = bh.end_time.hour + bh.end_time.minute / 60 %}
+      {% set left = [[(s - 6) / 16 * 100, 0]|max, 100]|min %}
+      {% set right = [[(e - 6) / 16 * 100, 0]|max, 100]|min %}
+      <span style="left:{{ '%.2f'|format(left) }}%;width:{{ '%.2f'|format([right - left, 0]|max) }}%"></span>
+      {% endfor %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="empty-state">
+  <h2>No hay horarios configurados</h2>
+  <p>Definí qué días y en qué horario atendés.</p>
+  <a href="/panel/horarios/new" class="btn-p">{{ ui.icon('mas') }}Agregá el primero</a>
+</div>
+{% endif %}
 {% endblock %}

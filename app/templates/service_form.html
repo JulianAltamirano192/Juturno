@@ -1,56 +1,119 @@
 {% extends "base.html" %}
+{% import "_ui.html" as ui %}
 
 {% block title %}{% if service %}Editar servicio{% else %}Nuevo servicio{% endif %} - {{ tenant.name }}{% endblock %}
 
-{% block dash_content %}
+{% block head %}
 <style>
-  .back-link{display:inline-flex;align-items:center;gap:6px;color:var(--muted);font-size:.88rem;font-weight:600;text-decoration:none;margin-bottom:20px}
-  .back-link:hover{color:var(--text)}
-  .field-hint{font-size:.78rem;color:var(--muted);margin-top:4px}
-  .field-error{font-size:.78rem;color:var(--danger);margin-top:4px;font-weight:600}
-  input.has-error{border-color:var(--danger)}
-  .deposit-preview{font-size:.82rem;color:var(--muted);margin-top:6px;padding:8px 10px;background:#f8fafc;border-radius:8px}
+  .form-grid{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:28px;align-items:start;max-width:1000px}
+  .quick{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px}
+  .qc{min-height:44px;padding:0 14px;border-radius:999px;border:1px solid var(--border-2);background:var(--surface);color:var(--text-2);font-size:14px;cursor:pointer}
+  .qc[aria-pressed="true"]{border-color:var(--cyan);background:rgba(34,211,238,.14);color:#fff}
+  .dur-row{display:flex;align-items:center;gap:10px}
+  .dur-row input{width:110px}
+  .dur-row span{color:var(--muted)}
+  .dep-note{margin-top:8px;padding:10px 12px;border-radius:10px;background:rgba(34,211,238,.08);font-size:13px;line-height:1.5;color:var(--cyan-xl)}
+  .preview{position:sticky;top:24px;display:flex;flex-direction:column;gap:12px}
+  .preview .pv-label{font-size:13px;font-weight:600;color:var(--muted)}
+  .pv-phone{padding:18px;border-radius:24px;background:#0d0e14;border:1px solid var(--border);box-shadow:0 0 30px rgba(168,85,247,.18)}
+  .pv-svc{display:flex;justify-content:space-between;align-items:center;gap:12px;min-height:72px;padding:14px 16px;border-radius:16px;border:1px solid rgba(103,232,249,.5);background:rgba(34,211,238,.06)}
+  .pv-svc > span{display:flex;flex-direction:column;gap:4px;min-width:0}
+  .pv-svc strong{font-weight:600}
+  .pv-svc small{font-size:13px;color:var(--muted)}
+  .pv-dep{flex-shrink:0;font-size:12px;font-weight:600;color:var(--cyan-xl);padding:5px 10px;border-radius:999px;background:rgba(34,211,238,.12)}
+  .preview p{font-size:13px;color:var(--muted-2)}
+  @media (max-width:1050px){.form-grid{grid-template-columns:minmax(0,1fr)}.preview{position:static}}
+  @media (max-width:900px){.form-actions .btn-p{width:100%;min-height:54px}}
 </style>
+{% endblock %}
 
-<a href="/panel/services" class="back-link">← Volver a servicios</a>
+{% block dash_content %}
+<a href="/panel/services" class="back-link">{{ ui.icon('izq') }}Volver a servicios</a>
+<div class="ph"><h1>{% if service %}Editar servicio{% else %}Nuevo servicio{% endif %}</h1></div>
 
-<div class="card">
-  <h1>{% if service %}Editar servicio{% else %}Nuevo servicio{% endif %}</h1>
-
-  <form method="POST" action="{% if service %}/panel/services/{{ service.id }}/edit{% else %}/panel/services/new{% endif %}" style="margin-top:24px">
+<div class="form-grid">
+  <form method="POST" action="{% if service %}/panel/services/{{ service.id }}/edit{% else %}/panel/services/new{% endif %}" class="form-card">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
     <div class="field">
       <label for="name">Nombre del servicio</label>
-      <input type="text" id="name" name="name" value="{{ form.get('name', '') }}" placeholder="Ej: Corte de cabello" class="{% if errors.name %}has-error{% endif %}">
+      <input type="text" id="name" name="name" value="{{ form.get('name', '') }}" placeholder="Ej: Sesión de 45 minutos" class="{% if errors.name %}has-error{% endif %}">
       {% if errors.name %}<div class="field-error">{{ errors.name }}</div>{% endif %}
     </div>
 
     <div class="field">
-      <label for="duration_minutes">Duración (minutos)</label>
-      <input type="number" id="duration_minutes" name="duration_minutes" value="{{ form.get('duration_minutes', '') }}" placeholder="60" min="1" class="{% if errors.duration_minutes %}has-error{% endif %}">
+      <label for="duration_minutes">Duración</label>
+      <div class="quick" role="group" aria-label="Duraciones frecuentes">
+        {% for m, lbl in [(30, '30 min'), (45, '45 min'), (60, '1 h'), (90, '1 h 30')] %}
+        <button type="button" class="qc" data-min="{{ m }}" aria-pressed="{{ 'true' if form.get('duration_minutes', '')|string == m|string else 'false' }}">{{ lbl }}</button>
+        {% endfor %}
+      </div>
+      <div class="dur-row">
+        <input type="number" id="duration_minutes" name="duration_minutes" inputmode="numeric" value="{{ form.get('duration_minutes', '') }}" placeholder="60" min="1" class="{% if errors.duration_minutes %}has-error{% endif %}">
+        <span>minutos</span>
+      </div>
       {% if errors.duration_minutes %}<div class="field-error">{{ errors.duration_minutes }}</div>{% endif %}
     </div>
 
     <div class="field">
       <label for="price">Precio total</label>
-      <input type="text" id="price" name="price" value="{{ form.get('price', '') }}" placeholder="5000.00" class="{% if errors.price %}has-error{% endif %}">
-      <div class="field-hint">Usá punto como separador decimal (ej: 5000.00)</div>
+      <div class="input-prefix"><span>$</span><input type="text" id="price" name="price" inputmode="decimal" value="{{ form.get('price', '') }}" placeholder="5000.00" class="{% if errors.price %}has-error{% endif %}"></div>
+      <div class="field-hint">Usá punto como separador decimal (ej: 5000.00).</div>
       {% if errors.price %}<div class="field-error">{{ errors.price }}</div>{% endif %}
     </div>
 
     <div class="field">
-      <label for="deposit_amount">Seña (opcional)</label>
-      <input type="text" id="deposit_amount" name="deposit_amount" value="{{ form.get('deposit_amount', '') }}" placeholder="Dejar vacío para usar el 30% del precio" class="{% if errors.deposit_amount %}has-error{% endif %}">
-      {% if deposit_preview %}
-      <div class="deposit-preview">
-        Si dejás este campo vacío, se cobrará <strong>${{ "%.2f"|format(deposit_preview) }}</strong> de seña (30% del precio ingresado).
-      </div>
-      {% endif %}
+      <label for="deposit_amount">Seña <span class="opt">(opcional)</span></label>
+      <div class="input-prefix"><span>$</span><input type="text" id="deposit_amount" name="deposit_amount" inputmode="decimal" value="{{ form.get('deposit_amount', '') }}" placeholder="Vacío = 30% del precio" class="{% if errors.deposit_amount %}has-error{% endif %}"></div>
+      <div class="dep-note" id="dep-note">{% if deposit_preview %}Si lo dejás vacío, la seña será {{ deposit_preview|money }} (30% del precio).{% else %}Si lo dejás vacío, la seña es el 30% del precio.{% endif %}</div>
       {% if errors.deposit_amount %}<div class="field-error">{{ errors.deposit_amount }}</div>{% endif %}
     </div>
 
-    <button type="submit" class="btn-submit">{% if service %}Guardar cambios{% else %}Crear servicio{% endif %}</button>
+    <div class="form-actions">
+      <button type="submit" class="btn-p">{% if service %}Guardar cambios{% else %}Crear servicio{% endif %}</button>
+    </div>
   </form>
+
+  <aside class="preview" aria-label="Vista previa">
+    <span class="pv-label">Así lo ve tu cliente</span>
+    <div class="pv-phone">
+      <div class="pv-svc">
+        <span><strong id="pv-name">{{ form.get('name') or 'Nombre del servicio' }}</strong><small id="pv-meta">—</small></span>
+        <span class="pv-dep" id="pv-dep">Seña —</span>
+      </div>
+    </div>
+    <p>El cliente paga la seña al reservar y el resto en tu local.</p>
+  </aside>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const $ = (id) => document.getElementById(id);
+  const num = (v) => { const n = parseFloat(String(v).replace(",", ".")); return isNaN(n) ? 0 : n; };
+  const money = (n) => {
+    const [i, c] = n.toFixed(2).split(".");
+    return "$ " + i.replace(/\B(?=(\d{3})+(?!\d))/g, ".") + (c === "00" ? "" : "," + c);
+  };
+  const durTxt = (m) => (m >= 60 ? Math.floor(m / 60) + " h" + (m % 60 ? " " + (m % 60) + " min" : "") : m + " min");
+  function update() {
+    const price = num($("price").value);
+    const depRaw = $("deposit_amount").value.trim();
+    const dep = depRaw === "" ? price * 0.3 : num(depRaw);
+    const dur = parseInt($("duration_minutes").value, 10) || 0;
+    $("pv-name").textContent = $("name").value.trim() || "Nombre del servicio";
+    $("pv-meta").textContent = (dur ? durTxt(dur) : "—") + " · " + money(price);
+    $("pv-dep").textContent = "Seña " + money(dep);
+    $("dep-note").textContent = depRaw === ""
+      ? "Si lo dejás vacío, la seña será " + money(dep) + " (30% del precio)."
+      : "El cliente paga " + money(dep) + " al reservar y " + money(Math.max(price - dep, 0)) + " en el local.";
+    document.querySelectorAll(".qc").forEach((b) => b.setAttribute("aria-pressed", String(Number(b.dataset.min) === dur)));
+  }
+  document.querySelectorAll(".qc").forEach((b) => b.addEventListener("click", () => {
+    $("duration_minutes").value = b.dataset.min;
+    update();
+  }));
+  ["name", "duration_minutes", "price", "deposit_amount"].forEach((id) => $(id).addEventListener("input", update));
+  update();
+</script>
 {% endblock %}

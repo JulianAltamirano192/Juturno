@@ -1,88 +1,69 @@
 {% extends "base.html" %}
+{% import "_ui.html" as ui %}
 
 {% block title %}Servicios - {{ tenant.name }}{% endblock %}
 
-{% block dash_content %}
+{% block head %}
 <style>
-  .section-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px}
-  .btn-primary{background:var(--primary);color:#fff;border:none;border-radius:10px;padding:10px 18px;font-size:.9rem;font-weight:700;cursor:pointer;text-decoration:none;font-family:inherit;display:inline-block}
-  .btn-primary:hover{background:var(--primary-dark)}
-  table{width:100%;border-collapse:collapse;font-size:.92rem}
-  th{text-align:left;padding:10px 12px;font-size:.78rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;border-bottom:2px solid var(--border)}
-  td{padding:12px;border-bottom:1px solid var(--border);vertical-align:middle}
-  tr:last-child td{border-bottom:none}
-  .badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:.75rem;font-weight:700}
-  .badge-active{background:var(--ok-bg);color:var(--ok)}
-  .badge-inactive{background:#f1f5f9;color:var(--muted)}
-  .actions{display:flex;gap:8px;flex-wrap:wrap}
-  .btn-sm{padding:6px 12px;border-radius:8px;font-size:.8rem;font-weight:600;cursor:pointer;text-decoration:none;display:inline-block;font-family:inherit}
-  .btn-outline{background:none;border:1px solid var(--border);color:var(--text)}
-  .btn-outline:hover{background:#f8fafc}
-  .btn-toggle-off{background:none;border:1px solid var(--border);color:var(--muted)}
-  .btn-toggle-off:hover{background:var(--danger-bg);border-color:var(--danger);color:var(--danger)}
-  .btn-toggle-on{background:none;border:1px solid var(--border);color:var(--muted)}
-  .btn-toggle-on:hover{background:var(--ok-bg);border-color:var(--ok);color:var(--ok)}
-  .empty-state{text-align:center;padding:48px 0;color:var(--muted)}
+  .srows{display:flex;flex-direction:column;gap:8px}
+  .srow{display:grid;grid-template-columns:minmax(0,1.5fr) 110px 120px minmax(0,1.5fr) 70px 90px;gap:14px;align-items:center;padding:14px 18px;border-radius:14px;background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.08)}
+  .srow.head{background:none;border-color:transparent;padding-top:0;padding-bottom:0;font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted-2)}
+  .srow.off{color:var(--muted-2)}
+  .s-name{font-weight:700}
+  .s-dep{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .s-auto{font-size:12px;color:var(--cyan-xl);padding:3px 8px;border-radius:999px;background:rgba(34,211,238,.1)}
+  .s-meta{display:none}
+  .s-edit{text-align:right}
+  @media (max-width:1000px){.srow{grid-template-columns:minmax(0,1.5fr) 110px minmax(0,1.4fr) 60px 80px}.s-dur{display:none}}
+  @media (max-width:900px){
+    .srow.head{display:none}
+    .srow{grid-template-columns:minmax(0,1fr) auto;gap:10px 12px;padding:14px 16px}
+    .srow.off{opacity:.6}
+    .s-dur,.s-price{display:none}
+    .s-meta{display:block;font-size:13px;font-weight:400;color:var(--muted);margin-top:2px}
+    .s-active{grid-column:2;grid-row:1}
+    .s-dep{grid-column:1;grid-row:2}
+    .s-edit{grid-column:2;grid-row:2}
+    .s-edit .btn-sm{min-height:44px}
+  }
 </style>
+{% endblock %}
 
-<div class="card">
-  <div class="section-header">
+{% block dash_content %}
+<div class="ph">
+  <div>
     <h1>Servicios</h1>
-    <a href="/panel/services/new" class="btn-primary">+ Nuevo servicio</a>
+    <p>Lo que tus clientes pueden reservar. Los inactivos no aparecen en tu página.</p>
   </div>
-
-  {% if services_with_deposit %}
-  <table>
-    <thead>
-      <tr>
-        <th>Nombre</th>
-        <th>Duración</th>
-        <th>Precio</th>
-        <th>Seña efectiva</th>
-        <th>Estado</th>
-        <th>Acciones</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for service, deposit in services_with_deposit %}
-      <tr>
-        <td><strong>{{ service.name }}</strong></td>
-        <td>{{ service.duration_minutes }} min</td>
-        <td>${{ "%.2f"|format(service.price) }}</td>
-        <td>
-          ${{ "%.2f"|format(deposit) }}
-          {% if service.deposit_amount is none %}
-          <span style="color:var(--muted);font-size:.75rem">(30%)</span>
-          {% endif %}
-        </td>
-        <td>
-          {% if service.is_active %}
-          <span class="badge badge-active">Activo</span>
-          {% else %}
-          <span class="badge badge-inactive">Inactivo</span>
-          {% endif %}
-        </td>
-        <td>
-          <div class="actions">
-            <a href="/panel/services/{{ service.id }}/edit" class="btn-sm btn-outline">Editar</a>
-            <form method="POST" action="/panel/services/{{ service.id }}/toggle" style="margin:0">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-              {% if service.is_active %}
-              <button type="submit" class="btn-sm btn-toggle-off">Desactivar</button>
-              {% else %}
-              <button type="submit" class="btn-sm btn-toggle-on">Activar</button>
-              {% endif %}
-            </form>
-          </div>
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% else %}
-  <div class="empty-state">
-    <p>Todavía no hay servicios. <a href="/panel/services/new" style="color:var(--primary);font-weight:600">Creá el primero.</a></p>
-  </div>
-  {% endif %}
+  <a href="/panel/services/new" class="btn-p fab" aria-label="Nuevo servicio">{{ ui.icon('mas') }}<span class="fab-label">Nuevo servicio</span></a>
 </div>
+
+{% if services_with_deposit %}
+<div class="srows" role="table" aria-label="Servicios">
+  <div class="srow head" role="row">
+    <span role="columnheader">Servicio</span><span class="s-dur" role="columnheader">Duración</span><span class="s-price" role="columnheader">Precio</span><span role="columnheader">Seña</span><span role="columnheader">Activo</span><span role="columnheader"><span class="sr-only">Acciones</span></span>
+  </div>
+  {% for service, deposit in services_with_deposit %}
+  <div class="srow{% if not service.is_active %} off{% endif %}" role="row">
+    <div role="cell" class="s-name">{{ service.name }}<span class="s-meta">{{ service.duration_minutes }} min · {{ service.price|money }}</span></div>
+    <span role="cell" class="s-dur">{{ service.duration_minutes }} min</span>
+    <span role="cell" class="s-price">{{ service.price|money }}</span>
+    <span role="cell" class="s-dep">Seña {{ deposit|money }}{% if service.deposit_amount is none %}<span class="s-auto">30% automático</span>{% endif %}</span>
+    <span role="cell" class="s-active">
+      <form method="POST" action="/panel/services/{{ service.id }}/toggle" class="sw-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit" class="sw{% if service.is_active %} on{% endif %}" role="switch" aria-checked="{{ 'true' if service.is_active else 'false' }}" aria-label="{{ 'Desactivar' if service.is_active else 'Activar' }} {{ service.name }}"></button>
+      </form>
+    </span>
+    <span role="cell" class="s-edit"><a href="/panel/services/{{ service.id }}/edit" class="btn-sm">Editar</a></span>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="empty-state">
+  <h2>Todavía no hay servicios</h2>
+  <p>Cargá lo que ofrecés, con su duración, precio y seña.</p>
+  <a href="/panel/services/new" class="btn-p">{{ ui.icon('mas') }}Creá el primero</a>
+</div>
+{% endif %}
 {% endblock %}

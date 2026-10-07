@@ -1,11 +1,122 @@
 {% extends "base.html" %}
+{% import "_ui.html" as ui %}
 
-{% block title %}Panel de control - {{ tenant.name }}{% endblock %}
+{% block title %}Inicio - {{ tenant.name }}{% endblock %}
+
+{% block head %}
+<style>
+  .link-card{position:relative;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:18px;padding:24px;border-radius:22px;margin-bottom:20px;background:linear-gradient(135deg,rgba(168,85,247,.22),rgba(34,211,238,.1));border:1px solid rgba(192,132,252,.35);box-shadow:0 0 40px rgba(168,85,247,.15)}
+  .link-card .lc-label{font-size:13px;color:#e9d5ff;font-weight:600}
+  .link-card .lc-url{display:block;font-family:var(--font-display);font-size:22px;font-weight:700;margin:4px 0;word-break:break-all}
+  .link-card .lc-url span{color:var(--cyan-l)}
+  .link-card .lc-help{font-size:14px;color:var(--text-2)}
+  .lc-actions{display:flex;flex-wrap:wrap;gap:10px}
+  .home-grid{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:20px;align-items:start}
+  .card-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:12px}
+  .card-head h2{font-size:18px}
+  .up-row{display:flex;align-items:center;gap:14px;padding:12px 14px;border-radius:14px;background:rgba(255,255,255,.03);margin-top:8px}
+  .up-time{width:52px;font-family:var(--font-display);font-weight:700}
+  .up-who{flex-grow:1;display:flex;flex-direction:column;min-width:0}
+  .up-who span{font-size:13px;color:var(--muted-2)}
+  .progress{height:6px;border-radius:3px;background:rgba(255,255,255,.1);margin:6px 0 10px}
+  .progress div{height:100%;border-radius:3px;background:linear-gradient(90deg,var(--purple),var(--cyan));box-shadow:0 0 10px rgba(34,211,238,.5)}
+  .setup-item{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:44px}
+  .setup-item .si-label{display:flex;align-items:center;gap:12px}
+  .si-dot{width:24px;height:24px;flex-shrink:0;border-radius:50%;display:flex;align-items:center;justify-content:center;border:2px solid rgba(192,132,252,.7)}
+  .setup-item[data-done="true"] .si-dot{border:0;background:rgba(34,211,238,.18);color:var(--cyan-l)}
+  .setup-item[data-done="true"] .si-dot svg{width:14px;height:14px;stroke-width:3}
+  .setup-item[data-done="true"] .si-text{color:var(--muted);text-decoration:line-through}
+  .si-note{font-size:12px;color:var(--muted-2)}
+  .owner{margin-top:18px;font-size:13px;color:var(--muted-2)}
+  @media (max-width:1100px){.home-grid{grid-template-columns:minmax(0,1fr)}}
+  @media (max-width:900px){
+    .link-card{padding:16px;border-radius:20px;gap:12px}
+    .link-card .lc-url{font-size:17px}
+    .lc-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));width:100%}
+    .lc-actions .lc-open{display:none}
+  }
+</style>
+{% endblock %}
 
 {% block dash_content %}
-<div class="card">
-  <h1>Bienvenido al panel de {{ tenant.name }}</h1>
-  <p>Identificador de reserva pública: <code>{{ tenant.slug }}</code></p>
-  <p>Correo de acceso: <code>{{ tenant.owner_email }}</code></p>
+<div class="ph">
+  <div>
+    <h1>Hola, {{ tenant.name }}</h1>
+    <p>{{ day_label }}</p>
+  </div>
 </div>
+
+<section class="link-card" aria-label="Tu link de reservas">
+  <div>
+    <span class="lc-label">Tu link de reservas</span>
+    <span class="lc-url">{{ public_url_display }}<span>{{ tenant.slug }}</span></span>
+    <span class="lc-help">Compartilo en tu Instagram, WhatsApp o Google.</span>
+  </div>
+  <div class="lc-actions">
+    <button type="button" class="btn-o light" data-copy="{{ public_url }}">{{ ui.icon('copiar') }}<span>Copiar link</span></button>
+    <a class="btn-o wa" href="https://wa.me/?text={{ ('Reservá tu turno en ' ~ tenant.name ~ ': ' ~ public_url)|urlencode }}" target="_blank" rel="noopener">{{ ui.icon('whatsapp') }}Compartir</a>
+    <a class="btn-o lc-open" href="{{ public_url }}" target="_blank" rel="noopener">Abrir</a>
+  </div>
+</section>
+
+<div class="stats">
+  <div class="stat"><span>Turnos de hoy</span><strong data-stat="total">{{ stats.total }}</strong></div>
+  <div class="stat cy"><span>Confirmados</span><strong data-stat="confirmed">{{ stats.confirmed }}</strong></div>
+  <div class="stat pu"><span>Esperando seña</span><strong data-stat="pending">{{ stats.pending }}</strong></div>
+  <div class="stat gr"><span>Completados</span><strong data-stat="completed">{{ stats.completed }}</strong></div>
+</div>
+
+<div class="home-grid">
+  <section class="card" aria-labelledby="h-prox">
+    <div class="card-head">
+      <h2 id="h-prox">Próximos turnos de hoy</h2>
+      <a href="/panel/agenda" style="font-size:14px;font-weight:600">Ver agenda →</a>
+    </div>
+    {% if upcoming %}
+      {% for item in upcoming %}
+      <div class="up-row">
+        <span class="up-time">{{ item.start_local }}</span>
+        <div class="up-who"><strong>{{ item.client_name }}</strong><span>{{ item.service_name }}</span></div>
+        <span class="badge badge-{{ item.status }}">{{ item.status_label }}</span>
+      </div>
+      {% endfor %}
+    {% else %}
+      <p style="color:var(--muted);padding:12px 0">No tenés más turnos por hoy.</p>
+    {% endif %}
+  </section>
+
+  <section class="card" aria-labelledby="h-setup">
+    <h2 id="h-setup" style="font-size:18px">Dejá tu negocio listo</h2>
+    <p style="font-size:13px;color:var(--muted)">{{ setup_done }} de {{ setup|length }} pasos completos</p>
+    <div class="progress" aria-hidden="true"><div style="width:{{ (setup_done * 100 // setup|length) }}%"></div></div>
+    {% for item in setup %}
+    <div class="setup-item" data-setup="{{ item.key }}" data-done="{{ 'true' if item.done else 'false' }}">
+      <span class="si-label">
+        <span class="si-dot">{% if item.done %}{{ ui.icon('check') }}{% endif %}</span>
+        {% if item.href and not item.done %}<a class="si-text" href="{{ item.href }}">{{ item.label }}</a>{% else %}<span class="si-text">{{ item.label }}</span>{% endif %}
+      </span>
+      {% if item.key == 'mp' and not item.done %}<span class="si-note">Pronto desde el panel</span>{% endif %}
+    </div>
+    {% endfor %}
+  </section>
+</div>
+
+<p class="owner">Ingresás con {{ tenant.owner_email }}</p>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  document.querySelectorAll("[data-copy]").forEach((btn) => {
+    const label = btn.querySelector("span");
+    btn.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(btn.dataset.copy);
+        label.textContent = "¡Copiado!";
+      } catch (e) {
+        label.textContent = "No se pudo copiar";
+      }
+      setTimeout(() => { label.textContent = "Copiar link"; }, 1800);
+    });
+  });
+</script>
 {% endblock %}

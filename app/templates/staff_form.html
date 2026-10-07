@@ -1,30 +1,52 @@
 {% extends "base.html" %}
+{% import "_ui.html" as ui %}
 
 {% block title %}{% if staff %}Editar personal{% else %}Nuevo miembro{% endif %} - {{ tenant.name }}{% endblock %}
 
-{% block dash_content %}
+{% block head %}
 <style>
-  .back-link{display:inline-flex;align-items:center;gap:6px;color:var(--muted);font-size:.88rem;font-weight:600;text-decoration:none;margin-bottom:20px}
-  .back-link:hover{color:var(--text)}
-  .field-error{font-size:.78rem;color:var(--danger);margin-top:4px;font-weight:600}
-  input.has-error{border-color:var(--danger)}
+  .staff-form{max-width:560px}
+  .sf-avatar{display:flex;align-items:center;gap:16px;margin-bottom:22px}
+  .sf-avatar .avatar{width:64px;height:64px;font-size:22px;box-shadow:0 0 20px rgba(168,85,247,.4)}
+  .sf-avatar p{font-size:14px;color:var(--muted)}
+  @media (max-width:900px){
+    .sf-avatar{flex-direction:column;text-align:center}
+    .sf-avatar .avatar{width:88px;height:88px;font-size:30px}
+    .form-actions .btn-p{width:100%;min-height:54px}
+  }
 </style>
+{% endblock %}
 
-<a href="/panel/staff" class="back-link">← Volver al personal</a>
+{% block dash_content %}
+<a href="/panel/staff" class="back-link">{{ ui.icon('izq') }}Volver al personal</a>
+<div class="ph"><h1>{% if staff %}Editar miembro{% else %}Nuevo miembro{% endif %}</h1></div>
 
-<div class="card">
-  <h1>{% if staff %}Editar miembro{% else %}Nuevo miembro{% endif %}</h1>
+<form method="POST" action="{% if staff %}/panel/staff/{{ staff.id }}/edit{% else %}/panel/staff/new{% endif %}" class="form-card staff-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <div class="sf-avatar">
+    <span class="avatar round" id="sf-initials" aria-hidden="true">?</span>
+    <p>Así va a aparecer en tu panel. Podés desactivarlo cuando no atienda.</p>
+  </div>
+  <div class="field">
+    <label for="name">Nombre</label>
+    <input type="text" id="name" name="name" autocomplete="name" value="{{ form.get('name', '') }}" placeholder="Ej: Juan Pérez" class="{% if errors.name %}has-error{% endif %}">
+    {% if errors.name %}<div class="field-error">{{ errors.name }}</div>{% endif %}
+  </div>
+  <div class="form-actions">
+    <button type="submit" class="btn-p">{% if staff %}Guardar cambios{% else %}Crear miembro{% endif %}</button>
+  </div>
+</form>
+{% endblock %}
 
-  <form method="POST" action="{% if staff %}/panel/staff/{{ staff.id }}/edit{% else %}/panel/staff/new{% endif %}" style="margin-top:24px">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-
-    <div class="field">
-      <label for="name">Nombre</label>
-      <input type="text" id="name" name="name" value="{{ form.get('name', '') }}" placeholder="Ej: Juan Pérez" class="{% if errors.name %}has-error{% endif %}">
-      {% if errors.name %}<div class="field-error">{{ errors.name }}</div>{% endif %}
-    </div>
-
-    <button type="submit" class="btn-submit">{% if staff %}Guardar cambios{% else %}Crear miembro{% endif %}</button>
-  </form>
-</div>
+{% block scripts %}
+<script>
+  const nameInput = document.getElementById("name");
+  const initials = document.getElementById("sf-initials");
+  const update = () => {
+    const ini = nameInput.value.trim().split(/\s+/).filter(Boolean).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
+    initials.textContent = ini || "?";
+  };
+  nameInput.addEventListener("input", update);
+  update();
+</script>
 {% endblock %}

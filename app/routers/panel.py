@@ -15,6 +15,7 @@ from app.booking_actions import (
     InvalidTransitionError,
     transition_booking_status,
 )
+from app.config import settings
 from app.csrf import generate_csrf_token, set_csrf_cookie, validate_csrf
 from app.database import get_db
 from app.models import Booking, BusinessHours, Service, Staff, Tenant
@@ -175,12 +176,104 @@ def _redirect_to_agenda(day: str | None = None) -> RedirectResponse:
 # ---------------------------------------------------------------------------
 
 
+def _tenant_tz(tenant: Tenant) -> ZoneInfo:
+    return ZoneInfo(
+        tenant.timezone if tenant.timezone else "America/Argentina/Buenos_Aires"
+    )
+
+
+async def _bookings_for_day(
+    session: AsyncSession, tenant: Tenant, target_day: date
+) -> list[tuple[Booking, Service]]:
+    """Turnos del tenant que tocan el día dado (en su zona horaria), por inicio."""
+    tenant_tz = _tenant_tz(tenant)
+    day_start = datetime.combine(target_day, time(0, 0), tzinfo=tenant_tz)
+    day_end = day_start + timedelta(days=1)
+    stmt = (
+        select(Booking, Service)
+        .join(Service, Booking.service_id == Service.id)
+        .where(
+            and_(
+                Booking.tenant_id == tenant.id,
+                Booking.start_time < day_end,
+                Booking.end_time > day_start,
+            )
+        )
+        .order_by(Booking.start_time)
+    )
+    return [(b, s) for b, s in (await session.execute(stmt)).all()]
+
+
+async def _tenant_has(session: AsyncSession, model, *conditions) -> bool:
+    stmt = select(model.id).where(*conditions).limit(1)
+    return (await session.execute(stmt)).first() is not None
+
+
 @router.get("/dashboard", response_class=HTMLResponse)
 async def dashboard_page(
     request: Request,
     tenant: Tenant = Depends(get_current_tenant_from_session),
+    session: AsyncSession = Depends(get_db),
 ):
-    """Vista principal del panel del negocio."""
+    """Vista principal del panel: resumen del día, próximos turnos y checklist."""
+    tenant_tz = _tenant_tz(tenant)
+    now = datetime.now(tenant_tz)
+    rows = await _bookings_for_day(session, tenant, now.date())
+
+    def _count(state: str) -> int:
+        return sum(1 for b, _ in rows if b.status == state)
+
+    stats = {
+        "total": sum(1 for b, _ in rows if b.status not in ("cancelled", "expired")),
+        "confirmed": _count("confirmed"),
+        "pending": _count("pending"),
+        "completed": _count("completed"),
+    }
+    upcoming = [
+        {
+            "client_name": b.client_name,
+            "service_name": s.name,
+            "start_local": b.start_time.astimezone(tenant_tz).strftime("%H:%M"),
+            "status": b.status,
+            "status_label": _AGENDA_STATUS_LABELS.get(b.status, b.status),
+        }
+        for b, s in rows
+        if b.status in ("pending", "confirmed") and b.end_time > now
+    ][:3]
+
+    setup = [
+        {
+            "key": "services",
+            "label": "Cargá tus servicios",
+            "href": "/panel/services",
+            "done": await _tenant_has(session, Service, Service.tenant_id == tenant.id),
+        },
+        {
+            "key": "hours",
+            "label": "Definí tus horarios",
+            "href": "/panel/horarios",
+            "done": await _tenant_has(
+                session,
+                BusinessHours,
+                BusinessHours.tenant_id == tenant.id,
+                BusinessHours.staff_id.is_(None),
+            ),
+        },
+        {
+            "key": "staff",
+            "label": "Sumá a tu personal",
+            "href": "/panel/staff",
+            "done": await _tenant_has(session, Staff, Staff.tenant_id == tenant.id),
+        },
+        {
+            "key": "mp",
+            "label": "Conectá Mercado Pago",
+            "href": None,
+            "done": tenant.mp_access_token_enc is not None,
+        },
+    ]
+
+    public_base = settings.PUBLIC_BASE_URL.rstrip("/")
     csrf_token = generate_csrf_token()
     response = templates.TemplateResponse(
         request,
@@ -188,6 +281,13 @@ async def dashboard_page(
         {
             "tenant": tenant,
             "csrf_token": csrf_token,
+            "day_label": _format_agenda_day_label(now.date()),
+            "stats": stats,
+            "upcoming": upcoming,
+            "setup": setup,
+            "setup_done": sum(1 for item in setup if item["done"]),
+            "public_url": f"{public_base}/t/{tenant.slug}",
+            "public_url_display": f"{public_base.split('://', 1)[-1]}/t/",
         },
     )
     set_csrf_cookie(response, csrf_token)
@@ -881,9 +981,7 @@ async def panel_agenda(
     dado, ordenados por horario de inicio. Las horas se muestran en la
     zona horaria del tenant (Booking.start_time está en UTC en la DB).
     """
-    tenant_tz = ZoneInfo(
-        tenant.timezone if tenant.timezone else "America/Argentina/Buenos_Aires"
-    )
+    tenant_tz = _tenant_tz(tenant)
     today_local = datetime.now(tenant_tz).date()
 
     target_day = today_local
@@ -893,22 +991,7 @@ async def panel_agenda(
         except ValueError:
             target_day = today_local
 
-    day_start = datetime.combine(target_day, time(0, 0), tzinfo=tenant_tz)
-    day_end = day_start + timedelta(days=1)
-
-    stmt = (
-        select(Booking, Service)
-        .join(Service, Booking.service_id == Service.id)
-        .where(
-            and_(
-                Booking.tenant_id == tenant.id,
-                Booking.start_time < day_end,
-                Booking.end_time > day_start,
-            )
-        )
-        .order_by(Booking.start_time)
-    )
-    rows = (await session.execute(stmt)).all()
+    rows = await _bookings_for_day(session, tenant, target_day)
 
     agenda_items = [
         {
