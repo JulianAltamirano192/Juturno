@@ -100,6 +100,8 @@ CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-
 
 - `requirements.txt` = solo deps de producción (14 paquetes).
 - `requirements-dev.txt` = `requirements.txt` + pytest, ruff, black, mypy, pre-commit (para CI/local).
+- `.dockerignore` deja afuera `.env*` (salvo `.env.example`), `backups/`, `.git`, caches, config de tooling y `frontend/`: `COPY . /app/` no mete secrets en la imagen; las variables llegan en runtime (Coolify).
+- `app/static/` sí va en la imagen y se sirve público en `/static`. La imagen slim no trae `/etc/mime.types`, por eso `app/main.py` registra `.webp` y `.woff2` a mano.
 - `curl` instalado para healthcheck (`docker-compose*.yml` usa `curl -f http://localhost:8000/health`).
 - `gcc libpq-dev` para compilar `asyncpg`.
 

@@ -50,7 +50,7 @@
 | GET | `/login` | Formulario login (redirige a `/dashboard` si sesión válida) | — |
 | POST | `/login` | Validar credenciales, setear cookie `juturno_session` | CSRF |
 | POST | `/logout` | Borrar cookie sesión | — |
-| GET | `/dashboard` | Vista principal panel | Cookie |
+| GET | `/dashboard` | Vista principal: resumen del día, próximos turnos, checklist de configuración y link público de reserva (oculto si el tenant no tiene slug). Todo filtrado por `tenant_id` | Cookie |
 | GET | `/panel/services` | Listar servicios (activos/inactivos) | Cookie |
 | GET | `/panel/services/new` | Formulario nuevo servicio | Cookie |
 | POST | `/panel/services/new` | Crear servicio (valida CSRF, name, duration>0, price>0) | Cookie + CSRF |
@@ -87,6 +87,8 @@
 | GET | `/public/available-slots` | Slots libres para servicio/día | Query: `tenant_id`, `service_id`, `day`, `staff_id?` | `AvailableSlotsResponse` |
 | POST | `/public/bookings` | Crear booking `pending` + preferencia MP → `payment_url` | `BookingCreate` | `PublicBookingResponse` (201) |
 | GET | `/t/{slug}` | Página HTML reserva (mobile-first) | — | `HTMLResponse` |
+| GET | `/` | Landing de marketing (`landing.html`, standalone; la demo corre solo en el cliente, sin llamadas al backend). No aparece en OpenAPI | — | `HTMLResponse` |
+| GET | `/static/*` | Assets estáticos de `app/static/` (fuentes Sora/DM Sans self-hosted en `fonts/`, imágenes `.webp` del landing). **Públicos sin auth: solo poner assets acá, nunca datos ni secrets** | — | archivo |
 
 ### 4.1 `GET /public/tenants/{identifier}`
 

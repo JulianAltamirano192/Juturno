@@ -331,13 +331,15 @@ REQUIRE_STARTED = {"no_show", "completed"}  # solo si start_time <= now
 app/
 ├── main.py              — lifespan, APScheduler, middlewares, exception handlers, include_router()
 ├── limiter.py           — singleton Limiter de slowapi (separado para evitar imports circulares)
-├── templates.py         — singleton Jinja2Templates
+├── templates.py         — singleton Jinja2Templates (+ filtro Jinja `money`: "$ 18.000")
+├── templates/           — plantillas Jinja2 (diseño neón: base.html responsive, landing.html standalone)
+├── static/              — montado en /static (StaticFiles): fonts/ (Sora + DM Sans woff2 + fonts.css), landing/*.webp. Público sin auth
 ├── schemas.py           — schemas Pydantic compartidos: SlotQuery, AvailableSlotsResponse, BookingCreate
 ├── routers/
-│   ├── public.py        — sin auth: GET /health, GET /public/*, POST /public/bookings, GET /t/{slug}
+│   ├── public.py        — sin auth: GET /, GET /health, GET /public/*, POST /public/bookings, GET /t/{slug}
 │   ├── auth.py          — formularios/cookies: GET+POST /register, GET+POST /login, POST /logout
 │   ├── api.py           — API Key (X-Tenant-API-Key): /bookings/available-slots, POST /bookings, PATCH /tenants/me
-│   └── panel.py         — cookie auth: GET /dashboard, GET+POST /panel/*
+│   └── panel.py         — cookie auth: GET /dashboard (resumen del día, próximos turnos, checklist; todo por tenant_id), GET+POST /panel/*
 ├── mp_connect.py        — OAuth MP: /mp/connect/start, /mp/connect/callback, PATCH /tenants/me/mp
 ├── mp_webhooks.py       — POST /webhooks/mercadopago
 ├── booking_actions.py   — máquina de estados booking (transition_booking_status)
