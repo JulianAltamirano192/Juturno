@@ -273,12 +273,15 @@ REQUIRE_STARTED = {"no_show", "completed"}  # solo si start_time <= now
 
 ### 10.1 OAuth por tenant (`app/mp_connect.py`)
 - **Flujo Authorization Code**:
-  1. `GET /mp/connect/start` (auth API key) → genera `state` (nonce 32 bytes) → guarda en Redis `mp_connect_state:{state}: tenant_id` (TTL 600s, un solo uso).
-  2. Devuelve `authorization_url` de MP con `state`, `redirect_uri`, `client_id`.
+  1. `POST /panel/mp/connect/start` (cookie + CSRF) → `mp_authorization_redirect(tenant_id)` genera `state` (nonce 32 bytes) → guarda en Redis `mp_connect_state:{state}` = `tenant_id` (string, TTL 600s, un solo uso) y setea la cookie HttpOnly `mp_oauth_state` = `state` (path `/mp/connect/callback`, max-age 600, SameSite=Lax, `Secure` en producción; `Domain` = host de `PUBLIC_BASE_URL` si el callback es subdominio de él, si no host-only).
+  2. Responde 302 a la autorización de MP con `state`, `redirect_uri`, `client_id`.
   3. Dueño autoriza en MP → MP redirige a `GET /mp/connect/callback?code=...&state=...`
-  4. Callback consume `state` (Redis `GETDEL` → un solo uso), canjea `code` por tokens en `POST /oauth/token`.
+  4. Callback exige que la cookie `mp_oauth_state` coincida con el `state` (`hmac.compare_digest`), consume `state` (Redis `GETDEL` → un solo uso), canjea `code` por tokens en `POST /oauth/token`.
   5. Cifra `access_token` y `refresh_token` con **Fernet** (`MP_TOKEN_ENCRYPTION_KEY`) → guarda en `tenant.mp_access_token_enc`, `mp_refresh_token_enc`.
   6. Guarda `mp_user_id` (collector_id), `mp_alias` (nickname), `mp_token_expires_at = now + expires_in`.
+- **Única vía de conexión**: el panel (`GET /panel/settings` con cookie + `POST /panel/mp/connect/start` con cookie + CSRF). `GET /mp/connect/start` por API key se eliminó (404): una URL de autorización devuelta por API no tiene navegador al cual atar el state (account-linking). `GET`/`DELETE /tenants/me/mp` (API key) siguen.
+- **Callback**: siempre 302 a `PUBLIC_BASE_URL/panel/settings?mp=connected|error|other_browser`. `other_browser` = cookie ausente o distinta del state: no se consume el state ni se vincula nada. Siguen siendo 400 JSON (falta code/state, state inválido/vencido/usado) y 502 (falla el canje en MP). Ojo: si el host de `PUBLIC_BASE_URL` no es padre del host del callback, la cookie no llega y toda conexión termina en `other_browser`.
+- **Desconexión desde el panel** (`POST /panel/mp/disconnect`): limpia en local `mp_access_token_enc`, `mp_refresh_token_enc`, `mp_token_expires_at`, `mp_user_id`, `mp_public_key` y `mp_alias`; no revoca la autorización en MP. Se bloquea (302 `?mp=pending`) si hay un turno `pending` con `Payment.mp_preference_id` y el plazo de seña (`created_at + deposit_expiration_minutes`, mismo criterio que `process_deposit_expiration`) no venció; con minutos `NULL` siempre bloquea, porque el webhook necesita el token para verificar el pago.
 - **Regla de cobro (D-012)**: `resolve_mp_access_token(tenant)`:
   - Tenant con cuenta → su `access_token` descifrado.
   - Sandbox + sin cuenta → `MP_ACCESS_TOKEN` de la plataforma (dinero de prueba).
@@ -340,7 +343,7 @@ app/
 │   ├── auth.py          — formularios/cookies: GET+POST /register, GET+POST /login, POST /logout
 │   ├── api.py           — API Key (X-Tenant-API-Key): /bookings/available-slots, POST /bookings, PATCH /tenants/me
 │   └── panel.py         — cookie auth: GET /dashboard (resumen del día, próximos turnos, checklist; todo por tenant_id), GET+POST /panel/*
-├── mp_connect.py        — OAuth MP: /mp/connect/start, /mp/connect/callback, PATCH /tenants/me/mp
+├── mp_connect.py        — OAuth MP: /mp/connect/callback, PATCH /tenants/me/mp
 ├── mp_webhooks.py       — POST /webhooks/mercadopago
 ├── booking_actions.py   — máquina de estados booking (transition_booking_status)
 ├── services.py          — lógica de negocio (compute_available_slots, etc.)

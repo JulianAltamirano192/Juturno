@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+
+{% block title %}Ajustes - {{ tenant.name }}{% endblock %}
+
+{% block head %}
+<style>
+  .mp-row{display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap;margin-top:14px}
+  .mp-row p{color:var(--muted);font-size:14px}
+  .mp-row strong{color:var(--text)}
+</style>
+{% endblock %}
+
+{% block dash_content %}
+<div class="ph">
+  <div>
+    <h1>Ajustes</h1>
+    <p>Configurá cómo cobrás las señas.</p>
+  </div>
+</div>
+
+{% if flash and flash_error %}
+<div class="banner banner-danger" role="alert">{{ ui.icon('alerta') }}<span>{{ flash }}</span></div>
+{% elif flash %}
+<div class="banner banner-ok" role="status">{{ ui.icon('check') }}<span>{{ flash }}</span></div>
+{% endif %}
+
+<section class="form-card" aria-labelledby="h-mp">
+  <h2 id="h-mp" style="font-size:18px">Mercado Pago</h2>
+  {% if mp_connected %}
+  <div class="mp-row">
+    <p>Cuenta conectada{% if tenant.mp_alias %}: <strong>{{ tenant.mp_alias }}</strong>{% endif %}. Las señas se acreditan directo en tu cuenta.</p>
+    <form method="POST" action="/panel/mp/disconnect">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="btn-sm danger">Desconectar</button>
+    </form>
+  </div>
+  {% else %}
+  <div class="mp-row">
+    <p>Sin cuenta conectada. Conectala para cobrar señas al reservar.</p>
+    <form method="POST" action="/panel/mp/connect/start">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="btn-p">Conectar Mercado Pago</button>
+    </form>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}

@@ -72,60 +72,48 @@ def _patch_mp_exchange(monkeypatch, token_resp=None, profile=None):
 
 
 # ---------------------------------------------------------------------------
-# GET /mp/connect/start
+# GET /mp/connect/start (removed: a bare API-key link can't be bound to the
+# browser that completes the callback — the panel flow replaces it)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_connect_start_requires_api_key(client):
-    res = await client.get("/mp/connect/start")
-    assert res.status_code == 401
-
-
-@pytest.mark.asyncio
-async def test_connect_start_returns_authorization_url(client, db_session):
+async def test_api_key_connect_start_is_removed(client, db_session):
     _tenant, headers = await _tenant_with_api_key(db_session)
-
     res = await client.get("/mp/connect/start", headers=headers)
-    assert res.status_code == 200
-
-    url = res.json()["authorization_url"]
-    assert url.startswith("https://auth.mercadopago.com/authorization?")
-    assert "client_id=1234567890123456" in url
-    assert "response_type=code" in url
-    assert "state=" in url
-    # El redirect_uri coincide exactamente con el registrado en MP
-    assert "redirect_uri=https%3A%2F%2Fapi.juturno.com%2Fmp%2Fconnect%2Fcallback" in url
+    assert res.status_code == 404
 
 
 # ---------------------------------------------------------------------------
 # GET /mp/connect/callback
 # ---------------------------------------------------------------------------
 
+STATE_COOKIE = "mp_oauth_state"
+
+
+async def _started_state(tenant: Tenant) -> str:
+    """State registrado como lo hace POST /panel/mp/connect/start."""
+    state = f"state-test-{tenant.id}"
+    await mp_connect._store_state(state, tenant.id)
+    return state
+
 
 @pytest.mark.asyncio
 async def test_callback_completes_connection(client, db_session, monkeypatch):
-    """Flujo feliz: state válido → canje mockeado → credenciales cifradas."""
-    tenant, headers = await _tenant_with_api_key(db_session)
+    """Flujo feliz: state válido + cookie del navegador → credenciales cifradas."""
+    tenant, _headers = await _tenant_with_api_key(db_session)
     _patch_mp_exchange(monkeypatch)
-
-    start = await client.get("/mp/connect/start", headers=headers)
-    url = start.json()["authorization_url"]
-    state = next(
-        p.split("=", 1)[1]
-        for p in url.partition("?")[2].split("&")
-        if p.startswith("state=")
-    )
+    state = await _started_state(tenant)
 
     res = await client.get(
-        "/mp/connect/callback", params={"code": "TG-code-ok", "state": state}
+        "/mp/connect/callback",
+        params={"code": "TG-code-ok", "state": state},
+        cookies={STATE_COOKIE: state},
+        follow_redirects=False,
     )
-    assert res.status_code == 200
-    body = res.json()
-    assert body["connected"] is True
-    assert body["mp_user_id"] == "1234567890"
-    assert body["mp_alias"] == "negocio.demo"
-    assert "access_token" not in body and "refresh_token" not in body
+    assert res.status_code == 302
+    assert res.headers["location"].endswith("/panel/settings?mp=connected")
+    assert "oauth-del-vendedor" not in res.text
 
     # En DB: ciphertext, no texto plano, y expiración seteada
     raw = await db_session.execute(
@@ -136,6 +124,8 @@ async def test_callback_completes_connection(client, db_session, monkeypatch):
         ).bindparams(tid=tenant.id)
     )
     row = raw.one()
+    assert row.mp_user_id == "1234567890"
+    assert row.mp_alias == "negocio.demo"
     assert "oauth-del-vendedor" not in row.mp_access_token_enc
     assert decrypt_token(row.mp_access_token_enc) == FAKE_TOKEN_RESPONSE["access_token"]
     assert (
@@ -149,6 +139,7 @@ async def test_callback_rejects_invalid_state(client):
     res = await client.get(
         "/mp/connect/callback",
         params={"code": "TG-code", "state": "state-inventado"},
+        cookies={STATE_COOKIE: "state-inventado"},
     )
     assert res.status_code == 400
 
@@ -156,33 +147,28 @@ async def test_callback_rejects_invalid_state(client):
 @pytest.mark.asyncio
 async def test_callback_state_is_single_use(client, db_session, monkeypatch):
     """Un state consumido no sirve ni para el mismo code ni otro."""
-    _tenant, headers = await _tenant_with_api_key(db_session)
+    tenant, _headers = await _tenant_with_api_key(db_session)
     _patch_mp_exchange(monkeypatch)
-
-    start = await client.get("/mp/connect/start", headers=headers)
-    state = start.json()["authorization_url"].split("state=", 1)[1].split("&")[0]
+    state = await _started_state(tenant)
 
     url = f"/mp/connect/callback?code=TG-code&state={state}"
-    assert (await client.get(url)).status_code == 200
+    cookies = {STATE_COOKIE: state}
+    first = await client.get(url, cookies=cookies, follow_redirects=False)
+    assert first.status_code == 302
     # Segundo uso del mismo state → rechazado
-    assert (await client.get(url)).status_code == 400
+    assert (await client.get(url, cookies=cookies)).status_code == 400
 
 
 @pytest.mark.asyncio
 async def test_callback_handles_mp_cancellation(client):
-    """El dueño canceló en la pantalla de MP: ?error=access_denied."""
-    res = await client.get("/mp/connect/callback", params={"error": "access_denied"})
-    assert res.status_code == 400
-    assert "access_denied" in res.json()["detail"]
-
-
-@pytest.mark.asyncio
-async def test_missing_mp_config_blocks_start(client, db_session, monkeypatch):
-    _tenant, headers = await _tenant_with_api_key(db_session)
-    monkeypatch.setattr(mp_connect.settings, "MP_MARKETPLACE_CLIENT_ID", "")
-
-    res = await client.get("/mp/connect/start", headers=headers)
-    assert res.status_code == 503
+    """El dueño canceló en la pantalla de MP: vuelve al panel con error."""
+    res = await client.get(
+        "/mp/connect/callback",
+        params={"error": "access_denied"},
+        follow_redirects=False,
+    )
+    assert res.status_code == 302
+    assert res.headers["location"].endswith("/panel/settings?mp=error")
 
 
 # ---------------------------------------------------------------------------

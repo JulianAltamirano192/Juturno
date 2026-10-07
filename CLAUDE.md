@@ -66,9 +66,13 @@ Si un doc contradice el código, manda el código: avisá y proponé corregir el
 - ~~D-017: slots duplicados~~ — **Resuelto**: lógica extraída a `compute_available_slots` en `app/services.py`; ambos endpoints la usan.
 - ~~D-018: env vars críticas sin validador en startup~~ — **Resuelto**: `model_post_init` valida `META_APP_SECRET`, `MP_TOKEN_ENCRYPTION_KEY`, `MP_SECRET_KEY`, `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID` en producción.
 - ~~`PublicServiceRead.price/deposit_amount: float`~~ — **Resuelto**: ahora `Decimal` con `field_serializer` que serializa como número.
-- Alta autoservicio incompleta: conectar MP (`/mp/connect/start`, `/tenants/me/mp`) y
-  `PATCH /tenants/me` exigen API key; el panel con cookie no tiene botón. No hay cambio/recupero
-  de contraseña ni verificación de email.
+- Alta autoservicio incompleta: conectar/desconectar MP ya se puede desde el panel con la cookie
+  (`/panel/settings`, `POST /panel/mp/connect/start`, `POST /panel/mp/disconnect`), pero
+  `PATCH /tenants/me` (y `/tenants/me/mp` de la API) siguen exigiendo
+  API key. No hay cambio/recupero de contraseña ni verificación de email.
+  - ~~Pendiente (seguridad): el `state` OAuth no está atado al navegador (account-linking).~~ — **Resuelto**: cookie HttpOnly `mp_oauth_state` debe coincidir con el state en el callback; se eliminó `GET /mp/connect/start` (API key), solo se conecta desde el panel.
+  - Pendiente (seguridad, preexistente, no corregido): `Tenant.mp_user_id` no es único; dos tenants
+    con la misma cuenta MP provocan `MultipleResultsFound` y los webhooks devuelven 500.
 - ~~CSRF en `/panel/*`: `validate_csrf` solo exige que exista la cookie, no la compara con el form.~~ — **Resuelto en `7be0fcd`**: ahora lee el form body y compara con `hmac.compare_digest` (double-submit).
 - ~~`idempotency_key` es UNIQUE global~~ — **Resuelto en `8cfa0d6`** (migración `b0e5b8028ae7`): constraint ahora es `(tenant_id, idempotency_key)`.
 - ~~`BookingCreate` acepta `price_at_booking` del cliente~~ — **Resuelto en `8cfa0d6`**: campo eliminado del schema. Pendiente: montos `float` en schemas públicos (`PublicServiceRead`, `BookingCreate`) — dinero debería ser `Decimal`.

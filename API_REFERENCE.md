@@ -24,7 +24,7 @@
 - **Campo formulario**: `<input type="hidden" name="csrf_token" value="...">`
 - **Dos flujos de validación**:
   - **`/register` y `/login` (double-submit completo)**: `validate_csrf_double_submit` compara form vs cookie con `hmac.compare_digest` → si falla, **400** con formulario re-renderizado (nuevo token) y mensaje de error.
-  - **Endpoints `/panel/*` (guard adicional)**: `validate_csrf` exige que la cookie `csrf_token` exista → **403** si falta. El token del formulario llega por `Form(...)` pero no se compara contra la cookie en este helper.
+  - **Endpoints `/panel/*`**: `validate_csrf` lee el form body y compara el token contra la cookie `csrf_token` con `hmac.compare_digest` (double-submit) → **403** si falta o no coincide.
 
 ---
 
@@ -50,6 +50,9 @@
 | GET | `/login` | Formulario login (redirige a `/dashboard` si sesión válida) | — |
 | POST | `/login` | Validar credenciales, setear cookie `juturno_session` | CSRF |
 | POST | `/logout` | Borrar cookie sesión | — |
+| GET | `/panel/settings` | Ajustes: estado de la conexión con Mercado Pago. `?mp=connected\|disconnected\|pending\|error` muestra un mensaje fijo (nunca se refleja el valor del query) | Cookie |
+| POST | `/panel/mp/connect/start` | Guarda el state en Redis, setea la cookie `mp_oauth_state` (HttpOnly) y responde 302 a MP. 503 si falta `MP_MARKETPLACE_CLIENT_ID` | Cookie + CSRF |
+| POST | `/panel/mp/disconnect` | Borra localmente tokens y metadata MP → 302 `/panel/settings?mp=disconnected`. Bloqueado con 302 `?mp=pending` si hay un turno `pending` con `Payment.mp_preference_id` y plazo de seña vigente (`created_at + deposit_expiration_minutes`; minutos `NULL` = siempre bloquea). No revoca la autorización en MP | Cookie + CSRF |
 | GET | `/dashboard` | Vista principal: resumen del día, próximos turnos, checklist de configuración y link público de reserva (oculto si el tenant no tiene slug). Todo filtrado por `tenant_id` | Cookie |
 | GET | `/panel/services` | Listar servicios (activos/inactivos) | Cookie |
 | GET | `/panel/services/new` | Formulario nuevo servicio | Cookie |
@@ -268,40 +271,36 @@ Igual que público pero **requiere API Key** y valida que `tenant_id` coincida c
 
 | Método | Path | Auth | Descripción |
 |--------|------|------|-------------|
-| GET | `/mp/connect/start` | API Key | Devuelve `authorization_url` para conectar cuenta MP |
-| GET | `/mp/connect/callback` | — (público) | Callback OAuth: canjea `code` → tokens cifrados en tenant |
+| GET | `/mp/connect/callback` | — (público, cookie `mp_oauth_state`) | Callback OAuth: canjea `code` → tokens cifrados en tenant y responde 302 al panel |
 | GET | `/tenants/me/mp` | API Key | Estado conexión MP (connected, mp_user_id, mp_alias, expires_at) |
 | DELETE | `/tenants/me/mp` | API Key | Desconectar MP (borra tokens + metadata) |
 
-### 7.1 `GET /mp/connect/start`
+### 7.1 Inicio de la conexión (solo desde el panel)
 
-**Response 200:**
-```json
-{
-  "authorization_url": "https://auth.mercadopago.com/authorization?client_id=...&state=...",
-  "expires_in_seconds": 600
-}
-```
-- `state` = nonce 32 bytes → Redis `mp_connect_state:{state}: tenant_id` (TTL 600s, un solo uso).
+`GET /mp/connect/start` (API key) fue **eliminado** (hoy responde 404): una `authorization_url` devuelta por API no tiene un navegador al cual atar el `state` OAuth (account-linking). La única forma de conectar MP es `POST /panel/mp/connect/start` (cookie + CSRF, ver sección 3), que:
+- Genera `state` (nonce 32 bytes) → Redis `mp_connect_state:{state}` = `tenant_id` como string (TTL 600s, un solo uso).
+- Setea la cookie `mp_oauth_state` = `state` (HttpOnly, path `/mp/connect/callback`, max-age 600, SameSite=Lax, `Secure` en producción). `Domain` = host de `PUBLIC_BASE_URL` cuando el host del callback es un subdominio de ese host (p. ej. panel `juturno.com` + callback `api.juturno.com`); si no, cookie host-only.
+- Responde 302 a la `authorization_url` de MP.
+
+`GET /tenants/me/mp` y `DELETE /tenants/me/mp` (API key) siguen disponibles.
 
 ### 7.2 `GET /mp/connect/callback`
 
 **Query:** `code`, `state`, `error?`
-- Si `error` → 400 "Autorización cancelada: {error}"
-- Valida `state` (Redis `GETDEL` → un solo uso) → 400 si inválido/vencido.
-- Canjea `code` en `POST /oauth/token` con `client_id`, `client_secret`, `redirect_uri`, `test_token=true` si `MP_SANDBOX`.
-- Cifra tokens (Fernet) → guarda en tenant: `mp_access_token_enc`, `mp_refresh_token_enc`, `mp_user_id`, `mp_alias`, `mp_token_expires_at`.
 
-**Response 200:**
-```json
-{
-  "connected": true,
-  "tenant_id": 1,
-  "mp_user_id": "123456789",
-  "mp_alias": "Mi Negocio",
-  "mp_token_expires_at": "2027-04-15T10:30:00+00:00"
-}
-```
+Siempre responde **302** a `{PUBLIC_BASE_URL}/panel/settings?mp=<flag>` (no hay respuesta JSON de éxito). `PUBLIC_BASE_URL` tiene que estar bien seteada en cada entorno.
+
+| Flag | Cuándo |
+|------|--------|
+| `connected` | Éxito; se borra la cookie `mp_oauth_state` |
+| `error` | MP devolvió `error=`; el state se consume y la cookie se borra solo si la cookie coincide con el state |
+| `other_browser` | Cookie ausente o distinta del `state`: el state NO se consume y no se vincula nada; el panel pide completar la autorización en el mismo navegador |
+
+Errores JSON que se mantienen:
+- 400 si falta `code` o `state`, o si el `state` es inválido/vencido/ya usado (Redis `GETDEL`, un solo uso).
+- 502 si falla el canje con MP.
+
+Flujo de éxito: canjea `code` en `POST /oauth/token` con `client_id`, `client_secret`, `redirect_uri`, `test_token=true` si `MP_SANDBOX`; cifra tokens (Fernet) y guarda en tenant: `mp_access_token_enc`, `mp_refresh_token_enc`, `mp_user_id`, `mp_alias`, `mp_token_expires_at`.
 
 ### 7.3 `GET /tenants/me/mp`
 
@@ -388,7 +387,7 @@ deposit_expiration_minutes: int | None = None  # ge=1
 
 | Código | Endpoint típico | Causa |
 |--------|-----------------|-------|
-| 401 | `/bookings/*`, `/tenants/me/*`, `/mp/connect/start` | API key faltante/inválida/revocada |
+| 401 | `/bookings/*`, `/tenants/me/*` | API key faltante/inválida/revocada |
 | 401 | `/webhooks/mercadopago` | HMAC MP inválido |
 | 401 | `/webhooks/whatsapp` | HMAC Meta inválido |
 | 403 | `/webhooks/mercadopago` | Timestamp > 5 min (replay) |
