@@ -60,8 +60,9 @@ def test_templates_link_favicon(template):
     assert 'href="/static/brand/apple-touch-icon.png"' in source
 
 
-def test_landing_uses_monkey_logo_not_cube():
-    source = (TEMPLATES_DIR / "landing.html").read_text()
+@pytest.mark.parametrize("template", ["landing.html", "_ui.html"])
+def test_templates_use_monkey_logo_not_cube(template):
+    source = (TEMPLATES_DIR / template).read_text()
     assert 'id="jt-logo-grad"' in source
     assert "M12 2.5 20.5 7v10L12 21.5 3.5 17V7z" not in source
 
