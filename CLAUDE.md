@@ -68,11 +68,9 @@ Si un doc contradice el código, manda el código: avisá y proponé corregir el
 - ~~`PublicServiceRead.price/deposit_amount: float`~~ — **Resuelto**: ahora `Decimal` con `field_serializer` que serializa como número.
 - Alta autoservicio incompleta: conectar/desconectar MP ya se puede desde el panel con la cookie
   (`/panel/settings`, `POST /panel/mp/connect/start`, `POST /panel/mp/disconnect`), pero
-  `PATCH /tenants/me` (y los `/mp/connect/start`, `/tenants/me/mp` de la API) siguen exigiendo
+  `PATCH /tenants/me` (y `/tenants/me/mp` de la API) siguen exigiendo
   API key. No hay cambio/recupero de contraseña ni verificación de email.
-  - Pendiente (seguridad, preexistente, no corregido): el `state` OAuth no está atado al navegador;
-    quien comparta un link de autorización puede hacer que otra sesión vincule su cuenta MP
-    (account-linking).
+  - ~~Pendiente (seguridad): el `state` OAuth no está atado al navegador (account-linking).~~ — **Resuelto**: cookie HttpOnly `mp_oauth_state` debe coincidir con el state en el callback; se eliminó `GET /mp/connect/start` (API key), solo se conecta desde el panel.
   - Pendiente (seguridad, preexistente, no corregido): `Tenant.mp_user_id` no es único; dos tenants
     con la misma cuenta MP provocan `MultipleResultsFound` y los webhooks devuelven 500.
 - ~~CSRF en `/panel/*`: `validate_csrf` solo exige que exista la cookie, no la compara con el form.~~ — **Resuelto en `7be0fcd`**: ahora lee el form body y compara con `hmac.compare_digest` (double-submit).

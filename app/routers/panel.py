@@ -19,7 +19,7 @@ from app.config import settings
 from app.csrf import generate_csrf_token, set_csrf_cookie, validate_csrf
 from app.database import get_db
 from app.models import Booking, BusinessHours, Payment, Service, Staff, Tenant
-from app.mp_connect import build_mp_authorization_url
+from app.mp_connect import mp_authorization_redirect
 from app.services import effective_deposit
 from app.templates import templates
 
@@ -309,10 +309,14 @@ _MP_FLASH = {
         "Esperá a que se paguen o venzan."
     ),
     "error": "No se pudo conectar Mercado Pago. Probá de nuevo.",
+    "other_browser": (
+        "No se pudo conectar Mercado Pago: la autorización terminó en otro "
+        "navegador. Volvé a intentarlo y completala en el mismo navegador."
+    ),
 }
 
 # Mensajes de error: se muestran con banner de error, no de éxito.
-_MP_FLASH_ERRORS = {"pending", "error"}
+_MP_FLASH_ERRORS = {"pending", "error", "other_browser"}
 
 
 @router.get("/panel/settings", response_class=HTMLResponse)
@@ -344,10 +348,9 @@ async def panel_mp_connect_start(
     tenant: Tenant = Depends(get_current_tenant_from_session),
 ):
     await validate_csrf(request)
-    # El state lleva solo un flag de panel; la URL de vuelta la arma el
-    # callback en el servidor (sin open redirect a través del state).
-    url = await build_mp_authorization_url(tenant.id, panel=True)
-    return RedirectResponse(url=url, status_code=status.HTTP_302_FOUND)
+    # El state queda atado a este navegador por cookie; la URL de vuelta la
+    # arma el callback en el servidor (sin open redirect a través del state).
+    return await mp_authorization_redirect(tenant.id)
 
 
 @router.post("/panel/mp/disconnect")

@@ -13,6 +13,7 @@ from app.mp_crypto import encrypt_token
 from app.session import create_session_token
 
 TEST_FERNET_KEY = Fernet.generate_key().decode()
+STATE_COOKIE = "mp_oauth_state"
 
 
 @pytest.fixture(autouse=True)
@@ -209,25 +210,75 @@ async def test_panel_mp_connect_start_requires_csrf(client, db_session):
     assert resp.status_code == 403
 
 
-@pytest.mark.asyncio
-async def test_panel_mp_connect_start_redirects_to_mp(client, db_session):
-    tenant = await _create_tenant(db_session, "mp-start")
+async def _post_connect_start(client, tenant: Tenant):
     csrf, cookies = await _get_csrf(client, _make_cookie(tenant))
-    resp = await client.post(
+    return await client.post(
         "/panel/mp/connect/start",
         cookies=cookies,
         data={"csrf_token": csrf},
         follow_redirects=False,
     )
+
+
+def _state_set_cookie(resp) -> str:
+    """Header Set-Cookie (en minúsculas) de la cookie que ata el state."""
+    cookies = [
+        c for c in resp.headers.get_list("set-cookie") if c.startswith(STATE_COOKIE)
+    ]
+    assert len(cookies) == 1, resp.headers.get_list("set-cookie")
+    return cookies[0].lower()
+
+
+@pytest.mark.asyncio
+async def test_panel_mp_connect_start_redirects_to_mp(client, db_session, monkeypatch):
+    # Panel en juturno.com, callback en api.juturno.com (como en producción)
+    monkeypatch.setattr(mp_connect.settings, "PUBLIC_BASE_URL", "https://juturno.com")
+    tenant = await _create_tenant(db_session, "mp-start")
+    resp = await _post_connect_start(client, tenant)
     assert resp.status_code == 302
     location = resp.headers["location"]
     assert "mercadopago.com" in location
     m = re.search(r"state=([^&]+)", location)
     assert m
-    # El state guarda un flag de panel, nunca una URL.
-    raw = await _raw_state(m.group(1))
-    assert raw is not None
-    assert "http" not in raw and "/panel" not in raw
+    state = m.group(1)
+    # En Redis solo vive el tenant_id, nunca una URL.
+    assert await _raw_state(state) == str(tenant.id)
+
+    # El state queda atado a este navegador, y la cookie llega al callback
+    # aunque viva en otro subdominio.
+    cookie = _state_set_cookie(resp)
+    assert cookie.startswith(f"{STATE_COOKIE}={state.lower()};")
+    assert "httponly" in cookie
+    assert "path=/mp/connect/callback" in cookie
+    assert "samesite=lax" in cookie
+    assert "max-age=600" in cookie
+    assert "domain=juturno.com" in cookie
+
+
+@pytest.mark.asyncio
+async def test_panel_mp_connect_start_same_host_cookie_is_host_only(
+    client, db_session, monkeypatch
+):
+    monkeypatch.setattr(mp_connect.settings, "PUBLIC_BASE_URL", "http://localhost:8000")
+    monkeypatch.setattr(
+        mp_connect.settings,
+        "MP_MARKETPLACE_REDIRECT_URL",
+        "http://localhost:8000/mp/connect/callback",
+    )
+    tenant = await _create_tenant(db_session, "mp-start-local")
+    resp = await _post_connect_start(client, tenant)
+    assert resp.status_code == 302
+    assert "domain=" not in _state_set_cookie(resp)
+
+
+@pytest.mark.asyncio
+async def test_panel_mp_connect_start_without_mp_config_returns_503(
+    client, db_session, monkeypatch
+):
+    monkeypatch.setattr(mp_connect.settings, "MP_MARKETPLACE_CLIENT_ID", "")
+    tenant = await _create_tenant(db_session, "mp-start-noconf")
+    resp = await _post_connect_start(client, tenant)
+    assert resp.status_code == 503
 
 
 @pytest.mark.asyncio
@@ -391,23 +442,11 @@ async def test_panel_mp_disconnect_ignores_other_tenants_pending(client, db_sess
 
 
 # ---------------------------------------------------------------------------
-# Callback con / sin flag de panel en el state
+# Callback: el state solo vale en el navegador que inició la conexión
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_callback_with_redirect_url_redirects_to_panel(
-    client, db_session, monkeypatch
-):
-    """Callback con flag de panel → 302 al panel (no JSON), URL armada en server."""
-    monkeypatch.setattr(mp_connect.settings, "PUBLIC_BASE_URL", "https://juturno.test/")
-    tenant = await _create_tenant(db_session, "cb-redir")
-
-    state = "panel-state-test-abc"
-    await mp_connect._store_state(state, tenant.id, panel=True)
-    raw = await _raw_state(state)
-    assert raw is not None and "http" not in raw and "/panel" not in raw
-
+def _patch_exchange(monkeypatch) -> None:
     async def mock_exchange(code: str):
         return {
             "access_token": "APP_USR-panel-access",
@@ -422,68 +461,87 @@ async def test_callback_with_redirect_url_redirects_to_panel(
     monkeypatch.setattr(mp_connect, "_exchange_code_for_tokens", mock_exchange)
     monkeypatch.setattr(mp_connect, "_fetch_mp_profile", mock_profile)
 
+
+@pytest.mark.asyncio
+async def test_callback_with_state_cookie_redirects_to_panel(
+    client, db_session, monkeypatch
+):
+    """State + cookie del mismo navegador → 302 al panel, URL armada en server."""
+    monkeypatch.setattr(mp_connect.settings, "PUBLIC_BASE_URL", "https://juturno.test/")
+    tenant = await _create_tenant(db_session, "cb-redir")
+    state = "panel-state-test-abc"
+    await mp_connect._store_state(state, tenant.id)
+    _patch_exchange(monkeypatch)
+
     resp = await client.get(
         f"/mp/connect/callback?code=panel-code&state={state}",
+        cookies={STATE_COOKIE: state},
         follow_redirects=False,
     )
     assert resp.status_code == 302
     assert (
         resp.headers["location"] == "https://juturno.test/panel/settings?mp=connected"
     )
+    assert "max-age=0" in _state_set_cookie(resp)
 
     await db_session.refresh(tenant)
     assert tenant.mp_access_token_enc is not None
 
 
 @pytest.mark.asyncio
-async def test_callback_without_redirect_url_returns_json(
-    client, db_session, monkeypatch
+@pytest.mark.parametrize("cookie_value", [None, "state-de-otro-navegador"])
+async def test_callback_rejects_state_from_another_browser(
+    client, db_session, monkeypatch, cookie_value
 ):
-    """Callback sin redirect_url → comportamiento existente (JSON)."""
-    tenant = await _create_tenant(db_session, "cb-json")
+    """Un link de autorización compartido no vincula la cuenta MP de otra
+    sesión: sin la cookie del navegador que inició el flujo, se rechaza."""
+    monkeypatch.setattr(mp_connect.settings, "PUBLIC_BASE_URL", "https://juturno.test")
+    tenant = await _create_tenant(db_session, f"cb-other-{cookie_value is None}")
+    state = f"shared-state-{cookie_value is None}"
+    await mp_connect._store_state(state, tenant.id)
+    _patch_exchange(monkeypatch)
 
-    state = "api-state-test-xyz"
-    await mp_connect._store_state(state, tenant.id)  # sin flag de panel
-
-    async def mock_exchange(code: str):
-        return {
-            "access_token": "APP_USR-json-access",
-            "refresh_token": "TG-json-refresh",
-            "expires_in": 15552000,
-            "user_id": 1111111111,
-        }
-
-    async def mock_profile(access_token: str):
-        return "1111111111", "negocio.json"
-
-    monkeypatch.setattr(mp_connect, "_exchange_code_for_tokens", mock_exchange)
-    monkeypatch.setattr(mp_connect, "_fetch_mp_profile", mock_profile)
-
+    cookies = {STATE_COOKIE: cookie_value} if cookie_value else {}
     resp = await client.get(
-        f"/mp/connect/callback?code=json-code&state={state}",
+        f"/mp/connect/callback?code=stolen-code&state={state}",
+        cookies=cookies,
         follow_redirects=False,
     )
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["connected"] is True
+    assert resp.status_code == 302
+    assert (
+        resp.headers["location"]
+        == "https://juturno.test/panel/settings?mp=other_browser"
+    )
+    # El state no se consume: quien inició el flujo todavía puede terminarlo.
+    assert await _raw_state(state) == str(tenant.id)
+
+    await db_session.refresh(tenant)
+    assert tenant.mp_access_token_enc is None
+    assert tenant.mp_user_id is None
+
+    page = await client.get(
+        "/panel/settings?mp=other_browser",
+        cookies={"juturno_session": _make_cookie(tenant)},
+    )
+    assert "mismo navegador" in page.text
 
 
 @pytest.mark.asyncio
-async def test_callback_error_with_panel_state_redirects_to_settings(
-    client, db_session, monkeypatch
-):
+async def test_callback_error_redirects_to_settings(client, db_session, monkeypatch):
     monkeypatch.setattr(mp_connect.settings, "PUBLIC_BASE_URL", "https://juturno.test")
     tenant = await _create_tenant(db_session, "cb-err-panel")
     state = "panel-state-err"
-    await mp_connect._store_state(state, tenant.id, panel=True)
+    await mp_connect._store_state(state, tenant.id)
 
     resp = await client.get(
         f"/mp/connect/callback?error=access_denied&state={state}",
+        cookies={STATE_COOKIE: state},
         follow_redirects=False,
     )
     assert resp.status_code == 302
     assert resp.headers["location"] == "https://juturno.test/panel/settings?mp=error"
     assert await _raw_state(state) is None
+    assert "max-age=0" in _state_set_cookie(resp)
 
     page = await client.get(
         "/panel/settings?mp=error", cookies={"juturno_session": _make_cookie(tenant)}
@@ -492,13 +550,16 @@ async def test_callback_error_with_panel_state_redirects_to_settings(
 
 
 @pytest.mark.asyncio
-async def test_callback_error_without_panel_state_keeps_400(client, db_session):
-    tenant = await _create_tenant(db_session, "cb-err-api")
-    state = "api-state-err"
+async def test_callback_error_without_cookie_keeps_state(client, db_session):
+    """Sin la cookie, un ?error= no puede quemar el flujo de otro navegador."""
+    tenant = await _create_tenant(db_session, "cb-err-nocookie")
+    state = "panel-state-err-nocookie"
     await mp_connect._store_state(state, tenant.id)
 
     resp = await client.get(
         f"/mp/connect/callback?error=access_denied&state={state}",
         follow_redirects=False,
     )
-    assert resp.status_code == 400
+    assert resp.status_code == 302
+    assert resp.headers["location"].endswith("/panel/settings?mp=error")
+    assert await _raw_state(state) == str(tenant.id)
