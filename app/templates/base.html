@@ -224,7 +224,7 @@
     <a class="brand" href="/dashboard" aria-label="Juturno, inicio del panel">{{ ui.logo() }}Juturno</a>
     <div class="tenant-card">
       <span class="avatar">{{ tenant.name[:1]|upper }}</span>
-      <div><strong>{{ tenant.name }}</strong><span>/t/{{ tenant.slug }}</span></div>
+      <div><strong>{{ tenant.name }}</strong>{% if tenant.slug %}<span>/t/{{ tenant.slug }}</span>{% endif %}</div>
     </div>
     <nav class="side-nav" aria-label="Panel">
       {% for key, label, href, active in _nav %}
@@ -232,7 +232,7 @@
       {% endfor %}
     </nav>
     <div class="side-foot">
-      <a class="nav-a" href="/t/{{ tenant.slug }}" target="_blank" rel="noopener">{{ ui.icon('externo') }}Ver mi página de reservas</a>
+      {% if tenant.slug %}<a class="nav-a" href="/t/{{ tenant.slug }}" target="_blank" rel="noopener">{{ ui.icon('externo') }}Ver mi página de reservas</a>{% endif %}
       <form method="POST" action="/logout">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <button type="submit" class="nav-a">{{ ui.icon('salir') }}Cerrar sesión</button>

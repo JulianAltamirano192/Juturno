@@ -195,6 +195,7 @@ async def _bookings_for_day(
         .where(
             and_(
                 Booking.tenant_id == tenant.id,
+                Service.tenant_id == tenant.id,
                 Booking.start_time < day_end,
                 Booking.end_time > day_start,
             )
@@ -204,8 +205,10 @@ async def _bookings_for_day(
     return [(b, s) for b, s in (await session.execute(stmt)).all()]
 
 
-async def _tenant_has(session: AsyncSession, model, *conditions) -> bool:
-    stmt = select(model.id).where(*conditions).limit(1)
+async def _tenant_has(
+    session: AsyncSession, model, tenant_id: int, *conditions
+) -> bool:
+    stmt = select(model.id).where(model.tenant_id == tenant_id, *conditions).limit(1)
     return (await session.execute(stmt)).first() is not None
 
 
@@ -246,7 +249,7 @@ async def dashboard_page(
             "key": "services",
             "label": "Cargá tus servicios",
             "href": "/panel/services",
-            "done": await _tenant_has(session, Service, Service.tenant_id == tenant.id),
+            "done": await _tenant_has(session, Service, tenant.id),
         },
         {
             "key": "hours",
@@ -255,7 +258,7 @@ async def dashboard_page(
             "done": await _tenant_has(
                 session,
                 BusinessHours,
-                BusinessHours.tenant_id == tenant.id,
+                tenant.id,
                 BusinessHours.staff_id.is_(None),
             ),
         },
@@ -263,7 +266,7 @@ async def dashboard_page(
             "key": "staff",
             "label": "Sumá a tu personal",
             "href": "/panel/staff",
-            "done": await _tenant_has(session, Staff, Staff.tenant_id == tenant.id),
+            "done": await _tenant_has(session, Staff, tenant.id),
         },
         {
             "key": "mp",
@@ -286,7 +289,7 @@ async def dashboard_page(
             "upcoming": upcoming,
             "setup": setup,
             "setup_done": sum(1 for item in setup if item["done"]),
-            "public_url": f"{public_base}/t/{tenant.slug}",
+            "public_url": f"{public_base}/t/{tenant.slug}" if tenant.slug else None,
             "public_url_display": f"{public_base.split('://', 1)[-1]}/t/",
         },
     )
