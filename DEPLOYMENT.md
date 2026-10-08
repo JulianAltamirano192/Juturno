@@ -74,6 +74,7 @@ sh -c "python -m alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.
 | `MP_SECRET_KEY` | MP Developers > Webhooks > Secret |
 | `MP_MARKETPLACE_CLIENT_ID/SECRET` | MP Developers > App > Credenciales |
 | `MP_MARKETPLACE_REDIRECT_URL` | `https://api.juturno.com/mp/connect/callback` |
+| `MP_NOTIFICATION_URL` | `https://api.juturno.com/webhooks/mercadopago` (⚠️ en prod el validador exige `https://` y sufijo `/webhooks/mercadopago`) |
 | `MP_TOKEN_ENCRYPTION_KEY` | `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
 | `MP_SANDBOX` | `false` (producción real) |
 | `SENTRY_DSN` | Opcional (Sentry project settings) |

@@ -687,6 +687,43 @@ async def test_create_mp_preference_selects_checkout_url_by_mode(
     assert result["checkout_url"] == FAKE_PREFERENCE_RESPONSE[expected_url_key]
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "configured_url",
+    ["https://sandbox.example.test/webhooks/mercadopago", ""],
+)
+async def test_create_mp_preference_uses_configured_notification_url(
+    monkeypatch, configured_url
+):
+    """
+    notification_url sale de MP_NOTIFICATION_URL (por entorno) y no está
+    hardcodeada a producción. Vacía = no se manda: MP no notifica a nadie
+    en vez de mandarle a prod los pagos de sandbox/local.
+    """
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    monkeypatch.setattr(mp_webhooks.settings, "MP_NOTIFICATION_URL", configured_url)
+
+    fake_response = MagicMock()
+    fake_response.is_success = True
+    fake_response.json.return_value = FAKE_PREFERENCE_RESPONSE
+
+    client_mock = AsyncMock()
+    client_mock.post.return_value = fake_response
+    client_mock.__aenter__.return_value = client_mock
+
+    with patch("app.mp_webhooks.httpx.AsyncClient", return_value=client_mock):
+        await mp_webhooks.create_mp_preference(
+            booking_id=1, amount=30.0, client_name="Test"
+        )
+
+    body = client_mock.post.call_args.kwargs["json"]
+    if configured_url:
+        assert body["notification_url"] == configured_url
+    else:
+        assert "notification_url" not in body
+
+
 # ---------------------------------------------------------------------------
 # Pago aprobado tardío sobre reserva expirada
 # ---------------------------------------------------------------------------
