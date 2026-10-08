@@ -118,6 +118,14 @@ details.faq p{margin:0;padding:0 20px 18px;font-size:16px;line-height:1.6;color:
 .phone{width:100% !important;max-width:340px}
 }
 @container (max-width:420px){.lp-wordmark{display:none}}
+@keyframes lp-orbit{from{stroke-dashoffset:-4}to{stroke-dashoffset:-104}}
+.lp-orbit{position:absolute;top:-.5px;left:-.5px;width:calc(100% + 1px);height:calc(100% + 1px);overflow:visible;pointer-events:none;filter:drop-shadow(0 0 3px rgba(192,132,252,.95)) drop-shadow(0 0 10px rgba(168,85,247,.8)) drop-shadow(0 0 18px rgba(168,85,247,.5))}
+.lp-orbit rect{fill:none;stroke-dashoffset:-4;animation:lp-orbit 7s linear infinite}
+.lp-orbit-1{stroke:#a855f7;stroke-width:2;stroke-opacity:.18;stroke-dasharray:11 89}
+.lp-orbit-2{stroke:#a855f7;stroke-width:2;stroke-opacity:.35;stroke-dasharray:0 1.5 8 90.5}
+.lp-orbit-3{stroke:#c084fc;stroke-width:2;stroke-opacity:.6;stroke-dasharray:0 3 5 92}
+.lp-orbit-4{stroke:#d8b4fe;stroke-width:2;stroke-opacity:.85;stroke-dasharray:0 4.25 2.5 93.25}
+.lp-orbit-5{stroke:#faf5ff;stroke-width:1.6;stroke-dasharray:0 5 1 94}
 @media (prefers-reduced-motion:reduce){.lp *{animation:none !important}html{scroll-behavior:auto}}
 </style>
 </head>
@@ -128,7 +136,7 @@ details.faq p{margin:0;padding:0 20px 18px;font-size:16px;line-height:1.6;color:
 
   <div class="wrap" style="padding-top:24px;z-index:10">
     <nav aria-label="Principal" style="position:relative;display:flex;align-items:center;justify-content:space-between;gap:20px;height:72px;padding:0 12px 0 20px;border-radius:18px;background:linear-gradient(180deg,rgba(255,255,255,.09),rgba(255,255,255,.04));border:1px solid rgba(255,255,255,.12);box-shadow:inset 0 1px 0 rgba(255,255,255,.1),0 12px 40px rgba(0,0,0,.45);backdrop-filter:blur(14px)">
-      <span aria-hidden="true" style="position:absolute;left:14%;top:-1px;width:160px;height:2px;border-radius:2px;background:linear-gradient(90deg,rgba(168,85,247,0),#c084fc,rgba(168,85,247,0));box-shadow:0 0 14px 3px rgba(168,85,247,.55)"></span>
+      <svg class="lp-orbit" aria-hidden="true"><rect class="lp-orbit-1" width="100%" height="100%" pathLength="100" rx="17.5"/><rect class="lp-orbit-2" width="100%" height="100%" pathLength="100" rx="17.5"/><rect class="lp-orbit-3" width="100%" height="100%" pathLength="100" rx="17.5"/><rect class="lp-orbit-4" width="100%" height="100%" pathLength="100" rx="17.5"/><rect class="lp-orbit-5" width="100%" height="100%" pathLength="100" rx="17.5"/></svg>
       <a href="#inicio" aria-label="Juturno, inicio" style="display:flex;align-items:center;gap:10px;text-decoration:none;color:#eef0f6">
         <svg width="42" height="42" viewBox="6 0 92 92" aria-hidden="true" style="margin:-6px -6px -6px -4px"><defs><linearGradient id="jt-logo-grad" gradientUnits="userSpaceOnUse" x1="10" y1="10" x2="90" y2="90"><stop offset="0" stop-color="#e879f9"/><stop offset=".45" stop-color="#a78bfa"/><stop offset="1" stop-color="#22d3ee"/></linearGradient></defs><path d="M58 30V60C58 78 46 87 35 83C25 79 25 64 36 64C43 64 45 72 40 75C36 77 33 73 36 71" fill="none" stroke="url(#jt-logo-grad)" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/><g transform="rotate(18 58 29)"><g stroke="url(#jt-logo-grad)" stroke-width="3.4" fill="#08080b"><circle cx="45" cy="17" r="5"/><circle cx="71" cy="17" r="5"/><circle cx="58" cy="17" r="11.5"/></g><path d="M54 14.5V18.5M62 14.5V18.5" stroke="#fff" stroke-width="2.6" stroke-linecap="round"/></g></svg>
         <span class="lp-wordmark" style="font-family:'Sora',sans-serif;font-size:21px;font-weight:700;letter-spacing:-.02em">Juturno</span>
