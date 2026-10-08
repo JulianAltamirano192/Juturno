@@ -74,7 +74,7 @@
 | POST | `/panel/horarios/{bh_id}/delete` | **Borrar** horario (404 si no existe o tiene `staff_id`) | Cookie + CSRF |
 | GET | `/panel/agenda` | Vista día — todos los turnos que solapan el día (cualquier status), ordenados por inicio; `?day=YYYY-MM-DD` opcional (default hoy, TZ del tenant) | Cookie |
 | POST | `/panel/agenda/{booking_id}/confirm` | `pending → confirmed` (409 si transición inválida); redirect 303 a agenda | Cookie + CSRF |
-| POST | `/panel/agenda/{booking_id}/cancel` | `→ cancelled`; form field opcional `reason`; cancela outbox pendientes; 409 si inválida | Cookie + CSRF |
+| POST | `/panel/agenda/{booking_id}/cancel` | `→ cancelled`; form field opcional `reason`; cancela outbox sin enviar (`pending`/`failed`); 409 si inválida | Cookie + CSRF |
 | POST | `/panel/agenda/{booking_id}/no-show` | `confirmed → no_show`; 409 si el turno aún no empezó o transición inválida | Cookie + CSRF |
 | POST | `/panel/agenda/{booking_id}/complete` | `confirmed → completed`; 409 si el turno aún no empezó o transición inválida | Cookie + CSRF |
 
