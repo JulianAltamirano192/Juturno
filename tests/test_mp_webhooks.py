@@ -367,6 +367,53 @@ async def test_webhook_missing_signature_headers_rejected(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "query, body",
+    [
+        ("id=123456&topic=payment", None),
+        ("id=555&topic=payment", {"data": {"id": "555"}}),
+        (
+            "id=987&topic=merchant_order",
+            {"resource": "https://api.mercadolibre.com/merchant_orders/987"},
+        ),
+    ],
+)
+async def test_webhook_ipn_acknowledged_without_processing(
+    client, db_session, monkeypatch, query, body
+):
+    """IPN (?id=X&topic=...) llega sin firma validable; el mismo evento llega
+    como Webhook firmado. Se responde 200 para cortar los reintentos de MP,
+    sin consultar el pago ni registrar el evento."""
+    monkeypatch.setattr(mp_webhooks.settings, "MP_SECRET_KEY", "test-webhook-secret")
+
+    async def fail_get_payment(*args, **kwargs):
+        raise AssertionError("IPN must not be processed")
+
+    monkeypatch.setattr(mp_webhooks, "get_payment_details", fail_get_payment)
+
+    res = await client.post(f"/webhooks/mercadopago?{query}", json=body)
+    assert res.status_code == 200
+    assert res.text == "IPN_IGNORED"
+
+    result = await db_session.execute(text("SELECT COUNT(*) FROM payment_events"))
+    assert result.scalar_one() == 0
+
+
+@pytest.mark.asyncio
+async def test_webhook_with_data_id_and_topic_still_requires_signature(
+    client, db_session, monkeypatch
+):
+    """Agregar ?topic= a una notificación con data.id no saltea la firma."""
+    monkeypatch.setattr(mp_webhooks.settings, "MP_SECRET_KEY", "test-webhook-secret")
+
+    res = await client.post(
+        "/webhooks/mercadopago?data.id=pay_x&type=payment&topic=payment",
+        json={"action": "payment.updated", "data": {"id": "pay_x"}},
+    )
+    assert res.status_code == 401
+
+
+@pytest.mark.asyncio
 async def test_webhook_without_data_id_ignored(client, db_session, monkeypatch):
     """
     Test B3: Payload sin data_id extraíble (sin data.id ni id ni query params)
