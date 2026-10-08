@@ -567,6 +567,7 @@ async def test_webhook_replay_with_new_body_id_is_duplicate(
     async def mock_get_payment_details(data_id: str, access_token: str | None = None):
         nonlocal calls
         calls += 1
+        return _make_payment_details("pending", "not-a-booking")
 
     monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_get_payment_details)
 
@@ -582,7 +583,7 @@ async def test_webhook_replay_with_new_body_id_is_duplicate(
     res1 = await client.post(url, json=first, headers=headers)
     res2 = await client.post(url, json=replay, headers=headers)
 
-    assert res1.text == "PAYMENT_NOT_FOUND_ON_MP"
+    assert res1.text == "NO_BOOKING_LINKED"
     assert res2.text == "DUPLICATE_EVENT_IGNORED"
     assert calls == 1
 
@@ -597,7 +598,7 @@ async def test_webhook_replay_with_other_id_case_is_duplicate(
     monkeypatch.setattr(mp_webhooks.settings, "MP_SECRET_KEY", secret)
 
     async def mock_get_payment_details(data_id: str, access_token: str | None = None):
-        return None
+        return _make_payment_details("pending", "not-a-booking")
 
     monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_get_payment_details)
 
@@ -614,7 +615,7 @@ async def test_webhook_replay_with_other_id_case_is_duplicate(
         "/webhooks/mercadopago?data.id=abc123&type=payment", json=body, headers=headers
     )
 
-    assert res1.text == "PAYMENT_NOT_FOUND_ON_MP"
+    assert res1.text == "NO_BOOKING_LINKED"
     assert res2.text == "DUPLICATE_EVENT_IGNORED"
 
 
@@ -622,7 +623,8 @@ async def test_webhook_replay_with_other_id_case_is_duplicate(
 async def test_webhook_payment_not_found_on_mp(client, db_session, monkeypatch):
     """
     Test B4: MP responde 404 para el pago (ID del simulador o evento viejo)
-    -> PAYMENT_NOT_FOUND_ON_MP, evento marcado 'processed'.
+    -> PAYMENT_NOT_FOUND_ON_MP (200, MP no reintenta), evento 'failed': así
+    una entrega posterior con la misma clave todavía se puede procesar.
     """
     secret = "test-webhook-secret"
     monkeypatch.setattr(mp_webhooks.settings, "MP_SECRET_KEY", secret)
@@ -648,13 +650,56 @@ async def test_webhook_payment_not_found_on_mp(client, db_session, monkeypatch):
     assert res.status_code == 200
     assert res.text == "PAYMENT_NOT_FOUND_ON_MP"
 
-    # El evento igual queda 'processed': MP no debe reintentarlo eternamente
     result = await db_session.execute(
         text(
             "SELECT status FROM payment_events WHERE event_id='pay_ghost_404:req_ghost'"
         )
     )
-    assert result.scalar_one() == "processed"
+    assert result.scalar_one() == "failed"
+
+
+@pytest.mark.asyncio
+async def test_webhook_fake_user_id_replay_does_not_burn_the_event(
+    client, db_session, monkeypatch
+):
+    """El user_id del body no está firmado: un reenvío con un user_id falso
+    consulta con el token equivocado (404) y no debe impedir que la entrega
+    legítima, con la misma clave firmada, confirme la reserva."""
+    secret = "test-webhook-secret"
+    monkeypatch.setattr(mp_webhooks.settings, "MP_SECRET_KEY", secret)
+    booking = await _create_booking(db_session, "book_fake_user_id")
+
+    async def token_from_body(session, payload):
+        return payload.get("user_id")
+
+    async def mock_get_payment_details(data_id: str, access_token: str | None = None):
+        if access_token != "tenant-token":
+            return None
+        return _make_payment_details("approved", f"booking-{booking.id}")
+
+    monkeypatch.setattr(mp_webhooks, "_resolve_token_for_payment", token_from_body)
+    monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_get_payment_details)
+
+    ts = int(datetime.now(timezone.utc).timestamp())
+    headers = {
+        "x-signature": _sign_webhook("pay_uid", "req_uid", ts, secret),
+        "x-request-id": "req_uid",
+    }
+    url = "/webhooks/mercadopago?data.id=pay_uid&type=payment"
+
+    forged = await client.post(
+        url, json={"user_id": "evil", "data": {"id": "pay_uid"}}, headers=headers
+    )
+    legit = await client.post(
+        url,
+        json={"user_id": "tenant-token", "data": {"id": "pay_uid"}},
+        headers=headers,
+    )
+
+    assert forged.text == "PAYMENT_NOT_FOUND_ON_MP"
+    assert legit.text == "EVENT_PROCESSED"
+    await db_session.refresh(booking)
+    assert booking.status == "confirmed"
 
 
 @pytest.mark.asyncio

@@ -300,6 +300,7 @@ REQUIRE_STARTED = {"no_show", "completed"}  # solo si start_time <= now
   - Payload MP trae `user_id` (collector_id) en raíz o en `data.user_id`.
   - Busca `Tenant.mp_user_id == user_id` → usa su token descifrado (a lo sumo una fila, por `uq_tenant_mp_user_id`).
   - Fallback: `None` → usa `MP_ACCESS_TOKEN` de la plataforma.
+  - El `user_id` no está firmado: si MP responde 404 (token equivocado, ID del simulador) el evento queda `failed` y responde 200 `PAYMENT_NOT_FOUND_ON_MP`; una entrega posterior con la misma clave se reprocesa.
 - **Auto-creación Payment**: si webhook `approved` y no existe `Payment` con ese `mp_payment_id` → crea con datos de MP (`transaction_amount`, `payment_method_id`, `date_approved`).
 - **Guard de amount**: usa `booking.deposit_at_booking` si está seteado; si es `NULL` (bookings anteriores a la migración `55526fb8c0f9`) cae al fallback `effective_deposit(service.price, service.deposit_amount)`.
 - **Confirmación booking**: si `approved` y booking en `pending` (o `expired` y slot libre) → `transition_booking_status(booking, "confirmed", actor="webhook_mp")` + outbox confirmation.

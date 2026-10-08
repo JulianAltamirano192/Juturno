@@ -397,9 +397,10 @@ async def mercadopago_webhook(
         details = await get_payment_details(data_id, access_token=token)
 
         if details is None:
-            # MP no encuentra el pago. Puede ser un ID del simulador o un evento viejo.
-            webhook_event.status = "processed"
-            webhook_event.processed_at = datetime.now(timezone.utc)
+            # MP no encuentra el pago: ID del simulador, evento viejo o un token
+            # equivocado (el user_id del body no está firmado). Queda 'failed'
+            # para que una entrega posterior con la misma clave lo procese.
+            webhook_event.status = "failed"
             session.add(webhook_event)
             await session.commit()
             return Response(content="PAYMENT_NOT_FOUND_ON_MP", status_code=200)
