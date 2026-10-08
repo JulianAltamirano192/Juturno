@@ -292,7 +292,7 @@ REQUIRE_STARTED = {"no_show", "completed"}  # solo si start_time <= now
 ### 10.2 Webhook MP (`app/mp_webhooks.py`)
 - **Endpoint**: `POST /webhooks/mercadopago`
 - **Verificaciones**:
-  - HMAC SHA256: header `x-signature` = `ts=timestamp,v1=hmac` → `manifest = "id:{data_id};request-id:{x_request_id};ts:{ts};"` → `hmac.compare_digest`.
+  - HMAC SHA256: header `x-signature` = `ts=timestamp,v1=hmac` → `manifest = "id:{data_id};request-id:{x_request_id};ts:{ts};"` (`data_id` = `?data.id` del query en minúsculas; si no viene se omite `id:...;` y no se procesa nada; el `data.id` del body no está firmado y se ignora) → `hmac.compare_digest`.
   - Replay protection: `|now - ts| <= 300s` (5 min).
   - Idempotencia: tabla `payment_events` con `event_id` PK. Estados: `received` → `processing` → `processed`|`failed`. Reintentos legítimos (estado `processing`/`failed`) reprocesan.
 - **Resolución de token** (`_resolve_token_for_payment`):

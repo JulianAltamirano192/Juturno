@@ -177,7 +177,10 @@ def verify_mp_signature(x_signature: str, x_request_id: str, data_id: str) -> bo
         if not ts or not v1:
             return False
 
-        manifest = f"id:{data_id};request-id:{x_request_id};ts:{ts};"
+        # Template de MP: id:[data.id_url];request-id:[x-request-id];ts:[ts];
+        # data.id (del query) va en minúsculas; si no vino, se omite.
+        id_part = f"id:{data_id.lower()};" if data_id else ""
+        manifest = f"{id_part}request-id:{x_request_id};ts:{ts};"
 
         expected_hmac = hmac.new(
             settings.MP_SECRET_KEY.encode(), manifest.encode(), hashlib.sha256
@@ -210,20 +213,12 @@ def verify_timestamp_freshness(x_signature: str) -> bool:
 # ─────────────────────────────────────────────────────────────────
 
 
-def _extract_data_id(payload: dict, request: Request) -> str:
+def _extract_data_id(request: Request) -> str:
     """
-    Extrae el ID del recurso afectado. MP manda dos formatos:
-    - Nuevo: ?data.id=X&type=payment  → payload["data"]["id"] o query param
-    - Viejo: ?id=X&topic=payment      → payload["id"] o query param
+    ID del recurso afectado: ?data.id=X del query string. Es el único id
+    que cubre la firma de MP; el del body no está firmado y se ignora.
     """
-    data_id = payload.get("data", {}).get("id")
-    if data_id is None:
-        data_id = request.query_params.get("data.id")
-    if data_id is None:
-        data_id = payload.get("id")
-    if data_id is None:
-        data_id = request.query_params.get("id")
-    return str(data_id) if data_id else ""
+    return request.query_params.get("data.id", "")
 
 
 def _extract_event_id(payload: dict, request: Request) -> str:
@@ -240,7 +235,7 @@ def _extract_event_id(payload: dict, request: Request) -> str:
     if event_id is not None:
         return str(event_id)
     # Fallback: usar data_id + action como clave sintética
-    data_id = _extract_data_id(payload, request)
+    data_id = _extract_data_id(request)
     action = (
         payload.get("action")
         or payload.get("type")
@@ -375,7 +370,7 @@ async def mercadopago_webhook(
 
     event_id = _extract_event_id(payload, request)
     event_type = _extract_event_type(payload, request)
-    data_id = _extract_data_id(payload, request)
+    data_id = _extract_data_id(request)
 
     # 1. Verificación estricta de firma HMAC
     if not verify_mp_signature(x_signature, x_request_id, data_id):
