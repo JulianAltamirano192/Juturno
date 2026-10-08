@@ -48,7 +48,7 @@
 6. Si `approved` → `transition_booking_status(booking, "confirmed")` + crea `NotificationOutbox` (tipo `confirmation`) en **misma transacción**
 7. Job `process_outbox` (cada 60s) envía WhatsApp via Meta Graph API
 8. Job `process_reminders` (cada 5min) encola recordatorio 24h antes → outbox reminder
-9. Job `process_deposit_expiration` (cada 1min) expira `pending` sin pago → libera slot
+9. Job `process_deposit_expiration` (cada 1min) → antes de expirar un `pending` vencido busca en MP (token del tenant, `external_reference=booking-{id}`) un pago aprobado perdido y lo aplica con los guards del webhook (`apply_payment_details`); si no hay, expira y libera el slot; si MP no responde, lo deja `pending` hasta la próxima corrida (D-023)
 10. Job `process_mp_token_refresh` (diario) renueva tokens OAuth que vencen en <30 días
 
 ---
@@ -260,7 +260,7 @@ REQUIRE_STARTED = {"no_show", "completed"}  # solo si start_time <= now
 |-----|------------|--------------|----------|
 | `process_outbox` | 60s | `SELECT ... FOR UPDATE SKIP LOCKED` (DB) | Envía WhatsApp pendientes |
 | `process_reminders` | 5 min | Redis `SET NX EX 30s` (`reminder-job-lock`) | Encola recordatorios 24h |
-| `process_deposit_expiration` | 1 min | Redis `SET NX EX 30s` (`deposit-expiration-job-lock`) | Expira `pending` sin pago |
+| `process_deposit_expiration` | 1 min | Redis `SET NX EX 30s` (`deposit-expiration-job-lock`) | Reconcilia con MP y expira `pending` sin pago (una transacción por reserva) |
 | `process_mp_token_refresh` | 24h | Redis `SET NX EX 30s` (`mp-token-refresh-job-lock`) | Renueva tokens OAuth <30 días |
 
 - **Locks Redis**: `uuid4().hex` como valor, TTL 30s (seguridad anti-deadlock) — para 3 jobs.

@@ -20,6 +20,27 @@ def _fresh_redis_client(monkeypatch):
     monkeypatch.setattr(scheduler, "_get_redis_client", lambda: fake_client)
 
 
+@pytest.fixture(autouse=True)
+def mp_search(monkeypatch):
+    """Por defecto MP no tiene pagos para la reserva. Los tests de
+    reconciliación cargan pagos aprobados en el dict devuelto."""
+    state: dict = {"approved": {}, "searched": [], "error": None}
+
+    async def fake_search(external_reference, access_token):
+        state["searched"].append(external_reference)
+        if state["error"]:
+            raise state["error"]
+        return list(state["approved"])
+
+    async def fake_details(data_id, access_token=None):
+        return state["approved"].get(data_id)
+
+    monkeypatch.setattr(scheduler, "search_approved_payment_ids", fake_search)
+    monkeypatch.setattr(scheduler, "get_payment_details", fake_details)
+    monkeypatch.setattr(settings, "MP_ACCESS_TOKEN", "platform-test-token")
+    return state
+
+
 async def _tenant_with_pending_booking(db_session, *, expiration_minutes, created_ago):
     """Crea tenant + servicio + booking pending con created_at desplazado."""
     tenant = Tenant(name=f"Tenant exp {expiration_minutes}", timezone="UTC")
@@ -182,3 +203,97 @@ async def test_patch_tenants_me_updates_expiration_limit(client, db_session):
         "/tenants/me", json={"deposit_expiration_minutes": 0}, headers=headers
     )
     assert res3.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# Reconciliación con MP antes de expirar (webhook perdido)
+# ---------------------------------------------------------------------------
+
+
+def _approved(booking, amount=1000.0):
+    return {
+        "status": "approved",
+        "external_reference": f"booking-{booking.id}",
+        "transaction_amount": amount,
+        "currency_id": "ARS",
+        "payment_method_id": "visa",
+        "date_approved": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@pytest.mark.asyncio
+async def test_overdue_booking_paid_in_mp_is_confirmed_not_expired(
+    db_session, mp_search
+):
+    """Si el webhook nunca llegó pero MP tiene el pago aprobado, la reserva
+    se confirma (con Payment y WhatsApp de confirmación) en vez de vencer."""
+    from sqlalchemy import select
+
+    from app.models import NotificationOutbox, Payment
+
+    _, booking = await _tenant_with_pending_booking(
+        db_session, expiration_minutes=15, created_ago=timedelta(minutes=20)
+    )
+    mp_search["approved"]["pay_lost_webhook"] = _approved(booking)
+
+    await process_deposit_expiration(TestingSessionLocal)
+
+    await db_session.refresh(booking)
+    assert booking.status == "confirmed"
+    assert mp_search["searched"] == [f"booking-{booking.id}"]
+    payment = (
+        await db_session.execute(
+            select(Payment).where(Payment.mp_payment_id == "pay_lost_webhook")
+        )
+    ).scalar_one()
+    assert payment.status == "approved"
+    outbox = (
+        await db_session.execute(
+            select(NotificationOutbox).where(
+                NotificationOutbox.booking_id == booking.id
+            )
+        )
+    ).scalar_one()
+    assert outbox.notification_type == "confirmation"
+
+
+@pytest.mark.asyncio
+async def test_overdue_booking_with_insufficient_payment_still_expires(
+    db_session, mp_search
+):
+    """La reconciliación aplica los mismos guards que el webhook."""
+    _, booking = await _tenant_with_pending_booking(
+        db_session, expiration_minutes=15, created_ago=timedelta(minutes=20)
+    )
+    mp_search["approved"]["pay_short"] = _approved(booking, amount=1.0)
+
+    await process_deposit_expiration(TestingSessionLocal)
+
+    await db_session.refresh(booking)
+    assert booking.status == "expired"
+
+
+@pytest.mark.asyncio
+async def test_mp_error_keeps_overdue_booking_pending(db_session, mp_search):
+    """Si no se puede consultar a MP no se vence: se reintenta en la próxima
+    corrida en vez de liberar un horario que quizá ya está pago."""
+    _, booking = await _tenant_with_pending_booking(
+        db_session, expiration_minutes=15, created_ago=timedelta(minutes=20)
+    )
+    mp_search["error"] = RuntimeError("MP caído")
+
+    await process_deposit_expiration(TestingSessionLocal)
+
+    await db_session.refresh(booking)
+    assert booking.status == "pending"
+
+
+@pytest.mark.asyncio
+async def test_fresh_pending_booking_is_not_looked_up_in_mp(db_session, mp_search):
+    await _tenant_with_pending_booking(
+        db_session, expiration_minutes=15, created_ago=timedelta(minutes=5)
+    )
+
+    await process_deposit_expiration(TestingSessionLocal)
+
+    assert mp_search["searched"] == []

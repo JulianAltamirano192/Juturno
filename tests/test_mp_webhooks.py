@@ -929,6 +929,33 @@ async def test_create_mp_preference_uses_configured_notification_url(
         assert "notification_url" not in body
 
 
+@pytest.mark.asyncio
+async def test_search_approved_payment_ids_filters_by_reference_and_status():
+    """La búsqueda usa el external_reference y el token del tenant, y solo
+    devuelve pagos aprobados."""
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    fake_response = MagicMock()
+    fake_response.json.return_value = {
+        "results": [
+            {"id": 11, "status": "approved"},
+            {"id": 12, "status": "rejected"},
+        ]
+    }
+    client_mock = AsyncMock()
+    client_mock.get.return_value = fake_response
+    client_mock.__aenter__.return_value = client_mock
+
+    with patch("app.mp_webhooks.httpx.AsyncClient", return_value=client_mock):
+        ids = await mp_webhooks.search_approved_payment_ids("booking-7", "tok")
+
+    assert ids == ["11"]
+    kwargs = client_mock.get.call_args.kwargs
+    assert kwargs["params"] == {"external_reference": "booking-7"}
+    assert kwargs["headers"]["Authorization"] == "Bearer tok"
+    fake_response.raise_for_status.assert_called_once()
+
+
 # ---------------------------------------------------------------------------
 # Pago aprobado tardío sobre reserva expirada
 # ---------------------------------------------------------------------------
