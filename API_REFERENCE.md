@@ -259,7 +259,7 @@ Igual que público pero **requiere API Key** y valida que `tenant_id` coincida c
 - Si el pago no está `approved`: el `Payment` se crea/actualiza con el status actual; el booking queda como está.
 
 **Response codes:**
-- 200 `EVENT_PROCESSED` / `IPN_IGNORED` / `DUPLICATE_EVENT_IGNORED` / `PAYMENT_NOT_FOUND_ON_MP` / `NO_BOOKING_LINKED` / `EVENT_IGNORED_NO_DATA_ID`
+- 200 `EVENT_PROCESSED` / `IPN_IGNORED` / `DUPLICATE_EVENT_IGNORED` / `PAYMENT_NOT_FOUND_ON_MP` (evento queda `failed`: una entrega posterior se reprocesa) / `NO_BOOKING_LINKED` / `EVENT_IGNORED_NO_DATA_ID`
 - 400 Body vacío, JSON inválido o que no es un objeto
 - 401 Firma inválida
 - 403 Timestamp fuera de ventana

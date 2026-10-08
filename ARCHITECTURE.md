@@ -48,7 +48,7 @@
 6. Si `approved` → `transition_booking_status(booking, "confirmed")` + crea `NotificationOutbox` (tipo `confirmation`) en **misma transacción**
 7. Job `process_outbox` (cada 60s) envía WhatsApp via Meta Graph API
 8. Job `process_reminders` (cada 5min) encola recordatorio 24h antes → outbox reminder
-9. Job `process_deposit_expiration` (cada 1min) expira `pending` sin pago → libera slot
+9. Job `process_deposit_expiration` (cada 1min) → antes de expirar un `pending` vencido busca en MP (token del tenant, `external_reference=booking-{id}`) un pago aprobado perdido y lo aplica con los guards del webhook (`apply_payment_details`); si no hay, expira y libera el slot; si MP no responde, lo deja `pending` hasta 1 h después del vencimiento y luego expira (D-023)
 10. Job `process_mp_token_refresh` (diario) renueva tokens OAuth que vencen en <30 días
 
 ---
@@ -260,7 +260,7 @@ REQUIRE_STARTED = {"no_show", "completed"}  # solo si start_time <= now
 |-----|------------|--------------|----------|
 | `process_outbox` | 60s | `SELECT ... FOR UPDATE SKIP LOCKED` (DB) | Envía WhatsApp pendientes |
 | `process_reminders` | 5 min | Redis `SET NX EX 30s` (`reminder-job-lock`) | Encola recordatorios 24h |
-| `process_deposit_expiration` | 1 min | Redis `SET NX EX 30s` (`deposit-expiration-job-lock`) | Expira `pending` sin pago |
+| `process_deposit_expiration` | 1 min | Redis `SET NX EX 30s` (`deposit-expiration-job-lock`) | Reconcilia con MP y expira `pending` sin pago (una transacción por reserva) |
 | `process_mp_token_refresh` | 24h | Redis `SET NX EX 30s` (`mp-token-refresh-job-lock`) | Renueva tokens OAuth <30 días |
 
 - **Locks Redis**: `uuid4().hex` como valor, TTL 30s (seguridad anti-deadlock) — para 3 jobs.
@@ -300,6 +300,7 @@ REQUIRE_STARTED = {"no_show", "completed"}  # solo si start_time <= now
   - Payload MP trae `user_id` (collector_id) en raíz o en `data.user_id`.
   - Busca `Tenant.mp_user_id == user_id` → usa su token descifrado (a lo sumo una fila, por `uq_tenant_mp_user_id`).
   - Fallback: `None` → usa `MP_ACCESS_TOKEN` de la plataforma.
+  - El `user_id` no está firmado: si MP responde 404 (token equivocado, ID del simulador) el evento queda `failed` y responde 200 `PAYMENT_NOT_FOUND_ON_MP`; una entrega posterior con la misma clave se reprocesa.
 - **Auto-creación Payment**: si webhook `approved` y no existe `Payment` con ese `mp_payment_id` → crea con datos de MP (`transaction_amount`, `payment_method_id`, `date_approved`).
 - **Guard de amount**: usa `booking.deposit_at_booking` si está seteado; si es `NULL` (bookings anteriores a la migración `55526fb8c0f9`) cae al fallback `effective_deposit(service.price, service.deposit_amount)`.
 - **Confirmación booking**: si `approved` y booking en `pending` (o `expired` y slot libre) → `transition_booking_status(booking, "confirmed", actor="webhook_mp")` + outbox confirmation.
