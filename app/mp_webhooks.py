@@ -363,7 +363,12 @@ async def mercadopago_webhook(
     if "topic" in query and "data.id" not in query:
         return Response(content="IPN_IGNORED", status_code=200)
 
-    payload = await request.json()
+    try:
+        payload = await request.json()
+    except (ValueError, RecursionError):  # vacío, inválido, no UTF-8, anidado
+        payload = None
+    if not isinstance(payload, dict) or not isinstance(payload.get("data", {}), dict):
+        raise HTTPException(status_code=400, detail="Payload de webhook inválido")
 
     event_id = _extract_event_id(payload, request)
     event_type = _extract_event_type(payload, request)

@@ -260,6 +260,7 @@ Igual que público pero **requiere API Key** y valida que `tenant_id` coincida c
 
 **Response codes:**
 - 200 `EVENT_PROCESSED` / `IPN_IGNORED` / `DUPLICATE_EVENT_IGNORED` / `PAYMENT_NOT_FOUND_ON_MP` / `NO_BOOKING_LINKED` / `EVENT_IGNORED_NO_DATA_ID`
+- 400 Body vacío, JSON inválido o que no es un objeto
 - 401 Firma inválida
 - 403 Timestamp fuera de ventana
 - 500 Error inesperado (incluye MP API rechazos no-404 y `MPTokenCryptoError`) — el evento queda `failed` y MP reintenta
@@ -389,6 +390,7 @@ deposit_expiration_minutes: int | None = None  # ge=1
 | Código | Endpoint típico | Causa |
 |--------|-----------------|-------|
 | 401 | `/bookings/*`, `/tenants/me/*` | API key faltante/inválida/revocada |
+| 400 | `/webhooks/mercadopago` | Body vacío, JSON inválido o que no es un objeto |
 | 401 | `/webhooks/mercadopago` | HMAC MP inválido |
 | 401 | `/webhooks/whatsapp` | HMAC Meta inválido |
 | 403 | `/webhooks/mercadopago` | Timestamp > 5 min (replay) |

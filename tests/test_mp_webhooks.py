@@ -400,6 +400,31 @@ async def test_webhook_ipn_acknowledged_without_processing(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "body",
+    [
+        b"",
+        b"not-json",
+        b"[1, 2]",
+        b'"text"',
+        b"\xff\xfe\xfa",
+        b'{"data": 1}',
+        b'{"data": null}',
+        b"[" * 200000,
+    ],
+)
+async def test_webhook_malformed_body_returns_400(client, db_session, body):
+    """Un body vacío, inválido o que no es un objeto JSON es un request mal
+    formado (400), no un error del servidor (500)."""
+    res = await client.post(
+        "/webhooks/mercadopago?data.id=pay_x&type=payment",
+        content=body,
+        headers={"content-type": "application/json"},
+    )
+    assert res.status_code == 400
+
+
+@pytest.mark.asyncio
 async def test_webhook_with_data_id_and_topic_still_requires_signature(
     client, db_session, monkeypatch
 ):
