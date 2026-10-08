@@ -9,6 +9,7 @@ from sqlalchemy import text
 from app import mp_webhooks
 from app.auth import hash_api_key
 from app.models import ApiKey, Booking, Service, Tenant
+from tests.test_mp_webhooks import _webhook_url
 
 # --- HELPERS DE AUTENTICACIÓN ---
 
@@ -169,11 +170,11 @@ async def test_webhook_mp_idempotency(client, db_session, monkeypatch):
     }
     headers = {"x-signature": signature, "x-request-id": "req_888"}
 
-    res1 = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
+    res1 = await client.post(_webhook_url(payload), json=payload, headers=headers)
     assert res1.status_code == 200
     assert res1.text == "EVENT_PROCESSED"
 
-    res2 = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
+    res2 = await client.post(_webhook_url(payload), json=payload, headers=headers)
     assert res2.status_code == 200
     assert res2.text == "DUPLICATE_EVENT_IGNORED"
 
@@ -245,7 +246,7 @@ async def test_outbox_created_only_on_approved_payment(client, db_session, monke
     wh_headers = {"x-signature": signature, "x-request-id": request_id}
 
     res_wh = await client.post(
-        "/webhooks/mercadopago", json=wh_payload, headers=wh_headers
+        _webhook_url(wh_payload), json=wh_payload, headers=wh_headers
     )
     assert res_wh.status_code == 200
 

@@ -18,6 +18,7 @@ from tests.test_mp_webhooks import (
     _create_booking,
     _make_payment_details,
     _sign_webhook,
+    _webhook_url,
 )
 
 PLATFORM_TOKEN = "TEST-token-plataforma"
@@ -78,7 +79,7 @@ def _post_webhook(client, data_id: str, mp_user_id: str | None):
     if mp_user_id is not None:
         payload["user_id"] = mp_user_id
     return client.post(
-        "/webhooks/mercadopago",
+        _webhook_url(payload),
         json=payload,
         headers={"x-signature": signature, "x-request-id": request_id},
     )
