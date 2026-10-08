@@ -72,7 +72,6 @@ async def create_mp_preference(
     booking_id: int,
     amount: float,
     client_name: str,
-    notification_url: str = "https://api.juturno.com/webhooks/mercadopago",
     back_url: str | None = None,
     access_token: str | None = None,
 ) -> dict[str, str]:
@@ -91,6 +90,9 @@ async def create_mp_preference(
     Enviar al cliente la URL del ambiente equivocado hace que el pago
     sea imposible.
 
+    notification_url sale de settings.MP_NOTIFICATION_URL (una por entorno);
+    si está vacía no se manda y MP no notifica esta preferencia.
+
     Si se pasa back_url, configura back_urls (success/failure/pending)
     y auto_return para que MP redirija al cliente de vuelta a la página
     de reserva tras el pago.
@@ -108,9 +110,10 @@ async def create_mp_preference(
             }
         ],
         "external_reference": f"booking-{booking_id}",
-        "notification_url": notification_url,
         "payer": {"name": client_name},
     }
+    if settings.MP_NOTIFICATION_URL:
+        body["notification_url"] = settings.MP_NOTIFICATION_URL
 
     if back_url:
         separator = "&" if "?" in back_url else "?"

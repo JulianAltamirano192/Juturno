@@ -305,7 +305,7 @@ REQUIRE_STARTED = {"no_show", "completed"}  # solo si start_time <= now
 
 ### 10.3 Creación de preferencia (`create_mp_preference`)
 - Usa API `/checkout/preferences` (Checkout Pro, "legacy" pero estable).
-- `external_reference = "booking-{id}"`, `notification_url = webhook`, `back_urls` con `PUBLIC_BASE_URL/t/{slug}?booking={id}`.
+- `external_reference = "booking-{id}"`, `notification_url = MP_NOTIFICATION_URL` (omitida si está vacía; obligatoria en prod), `back_urls` con `PUBLIC_BASE_URL/t/{slug}?booking={id}`.
 - `checkout_url` = `sandbox_init_point` si `MP_SANDBOX=true`, sino `init_point`.
 - Lanza `HTTPException 502` si MP rechaza → caller hace rollback del booking.
 

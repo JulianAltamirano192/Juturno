@@ -88,6 +88,7 @@ Copia `.env.example` a `.env` y completá **todas**. Las marcadas con ✅ son ob
 | `MP_MARKETPLACE_CLIENT_ID` | Client ID app MP (para OAuth) | ✅ | Número de MP |
 | `MP_MARKETPLACE_CLIENT_SECRET` | Client Secret app MP | ✅ | Cadena de MP |
 | `MP_MARKETPLACE_REDIRECT_URL` | URL callback OAuth | ✅ | `https://api.juturno.com/mp/connect/callback` |
+| `MP_NOTIFICATION_URL` | Webhook MP de este entorno (`notification_url`); vacía = no se manda | ✅ prod | `https://api.juturno.com/webhooks/mercadopago` |
 | `MP_TOKEN_ENCRYPTION_KEY` | Clave Fernet para cifrar tokens OAuth | ✅ | `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
 | `MP_SANDBOX` | Usar credenciales sandbox de MP | ⚠️ | `true` (dev) / `false` (prod) |
 | `SENTRY_DSN` | DSN de Sentry (opcional) | ❌ | `https://xxx@sentry.io/xxx` |

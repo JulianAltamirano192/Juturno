@@ -13,6 +13,7 @@ _PROD_BASE = {
     "MP_SECRET_KEY": "mp-secret",
     "WHATSAPP_TOKEN": "wa-token",
     "WHATSAPP_PHONE_NUMBER_ID": "wa-phone-id",
+    "MP_NOTIFICATION_URL": "https://api.example.test/webhooks/mercadopago",
 }
 
 
@@ -28,6 +29,7 @@ def test_valid_production_settings():
         "MP_SECRET_KEY",
         "WHATSAPP_TOKEN",
         "WHATSAPP_PHONE_NUMBER_ID",
+        "MP_NOTIFICATION_URL",
     ],
 )
 def test_missing_critical_var_raises_in_production(missing_var):

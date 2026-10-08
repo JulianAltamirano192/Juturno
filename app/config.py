@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     MP_MARKETPLACE_CLIENT_ID: str = ""
     MP_MARKETPLACE_CLIENT_SECRET: str = ""
     MP_MARKETPLACE_REDIRECT_URL: str = "https://api.juturno.com/mp/connect/callback"
+    # URL pública del webhook de MP de ESTE entorno (notification_url de cada
+    # preferencia). Vacía = no se manda: en local sin túnel MP no notifica,
+    # en vez de mandarle a producción los pagos de sandbox. Obligatoria en prod.
+    MP_NOTIFICATION_URL: str = ""
     # Clave Fernet para cifrar en reposo los tokens OAuth de los tenants.
     # Se genera una vez: Fernet.generate_key() y vive solo en env.
     MP_TOKEN_ENCRYPTION_KEY: str = ""
@@ -53,6 +57,7 @@ class Settings(BaseSettings):
                     ("MP_SECRET_KEY", self.MP_SECRET_KEY),
                     ("WHATSAPP_TOKEN", self.WHATSAPP_TOKEN),
                     ("WHATSAPP_PHONE_NUMBER_ID", self.WHATSAPP_PHONE_NUMBER_ID),
+                    ("MP_NOTIFICATION_URL", self.MP_NOTIFICATION_URL),
                 ]
                 if not val
             ]

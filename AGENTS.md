@@ -172,6 +172,7 @@ templates/           # Jinja2 (panel + página pública /t/{slug})
 | `MP_MARKETPLACE_CLIENT_ID` | Client ID app MP (OAuth) |
 | `MP_MARKETPLACE_CLIENT_SECRET` | Client Secret app MP |
 | `MP_MARKETPLACE_REDIRECT_URL` | `https://api.juturno.com/mp/connect/callback` |
+| `MP_NOTIFICATION_URL` | `https://api.juturno.com/webhooks/mercadopago` (obligatoria en prod) |
 | `MP_TOKEN_ENCRYPTION_KEY` | Fernet key: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
 | `MP_SANDBOX` | `true` (dev) / `false` (prod) |
 | `SENTRY_DSN` | Opcional |
