@@ -313,10 +313,14 @@ _MP_FLASH = {
         "No se pudo conectar Mercado Pago: la autorización terminó en otro "
         "navegador. Volvé a intentarlo y completala en el mismo navegador."
     ),
+    "account_in_use": (
+        "Esa cuenta de Mercado Pago ya está vinculada a otro negocio. "
+        "Conectá una cuenta distinta."
+    ),
 }
 
 # Mensajes de error: se muestran con banner de error, no de éxito.
-_MP_FLASH_ERRORS = {"pending", "error", "other_browser"}
+_MP_FLASH_ERRORS = {"pending", "error", "other_browser", "account_in_use"}
 
 
 @router.get("/panel/settings", response_class=HTMLResponse)
