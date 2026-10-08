@@ -588,6 +588,54 @@ Commit: `f128344`.
 
 ---
 
+## D-021: `Tenant.mp_user_id` único (índice parcial) y rechazo de cuentas MP ya vinculadas
+
+**Fecha**: Octubre 2026
+
+**Contexto**: El webhook de MP resuelve el tenant (y su token) buscando `Tenant.mp_user_id ==
+user_id` (`_resolve_token_for_payment`, D-012/D-019). La columna no era única: si dos
+tenants conectaban la misma cuenta de MP, la consulta lanzaba `MultipleResultsFound` y el
+webhook respondía 500 para ambos, con pagos aprobados sin confirmar. Además, cuando MP no
+devolvía `user_id`, el callback guardaba el string literal `"None"`, que rompe tanto el
+guard de `collector_id` (D-019) como cualquier unicidad.
+
+**Decisión**: Índice único parcial `uq_tenant_mp_user_id` sobre `tenant(mp_user_id) WHERE
+mp_user_id IS NOT NULL` (migración `c7d8e9f0a1b2`, también declarado en `__table_args__` del
+modelo). En `GET /mp/connect/callback`, si el `commit` lanza `IntegrityError` se hace
+`rollback` (no se guardan tokens; el otro tenant no cambia) y se redirige a
+`/panel/settings?mp=account_in_use`. Si MP no devuelve `user_id` (ni en el canje ni en
+`GET /users/me`) no se guarda nada y se redirige a `?mp=error`.
+
+**Alternativas**:
+- **Chequeo en aplicación (SELECT antes de guardar)**: no es atómico; dos callbacks
+  concurrentes pasan el chequeo. La DB es la única garantía real.
+- **Constraint único no parcial**: en PostgreSQL también funcionaría (los `NULL` son distintos
+  por defecto), pero el índice parcial deja explícito que solo cuentan las cuentas conectadas
+  y no indexa los tenants sin MP.
+- **Tolerar duplicados y desambiguar en el webhook** (p. ej. por `external_reference`):
+  mantiene un modelo ambiguo y el guard de `collector_id` seguiría sin poder atribuir la cuenta.
+
+**Consecuencias**:
+- **Ventaja** — El 500 por `MultipleResultsFound` en el webhook deja de ser posible.
+- **Ventaja** — La unicidad vale también para escrituras que no pasan por el callback.
+- **Ventaja** — Ya no se persiste `"None"` como cuenta.
+- **Riesgo** — Si prod ya tiene `mp_user_id` duplicados, `CREATE UNIQUE INDEX` falla, la
+  migración no se aplica y el contenedor no arranca (el entrypoint corre `alembic upgrade
+  head`). Hay que verificar antes de desplegar (ver `RUNBOOK.md` §3.3) y resolver a mano qué
+  tenant conserva la cuenta. Filas con `''` o `'None'` repetidas también chocan.
+- **Riesgo** — Un dueño que legítimamente maneja dos negocios con la misma cuenta MP ya no
+  puede conectarla en ambos; hoy no hay flujo para transferirla salvo desconectar primero en
+  el otro tenant.
+- **Deuda** — El mensaje `account_in_use` no dice qué negocio tiene la cuenta (a propósito,
+  para no filtrar datos entre tenants), así que el soporte tiene que investigarlo a mano.
+
+**Implementación**: `app/models.py`, `app/mp_connect.py`, `app/routers/panel.py`.
+Migración: `c7d8e9f0a1b2_add_unique_tenant_mp_user_id.py`.
+Tests en `tests/test_panel_mp_connect.py`.
+Commit: `92a24d9`.
+
+---
+
 ## Roadmap de deuda técnica
 
 Ordenado por impacto/urgencia estimada:

@@ -50,7 +50,7 @@
 | GET | `/login` | Formulario login (redirige a `/dashboard` si sesión válida) | — |
 | POST | `/login` | Validar credenciales, setear cookie `juturno_session` | CSRF |
 | POST | `/logout` | Borrar cookie sesión | — |
-| GET | `/panel/settings` | Ajustes: estado de la conexión con Mercado Pago. `?mp=connected\|disconnected\|pending\|error` muestra un mensaje fijo (nunca se refleja el valor del query) | Cookie |
+| GET | `/panel/settings` | Ajustes: estado de la conexión con Mercado Pago. `?mp=connected\|disconnected\|pending\|error\|other_browser\|account_in_use` muestra un mensaje fijo (nunca se refleja el valor del query) | Cookie |
 | POST | `/panel/mp/connect/start` | Guarda el state en Redis, setea la cookie `mp_oauth_state` (HttpOnly) y responde 302 a MP. 503 si falta `MP_MARKETPLACE_CLIENT_ID` | Cookie + CSRF |
 | POST | `/panel/mp/disconnect` | Borra localmente tokens y metadata MP → 302 `/panel/settings?mp=disconnected`. Bloqueado con 302 `?mp=pending` si hay un turno `pending` con `Payment.mp_preference_id` y plazo de seña vigente (`created_at + deposit_expiration_minutes`; minutos `NULL` = siempre bloquea). No revoca la autorización en MP | Cookie + CSRF |
 | GET | `/dashboard` | Vista principal: resumen del día, próximos turnos, checklist de configuración y link público de reserva (oculto si el tenant no tiene slug). Todo filtrado por `tenant_id` | Cookie |
@@ -293,8 +293,9 @@ Siempre responde **302** a `{PUBLIC_BASE_URL}/panel/settings?mp=<flag>` (no hay 
 | Flag | Cuándo |
 |------|--------|
 | `connected` | Éxito; se borra la cookie `mp_oauth_state` |
-| `error` | MP devolvió `error=`; el state se consume y la cookie se borra solo si la cookie coincide con el state |
+| `error` | MP devolvió `error=`, o el canje no devolvió `user_id` (no se guarda nada); el state se consume y la cookie se borra solo si la cookie coincide con el state |
 | `other_browser` | Cookie ausente o distinta del `state`: el state NO se consume y no se vincula nada; el panel pide completar la autorización en el mismo navegador |
+| `account_in_use` | La cuenta de MP ya está vinculada a otro tenant (índice único `uq_tenant_mp_user_id`): rollback, no se guardan tokens y el otro tenant no cambia |
 
 Errores JSON que se mantienen:
 - 400 si falta `code` o `state`, o si el `state` es inválido/vencido/ya usado (Redis `GETDEL`, un solo uso).

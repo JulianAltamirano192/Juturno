@@ -278,9 +278,10 @@ REQUIRE_STARTED = {"no_show", "completed"}  # solo si start_time <= now
   3. Dueño autoriza en MP → MP redirige a `GET /mp/connect/callback?code=...&state=...`
   4. Callback exige que la cookie `mp_oauth_state` coincida con el `state` (`hmac.compare_digest`), consume `state` (Redis `GETDEL` → un solo uso), canjea `code` por tokens en `POST /oauth/token`.
   5. Cifra `access_token` y `refresh_token` con **Fernet** (`MP_TOKEN_ENCRYPTION_KEY`) → guarda en `tenant.mp_access_token_enc`, `mp_refresh_token_enc`.
-  6. Guarda `mp_user_id` (collector_id), `mp_alias` (nickname), `mp_token_expires_at = now + expires_in`.
+  6. Guarda `mp_user_id` (collector_id), `mp_alias` (nickname), `mp_token_expires_at = now + expires_in`. El `user_id` sale de la respuesta del canje o, si falta, de `GET /users/me`; si MP no devuelve ninguno no se guarda nada (antes se persistía el string `"None"`) y se redirige a `?mp=error`.
+  7. Una cuenta MP pertenece a un solo negocio: índice único parcial `uq_tenant_mp_user_id` sobre `tenant(mp_user_id) WHERE mp_user_id IS NOT NULL` (migración `c7d8e9f0a1b2`; los `NULL` conviven). Si el `commit` del callback lanza `IntegrityError`, hace `rollback` (no se guardan tokens, el otro tenant no cambia) y redirige a `?mp=account_in_use` (D-021).
 - **Única vía de conexión**: el panel (`GET /panel/settings` con cookie + `POST /panel/mp/connect/start` con cookie + CSRF). `GET /mp/connect/start` por API key se eliminó (404): una URL de autorización devuelta por API no tiene navegador al cual atar el state (account-linking). `GET`/`DELETE /tenants/me/mp` (API key) siguen.
-- **Callback**: siempre 302 a `PUBLIC_BASE_URL/panel/settings?mp=connected|error|other_browser`. `other_browser` = cookie ausente o distinta del state: no se consume el state ni se vincula nada. Siguen siendo 400 JSON (falta code/state, state inválido/vencido/usado) y 502 (falla el canje en MP). Ojo: si el host de `PUBLIC_BASE_URL` no es padre del host del callback, la cookie no llega y toda conexión termina en `other_browser`.
+- **Callback**: siempre 302 a `PUBLIC_BASE_URL/panel/settings?mp=connected|error|other_browser|account_in_use`. `account_in_use` = la cuenta MP ya está vinculada a otro tenant. `other_browser` = cookie ausente o distinta del state: no se consume el state ni se vincula nada. Siguen siendo 400 JSON (falta code/state, state inválido/vencido/usado) y 502 (falla el canje en MP). Ojo: si el host de `PUBLIC_BASE_URL` no es padre del host del callback, la cookie no llega y toda conexión termina en `other_browser`.
 - **Desconexión desde el panel** (`POST /panel/mp/disconnect`): limpia en local `mp_access_token_enc`, `mp_refresh_token_enc`, `mp_token_expires_at`, `mp_user_id`, `mp_public_key` y `mp_alias`; no revoca la autorización en MP. Se bloquea (302 `?mp=pending`) si hay un turno `pending` con `Payment.mp_preference_id` y el plazo de seña (`created_at + deposit_expiration_minutes`, mismo criterio que `process_deposit_expiration`) no venció; con minutos `NULL` siempre bloquea, porque el webhook necesita el token para verificar el pago.
 - **Regla de cobro (D-012)**: `resolve_mp_access_token(tenant)`:
   - Tenant con cuenta → su `access_token` descifrado.
@@ -296,7 +297,7 @@ REQUIRE_STARTED = {"no_show", "completed"}  # solo si start_time <= now
   - Idempotencia: tabla `payment_events` con `event_id` PK. Estados: `received` → `processing` → `processed`|`failed`. Reintentos legítimos (estado `processing`/`failed`) reprocesan.
 - **Resolución de token** (`_resolve_token_for_payment`):
   - Payload MP trae `user_id` (collector_id) en raíz o en `data.user_id`.
-  - Busca `Tenant.mp_user_id == user_id` → usa su token descifrado.
+  - Busca `Tenant.mp_user_id == user_id` → usa su token descifrado (a lo sumo una fila, por `uq_tenant_mp_user_id`).
   - Fallback: `None` → usa `MP_ACCESS_TOKEN` de la plataforma.
 - **Auto-creación Payment**: si webhook `approved` y no existe `Payment` con ese `mp_payment_id` → crea con datos de MP (`transaction_amount`, `payment_method_id`, `date_approved`).
 - **Guard de amount**: usa `booking.deposit_at_booking` si está seteado; si es `NULL` (bookings anteriores a la migración `55526fb8c0f9`) cae al fallback `effective_deposit(service.price, service.deposit_amount)`.
@@ -343,7 +344,7 @@ app/
 │   ├── auth.py          — formularios/cookies: GET+POST /register, GET+POST /login, POST /logout
 │   ├── api.py           — API Key (X-Tenant-API-Key): /bookings/available-slots, POST /bookings, PATCH /tenants/me
 │   └── panel.py         — cookie auth: GET /dashboard (resumen del día, próximos turnos, checklist; todo por tenant_id), GET+POST /panel/*
-├── mp_connect.py        — OAuth MP: /mp/connect/callback, PATCH /tenants/me/mp
+├── mp_connect.py        — OAuth MP: /mp/connect/callback, GET/DELETE /tenants/me/mp
 ├── mp_webhooks.py       — POST /webhooks/mercadopago
 ├── booking_actions.py   — máquina de estados booking (transition_booking_status)
 ├── services.py          — lógica de negocio (compute_available_slots, etc.)
