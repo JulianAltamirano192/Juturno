@@ -620,6 +620,49 @@ async def test_webhook_replay_with_other_id_case_is_duplicate(
 
 
 @pytest.mark.asyncio
+async def test_webhook_booking_integrity_error_is_not_reported_as_processed(
+    client, db_session, monkeypatch
+):
+    """Solo el INSERT duplicado del Payment es idempotente. Un IntegrityError
+    de la reserva (p. ej. el horario se ocupó) deja el evento 'failed' para
+    que MP reintente, en vez de darlo por procesado."""
+    from sqlalchemy.exc import IntegrityError
+
+    secret = "test-webhook-secret"
+    monkeypatch.setattr(mp_webhooks.settings, "MP_SECRET_KEY", secret)
+    booking = await _create_booking(db_session, "book_integrity")
+
+    async def mock_get_payment_details(data_id: str, access_token: str | None = None):
+        return _make_payment_details("approved", f"booking-{booking.id}")
+
+    async def failing_transition(session, booking, new_status, actor="system"):
+        raise IntegrityError("UPDATE booking", {}, Exception("excl_overlapping"))
+
+    monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_get_payment_details)
+    monkeypatch.setattr(mp_webhooks, "transition_booking_status", failing_transition)
+
+    ts = int(datetime.now(timezone.utc).timestamp())
+    headers = {
+        "x-signature": _sign_webhook("pay_integrity", "req_integrity", ts, secret),
+        "x-request-id": "req_integrity",
+    }
+    with pytest.raises(IntegrityError):
+        await client.post(
+            "/webhooks/mercadopago?data.id=pay_integrity&type=payment",
+            json={"data": {"id": "pay_integrity"}},
+            headers=headers,
+        )
+
+    result = await db_session.execute(
+        text(
+            "SELECT status FROM payment_events "
+            "WHERE event_id='pay_integrity:req_integrity'"
+        )
+    )
+    assert result.scalar_one() == "failed"
+
+
+@pytest.mark.asyncio
 async def test_webhook_payment_not_found_on_mp(client, db_session, monkeypatch):
     """
     Test B4: MP responde 404 para el pago (ID del simulador o evento viejo)

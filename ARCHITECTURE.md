@@ -48,7 +48,7 @@
 6. Si `approved` → `transition_booking_status(booking, "confirmed")` + crea `NotificationOutbox` (tipo `confirmation`) en **misma transacción**
 7. Job `process_outbox` (cada 60s) envía WhatsApp via Meta Graph API
 8. Job `process_reminders` (cada 5min) encola recordatorio 24h antes → outbox reminder
-9. Job `process_deposit_expiration` (cada 1min) → antes de expirar un `pending` vencido busca en MP (token del tenant, `external_reference=booking-{id}`) un pago aprobado perdido y lo aplica con los guards del webhook (`apply_payment_details`); si no hay, expira y libera el slot; si MP no responde, lo deja `pending` hasta la próxima corrida (D-023)
+9. Job `process_deposit_expiration` (cada 1min) → antes de expirar un `pending` vencido busca en MP (token del tenant, `external_reference=booking-{id}`) un pago aprobado perdido y lo aplica con los guards del webhook (`apply_payment_details`); si no hay, expira y libera el slot; si MP no responde, lo deja `pending` hasta 1 h después del vencimiento y luego expira (D-023)
 10. Job `process_mp_token_refresh` (diario) renueva tokens OAuth que vencen en <30 días
 
 ---

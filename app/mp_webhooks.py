@@ -345,6 +345,10 @@ async def _resolve_token_for_payment(
 # ─────────────────────────────────────────────────────────────────
 
 
+class DuplicatePaymentError(Exception):
+    """El Payment con este mp_payment_id ya lo insertó otro proceso."""
+
+
 async def apply_payment_details(
     session: AsyncSession, mp_payment_id: str, details: dict[str, Any]
 ) -> tuple[str, int | None]:
@@ -355,7 +359,7 @@ async def apply_payment_details(
 
     No commitea. Devuelve (outcome, booking_id vinculado o None); outcome es
     EVENT_PROCESSED o el guard que lo frenó. Un INSERT concurrente del mismo
-    Payment lanza IntegrityError.
+    Payment lanza DuplicatePaymentError (la sesión queda para rollback).
     """
     payment_status = details.get(
         "status"
@@ -448,7 +452,7 @@ async def apply_payment_details(
     # All guards passed. Create or update the Payment record.
     # (payment already fetched via SELECT FOR UPDATE above)
     # For concurrent INSERTs the UNIQUE constraint on mp_payment_id is the
-    # safety net; the caller handles the IntegrityError.
+    # safety net; the caller handles DuplicatePaymentError.
     if payment is None:
         # Auto-crear el Payment con los datos de MP
         transaction_amount = details.get("transaction_amount") or 0
@@ -464,9 +468,11 @@ async def apply_payment_details(
             paid_at=paid_at if payment_status == "approved" else None,
         )
         session.add(payment)
-        # Un INSERT concurrente del mismo mp_payment_id lanza IntegrityError:
-        # lo maneja el caller (webhook o reconciliación).
-        await session.flush()
+        try:
+            await session.flush()
+        except IntegrityError as exc:
+            # Otro webhook (o la reconciliación) insertó este mp_payment_id.
+            raise DuplicatePaymentError(mp_payment_id) from exc
     else:
         # Actualizar el estado si cambió
         if payment.status != payment_status:
@@ -594,7 +600,7 @@ async def mercadopago_webhook(
             outcome, linked_booking_id = await apply_payment_details(
                 session, data_id, details
             )
-        except IntegrityError:
+        except DuplicatePaymentError:
             # A concurrent webhook beat us to the INSERT for this mp_payment_id.
             # Treat as idempotent: mark this event processed and return.
             await session.rollback()

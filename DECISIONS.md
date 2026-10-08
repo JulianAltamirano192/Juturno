@@ -668,7 +668,7 @@ Commit: `92a24d9`.
 
 **Contexto**: Si el webhook firmado de un pago aprobado nunca llega (caída, reintentos agotados, o un reenvío con `user_id` falso que antes quemaba la clave), `process_deposit_expiration` vencía la reserva aunque el cliente hubiera pagado.
 
-**Decisión**: Antes de expirar, el job busca en MP con el token del tenant (`GET /v1/payments/search?external_reference=booking-{id}`), vuelve a pedir cada pago aprobado a `/v1/payments/{id}` y lo aplica con `apply_payment_details`, la misma función (guards de `collector_id`, moneda y monto, upsert de `Payment`, confirmación y outbox) que usa el webhook. Si se confirma, no expira. Si MP falla, la reserva queda `pending` hasta la próxima corrida. Sin token (tenant sin MP en producción) expira como antes. Cada reserva corre en su propia transacción.
+**Decisión**: Antes de expirar, el job busca en MP con el token del tenant (`GET /v1/payments/search?external_reference=booking-{id}`), vuelve a pedir cada pago aprobado a `/v1/payments/{id}` y lo aplica con `apply_payment_details`, la misma función (guards de `collector_id`, moneda y monto, upsert de `Payment`, confirmación y outbox) que usa el webhook. Si se confirma, no expira. Las llamadas a MP van antes de bloquear la fila; después se bloquea, se re-chequea `pending` y se aplica o expira, cada reserva en su propia transacción. Solo cuentan pagos cuyo `external_reference` es esa reserva. Si MP (o el token) falla, la reserva queda `pending` hasta 1 h después de su vencimiento (`RECONCILE_GRACE`) y después se expira igual. Sin token (tenant sin MP en producción) expira como antes. Solo el INSERT duplicado del `Payment` (`DuplicatePaymentError`) se trata como idempotente en el webhook.
 
 **Alternativas**:
 - **Job de reconciliación independiente**: más general (también pagos de reservas sin límite de seña), pero más superficie; el momento crítico es justo antes de liberar el horario.
@@ -678,7 +678,7 @@ Commit: `92a24d9`.
 - **Ventaja** — Un pago aprobado sin webhook ya no pierde el turno.
 - **Ventaja** — Una sola implementación de los guards para webhook y reconciliación.
 - **Riesgo** — Una o dos llamadas a MP por reserva vencida y por corrida mientras MP falle; volumen bajo.
-- **Riesgo** — Si MP está caído mucho tiempo, las reservas vencidas no liberan su horario hasta que vuelva.
+- **Riesgo** — Con MP caído o un token revocado, una reserva vencida retiene su horario hasta 1 h más; pasado eso se expira, y si el pago aparece el webhook reconfirma si el horario sigue libre.
 - **Deuda** — Reservas de tenants sin `deposit_expiration_minutes` no se reconcilian.
 
 **Implementación**: `app/scheduler.py` (`_reconcile_or_expire`), `app/mp_webhooks.py` (`apply_payment_details`, `search_approved_payment_ids`).

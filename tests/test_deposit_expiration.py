@@ -297,3 +297,51 @@ async def test_fresh_pending_booking_is_not_looked_up_in_mp(db_session, mp_searc
     await process_deposit_expiration(TestingSessionLocal)
 
     assert mp_search["searched"] == []
+
+
+@pytest.mark.asyncio
+async def test_mp_error_past_grace_expires_anyway(db_session, mp_search):
+    """Si MP falla de forma persistente (token revocado, clave rota) la reserva
+    no bloquea el horario para siempre: pasada la gracia se vence igual."""
+    _, booking = await _tenant_with_pending_booking(
+        db_session, expiration_minutes=15, created_ago=timedelta(hours=2)
+    )
+    mp_search["error"] = RuntimeError("401 token revocado")
+
+    await process_deposit_expiration(TestingSessionLocal)
+
+    await db_session.refresh(booking)
+    assert booking.status == "expired"
+
+
+@pytest.mark.asyncio
+async def test_tenant_without_mp_token_expires_without_lookup(
+    db_session, mp_search, monkeypatch
+):
+    """En producción un tenant sin MP conectado no tiene a quién preguntar."""
+    monkeypatch.setattr(settings, "MP_SANDBOX", False)
+    _, booking = await _tenant_with_pending_booking(
+        db_session, expiration_minutes=15, created_ago=timedelta(minutes=20)
+    )
+
+    await process_deposit_expiration(TestingSessionLocal)
+
+    await db_session.refresh(booking)
+    assert booking.status == "expired"
+    assert mp_search["searched"] == []
+
+
+@pytest.mark.asyncio
+async def test_payment_of_another_booking_is_ignored(db_session, mp_search):
+    """Solo cuenta un pago cuyo external_reference es esta reserva."""
+    _, booking = await _tenant_with_pending_booking(
+        db_session, expiration_minutes=15, created_ago=timedelta(minutes=20)
+    )
+    other = _approved(booking)
+    other["external_reference"] = f"booking-{booking.id + 1000}"
+    mp_search["approved"]["pay_other_booking"] = other
+
+    await process_deposit_expiration(TestingSessionLocal)
+
+    await db_session.refresh(booking)
+    assert booking.status == "expired"
