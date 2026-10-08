@@ -95,7 +95,9 @@ async def process_outbox(async_session_maker) -> None:
                 continue
 
             try:
-                await _send_event(session, whatsapp, event)
+                # Savepoint: si falla la base adentro, se puede igual marcar failed.
+                async with session.begin_nested():
+                    await _send_event(session, whatsapp, event)
                 event.status = "sent"
                 event.error_message = None
                 logger.info(

@@ -644,7 +644,7 @@ Commit: `92a24d9`.
 
 **Contexto**: D-016 describía un rollback del batch que el código no hacía (cada envío estaba en su propio `try`), pero quedaban tres problemas reales: los eventos `failed` nunca se reintentaban (una caída de Meta de más de ~3 s dejaba al cliente sin confirmación), un error fuera del `try` (p. ej. timezone inválida del tenant) abortaba el lote entero cada minuto (mensaje veneno), y un crash a mitad del lote reenviaba lo ya enviado.
 
-**Decisión**: `process_outbox` lista los ids elegibles y procesa cada evento en su propia transacción (`FOR UPDATE SKIP LOCKED` por fila); cualquier excepción marca solo ese evento `failed` y suma `retry_count`. Los `failed` se reintentan hasta `MAX_OUTBOX_ATTEMPTS = 7` intentos, con backoff calculado desde `created_at`: tras n fallos el próximo es a los `2^n - 1` minutos (1, 3, 7, 15, 31, 63). Fallidos con más de 2 h no se reintentan.
+**Decisión**: `process_outbox` lista los ids elegibles y procesa cada evento en su propia transacción (`FOR UPDATE SKIP LOCKED` por fila); cualquier excepción marca solo ese evento `failed` y suma `retry_count` (el envío corre en un savepoint, así un error de base no impide marcarlo). Los `failed` se reintentan hasta `MAX_OUTBOX_ATTEMPTS = 7` intentos, con backoff calculado desde `created_at`: tras n fallos el próximo es a los `2^n - 1` minutos (1, 3, 7, 15, 31, 63). Fallidos con más de 2 h no se reintentan.
 
 **Alternativas**:
 - **Columna `next_attempt_at`**: calendario explícito, pero requiere migración; el backoff desde `created_at` alcanza mientras los reintentos los genere solo este job.
@@ -655,6 +655,7 @@ Commit: `92a24d9`.
 - **Ventaja** — Sin migración.
 - **Riesgo** — Errores permanentes de Meta (número inválido, 131030) se reintentan igual hasta agotar los intentos (~1 h); es ruido en logs, no reenvíos.
 - **Riesgo** — Un reintento no revisa si el turno sigue confirmado (igual que el primer envío).
+- **Riesgo** — Entrega *at-least-once*: si Meta aceptó el mensaje pero la respuesta no llegó (timeout) o el proceso muere antes del commit, el reintento lo duplica. Preferible a perderlo.
 - **Deuda** — Fallidos agotados quedan en `failed` sin alerta; mirar RUNBOOK.
 
 **Implementación**: `app/outbox_worker.py`, `tests/test_outbox_worker.py`.

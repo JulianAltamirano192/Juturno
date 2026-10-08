@@ -155,3 +155,49 @@ async def test_stale_failed_event_is_not_retried(db_session, sent):
     await db_session.refresh(event)
     assert event.status == "failed"
     assert sent == []
+
+
+@pytest.mark.asyncio
+async def test_send_error_marks_failed_and_counts_attempt(db_session, monkeypatch):
+    async def failing_send(self, phone, booking_id, nombre, fecha):
+        raise RuntimeError("Meta caído")
+
+    monkeypatch.setattr(
+        outbox_worker.WhatsAppService, "send_confirmation", failing_send
+    )
+    event = await _event(db_session, "meta-down")
+
+    await process_outbox(TestingSessionLocal)
+
+    await db_session.refresh(event)
+    assert event.status == "failed"
+    assert event.retry_count == 1
+    assert event.error_message == "Meta caído"
+
+
+@pytest.mark.asyncio
+async def test_db_error_in_one_event_does_not_abort_the_batch(
+    db_session, sent, monkeypatch
+):
+    """Un error de base dentro del envío deja la transacción abortada; aun así
+    ese evento queda failed y el resto del lote se procesa."""
+    from sqlalchemy import text
+
+    broken = await _event(db_session, "db-broken")
+    ok = await _event(db_session, "db-ok")
+    real_send_event = outbox_worker._send_event
+
+    async def send_event(session, whatsapp, event):
+        if event.id == broken.id:
+            await session.execute(text("SELECT 1/0"))
+        await real_send_event(session, whatsapp, event)
+
+    monkeypatch.setattr(outbox_worker, "_send_event", send_event)
+
+    await process_outbox(TestingSessionLocal)
+
+    await db_session.refresh(broken)
+    await db_session.refresh(ok)
+    assert broken.status == "failed"
+    assert broken.retry_count == 1
+    assert ok.status == "sent"
