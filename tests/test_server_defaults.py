@@ -23,8 +23,7 @@ async def test_booking_server_defaults(db_session):
 
     # INSERT directo: sin status, reminder_sent, created_at
     await db_session.execute(
-        text(
-            """
+        text("""
             INSERT INTO booking (
                 tenant_id, service_id, staff_id, client_name, client_phone,
                 start_time, end_time, price_at_booking, idempotency_key
@@ -33,8 +32,7 @@ async def test_booking_server_defaults(db_session):
                 NOW() + interval '1 day', NOW() + interval '1 day 1 hour',
                 100.00, 'default-test-' || extract(epoch from now())
             )
-        """
-        ),
+        """),
         {"tid": tenant.id, "sid": service.id},
     )
     await db_session.commit()
@@ -65,8 +63,7 @@ async def test_notification_outbox_server_defaults(db_session):
     await db_session.flush()
 
     await db_session.execute(
-        text(
-            """
+        text("""
             INSERT INTO booking (
                 tenant_id, service_id, staff_id, client_name, client_phone,
                 start_time, end_time, price_at_booking, idempotency_key
@@ -75,8 +72,7 @@ async def test_notification_outbox_server_defaults(db_session):
                 NOW() + interval '2 days', NOW() + interval '2 days 1 hour',
                 100.00, 'outbox-default-' || extract(epoch from now())
             )
-        """
-        ),
+        """),
         {"tid": tenant.id, "sid": service.id},
     )
     await db_session.commit()
@@ -92,24 +88,20 @@ async def test_notification_outbox_server_defaults(db_session):
 
     # INSERT directo: sin status, retry_count, created_at
     await db_session.execute(
-        text(
-            """
+        text("""
             INSERT INTO notification_outbox (booking_id, notification_type)
             VALUES (:bid, 'confirmation')
-        """
-        ),
+        """),
         {"bid": booking_id},
     )
     await db_session.commit()
 
     result = await db_session.execute(
-        text(
-            """
+        text("""
             SELECT status, retry_count, created_at FROM notification_outbox
             WHERE booking_id = :bid
             ORDER BY id DESC LIMIT 1
-        """
-        ),
+        """),
         {"bid": booking_id},
     )
     row = result.fetchone()
@@ -122,29 +114,21 @@ async def test_notification_outbox_server_defaults(db_session):
 @pytest.mark.asyncio
 async def test_payment_events_server_defaults(db_session):
     """INSERT directo a payment_events sin status, received_at."""
-    await db_session.execute(
-        text(
-            """
+    await db_session.execute(text("""
             INSERT INTO payment_events (event_id, event_type, payload)
             VALUES (
                 'evt-default-' || extract(epoch from now()),
                 'payment.updated',
                 '{}'::json
             )
-        """
-        )
-    )
+        """))
     await db_session.commit()
 
-    result = await db_session.execute(
-        text(
-            """
+    result = await db_session.execute(text("""
             SELECT status, received_at FROM payment_events
             WHERE event_id LIKE 'evt-default-%'
             ORDER BY received_at DESC LIMIT 1
-        """
-        )
-    )
+        """))
     row = result.fetchone()
 
     assert row[0] == "received", "status debe defaultear a 'received'"
