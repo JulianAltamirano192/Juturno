@@ -229,7 +229,7 @@ REQUIRE_STARTED = {"no_show", "completed"}  # solo si start_time <= now
 - `status_changed_at` (TIMESTAMPTZ), `status_changed_by` (actor: `"owner"|"system"|"webhook_mp"`)
 - `cancellation_reason` (solo si `cancelled`)
 - `no_show_at`, `completed_at` (TIMESTAMPTZ)
-- Al cancelar: marca `NotificationOutbox` pendientes del booking como `cancelled` (`error_message="booking_cancelled"`).
+- Al cancelar: marca `NotificationOutbox` del booking en `pending` o `failed` (que `process_outbox` reintenta) como `cancelled` (`error_message="booking_cancelled"`).
 
 **NO hace commit**: el caller decide cuándo `await session.commit()` (permite agrupar con otras operaciones).
 
