@@ -7,6 +7,7 @@ cualquier caller (endpoints del panel, webhook de MP, scheduler) use
 la misma lógica. Antes de este módulo, la transición se hacía inline
 (ej: mp_webhooks.py asignaba booking.status = "confirmed" a mano).
 """
+
 from datetime import datetime, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
