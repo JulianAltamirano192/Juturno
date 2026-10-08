@@ -127,7 +127,7 @@ async def test_webhook_idempotency_retry(client, db_session, monkeypatch):
 
     # Verificar que quedó en 'failed' para trazabilidad
     result = await db_session.execute(
-        text("SELECT status FROM payment_events WHERE event_id='evt_retry_test'")
+        text("SELECT status FROM payment_events WHERE event_id='pay_999:req_1'")
     )
     assert result.scalar_one() == "failed"
 
@@ -351,7 +351,9 @@ async def test_webhook_invalid_signature_rejected(client, db_session, monkeypatc
 
     # El evento no debe quedar registrado: el rechazo es previo al gate de idempotencia
     result = await db_session.execute(
-        text("SELECT COUNT(*) FROM payment_events WHERE event_id='evt_invalid_sig'")
+        text(
+            "SELECT COUNT(*) FROM payment_events WHERE event_id='pay_bad_sig:req_bad_sig'"
+        )
     )
     assert result.scalar_one() == 0
 
@@ -553,6 +555,39 @@ async def test_webhook_body_data_id_without_query_is_ignored(
 
 
 @pytest.mark.asyncio
+async def test_webhook_replay_with_new_body_id_is_duplicate(
+    client, db_session, monkeypatch
+):
+    """La clave de idempotencia sale solo de valores firmados: reenviar un
+    request firmado cambiando el "id" del body no saltea el dedupe."""
+    secret = "test-webhook-secret"
+    monkeypatch.setattr(mp_webhooks.settings, "MP_SECRET_KEY", secret)
+    calls = 0
+
+    async def mock_get_payment_details(data_id: str, access_token: str | None = None):
+        nonlocal calls
+        calls += 1
+
+    monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_get_payment_details)
+
+    ts = int(datetime.now(timezone.utc).timestamp())
+    headers = {
+        "x-signature": _sign_webhook("pay_replay", "req_replay", ts, secret),
+        "x-request-id": "req_replay",
+    }
+    url = "/webhooks/mercadopago?data.id=pay_replay&type=payment"
+    first = {"id": "evt_original", "data": {"id": "pay_replay"}}
+    replay = {"id": "evt_forged", "data": {"id": "pay_replay"}}
+
+    res1 = await client.post(url, json=first, headers=headers)
+    res2 = await client.post(url, json=replay, headers=headers)
+
+    assert res1.text == "PAYMENT_NOT_FOUND_ON_MP"
+    assert res2.text == "DUPLICATE_EVENT_IGNORED"
+    assert calls == 1
+
+
+@pytest.mark.asyncio
 async def test_webhook_payment_not_found_on_mp(client, db_session, monkeypatch):
     """
     Test B4: MP responde 404 para el pago (ID del simulador o evento viejo)
@@ -584,7 +619,9 @@ async def test_webhook_payment_not_found_on_mp(client, db_session, monkeypatch):
 
     # El evento igual queda 'processed': MP no debe reintentarlo eternamente
     result = await db_session.execute(
-        text("SELECT status FROM payment_events WHERE event_id='evt_not_found'")
+        text(
+            "SELECT status FROM payment_events WHERE event_id='pay_ghost_404:req_ghost'"
+        )
     )
     assert result.scalar_one() == "processed"
 
@@ -622,7 +659,9 @@ async def test_webhook_payment_without_booking_link_ignored(
     assert res.text == "NO_BOOKING_LINKED"
 
     result = await db_session.execute(
-        text("SELECT status FROM payment_events WHERE event_id='evt_unlinked'")
+        text(
+            "SELECT status FROM payment_events WHERE event_id='pay_unlinked_1:req_unlinked'"
+        )
     )
     assert result.scalar_one() == "processed"
 
@@ -726,7 +765,9 @@ async def test_webhook_mp_timeout_marks_event_failed(client, db_session, monkeyp
 
     # El evento queda 'failed' para que el reintento de MP lo reprocese
     result = await db_session.execute(
-        text("SELECT status FROM payment_events WHERE event_id='evt_timeout'")
+        text(
+            "SELECT status FROM payment_events WHERE event_id='pay_timeout:req_timeout'"
+        )
     )
     assert result.scalar_one() == "failed"
 

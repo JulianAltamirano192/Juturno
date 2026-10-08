@@ -243,7 +243,7 @@ Igual que público pero **requiere API Key** y valida que `tenant_id` coincida c
 **Validaciones:**
 1. HMAC: `manifest = "id:{data_id};request-id:{x_request_id};ts:{ts};"`, con `data_id` = `?data.id` del query en minúsculas (sin `data.id` en el query se omite `id:...;` y responde 200 `EVENT_IGNORED_NO_DATA_ID`) → `hmac.compare_digest` con `MP_SECRET_KEY`. 401 si falla.
 2. Replay: `|now - ts| <= 300s` (5 min). 403 si fuera de ventana.
-3. Idempotencia: `payment_events.event_id` (PK). Estados: `received` → `processing` → `processed`|`failed`.
+3. Idempotencia: `payment_events.event_id` (PK) = `{data.id}:{x-request-id}` (solo valores firmados; el `id` del body no se usa). Estados: `received` → `processing` → `processed`|`failed`.
 
 **Payload:** Formato Webhook (`data.id`, `type`, `action`), con firma `x-signature`. Las notificaciones IPN (`?id=X&topic=...` sin `data.id`) no traen firma validable: se responden 200 `IPN_IGNORED` sin procesarlas (el mismo evento llega también como Webhook firmado).
 

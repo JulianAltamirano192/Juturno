@@ -294,7 +294,7 @@ REQUIRE_STARTED = {"no_show", "completed"}  # solo si start_time <= now
 - **Verificaciones**:
   - HMAC SHA256: header `x-signature` = `ts=timestamp,v1=hmac` → `manifest = "id:{data_id};request-id:{x_request_id};ts:{ts};"` (`data_id` = `?data.id` del query en minúsculas; si no viene se omite `id:...;` y no se procesa nada; el `data.id` del body no está firmado y se ignora) → `hmac.compare_digest`.
   - Replay protection: `|now - ts| <= 300s` (5 min).
-  - Idempotencia: tabla `payment_events` con `event_id` PK. Estados: `received` → `processing` → `processed`|`failed`. Reintentos legítimos (estado `processing`/`failed`) reprocesan.
+  - Idempotencia: tabla `payment_events` con `event_id` PK = `{data.id}:{x-request-id}` (solo valores firmados: reenviar un request firmado con otro `id` en el body no saltea el dedupe). Estados: `received` → `processing` → `processed`|`failed`. Reintentos legítimos (estado `processing`/`failed`) reprocesan.
 - **Resolución de token** (`_resolve_token_for_payment`):
   - Payload MP trae `user_id` (collector_id) en raíz o en `data.user_id`.
   - Busca `Tenant.mp_user_id == user_id` → usa su token descifrado (a lo sumo una fila, por `uq_tenant_mp_user_id`).
