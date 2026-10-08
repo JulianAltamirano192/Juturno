@@ -8,7 +8,7 @@
 
 <p align="center">
   SaaS multi-tenant de gestión de turnos con cobro de seña (Mercado Pago) y notificaciones WhatsApp.<br>
-  En producción en <a href="https://api.juturno.com">api.juturno.com</a> desde septiembre 2026.
+  En producción en <a href="https://juturno.com">api.juturno.com</a> desde septiembre 2026.
 </p>
 
 <p align="center">
