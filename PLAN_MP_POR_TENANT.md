@@ -1,6 +1,19 @@
 # Plan: Cuenta Mercado Pago por tenant (dinero directo al propietario)
 
-> Estado: **aprobado, pendiente de implementación**. Aprobado el 2026-09-29.
+> **Documento histórico.** Es el plan original (aprobado el 2026-09-29) y ya está implementado; no describe el estado actual. Para el estado vigente ver `ARCHITECTURE.md`, `DECISIONS.md` (D-012, D-015, D-019, D-021) y `README.md`. Diferencias principales con lo implementado: la conexión OAuth hoy se inicia desde el panel (`POST /panel/mp/connect/start`, con cookie) y `GET /mp/connect/start` con API key ya no existe; el `state` va atado al navegador con la cookie `mp_oauth_state`; los tokens se renuevan también por el job `process_mp_token_refresh` (24 h), no solo on-demand; `Tenant.mp_user_id` es único (D-021).
+>
+> **Nombres de variables actualizados** a los de `app/config.py` (el plan original usaba otros):
+>
+> | Nombre en el plan original | Nombre actual |
+> |---|---|
+> | `MP_CLIENT_ID` | `MP_MARKETPLACE_CLIENT_ID` |
+> | `MP_CLIENT_SECRET` | `MP_MARKETPLACE_CLIENT_SECRET` |
+> | `MP_CONNECT_REDIRECT_URL` | `MP_MARKETPLACE_REDIRECT_URL` |
+> | `MP_TOKEN_KEY` | `MP_TOKEN_ENCRYPTION_KEY` |
+>
+> Variables agregadas después: `MP_NOTIFICATION_URL` (webhook MP del entorno, obligatoria en producción).
+
+> Estado original: aprobado, pendiente de implementación.
 > Registro de decisión: [`DECISIONS.md`](DECISIONS.md) → D-012.
 
 ## Objetivo
@@ -54,7 +67,7 @@ Dueño del negocio                     Mercado Pago
 
 | # | Tarea | Contenido |
 |---|---|---|
-| 1 | Modelo, cifrado y migración | Columnas en `tenant`: `mp_user_id`, `mp_alias`, `mp_access_token_enc`, `mp_refresh_token_enc`, `mp_token_expires_at` (todas nullable). Nuevo `app/mp_crypto.py` (`encrypt_token` / `decrypt_token` con Fernet; si falta `MP_TOKEN_KEY`, error claro). Settings nuevos en `app/config.py`. Migración `d2e3f4a5b6c7`. Sin cambio de comportamiento: todo null = se usa el token de la plataforma como hoy |
+| 1 | Modelo, cifrado y migración | Columnas en `tenant`: `mp_user_id`, `mp_alias`, `mp_access_token_enc`, `mp_refresh_token_enc`, `mp_token_expires_at` (todas nullable). Nuevo `app/mp_crypto.py` (`encrypt_token` / `decrypt_token` con Fernet; si falta `MP_TOKEN_ENCRYPTION_KEY`, error claro). Settings nuevos en `app/config.py`. Migración `d2e3f4a5b6c7`. Sin cambio de comportamiento: todo null = se usa el token de la plataforma como hoy |
 | 2 | Flujo OAuth | `GET /mp/connect/start` (API key del tenant) que arma la URL de autorización con `state` firmado y nonce en Redis. `GET /mp/connect/callback` que canjea el código, persiste los tokens cifrados y consulta `/users/me` para guardar `mp_user_id` + `mp_alias`. Helper `get_tenant_mp_token()` con renovación on-demand (vencimiento próximo o 401 → refresh → reintentar una vez). Manejo claro de código vencido o autorización cancelada |
 | 3 | Pagar con el token del tenant | `create_mp_preference(..., access_token)` y `get_payment_details(..., access_token)` usan el parámetro si viene; si no, el token de la plataforma. El endpoint público resuelve `tenant → token` y aplica la regla de dinero (en producción, tenant sin conectar → rechazo con mensaje). Webhook: resolver el token vía `user_id` del payload matcheado contra `tenant.mp_user_id`; sin match → token de la plataforma. Firma, replay protection e idempotencia sin cambios |
 | 4 | Estado y desconexión (API) | `GET /tenants/me/mp`: `{conectado, alias, mp_user_id, expira_en}` — nunca devuelve tokens. `DELETE /tenants/me/mp`: borra la conexión y vuelve a aplicar la regla de fallback |
@@ -75,10 +88,10 @@ y deploy individuales, como en las fases anteriores.
 
 | Variable | Descripción |
 |---|---|
-| `MP_CLIENT_ID` | Application ID de la app de MP (OAuth) |
-| `MP_CLIENT_SECRET` | Client secret de la app de MP (OAuth) |
-| `MP_CONNECT_REDIRECT_URL` | URL de callback registrada en MP |
-| `MP_TOKEN_KEY` | Clave Fernet para cifrar los tokens de los tenants en la DB |
+| `MP_MARKETPLACE_CLIENT_ID` | Application ID de la app de MP (OAuth) |
+| `MP_MARKETPLACE_CLIENT_SECRET` | Client secret de la app de MP (OAuth) |
+| `MP_MARKETPLACE_REDIRECT_URL` | URL de callback registrada en MP |
+| `MP_TOKEN_ENCRYPTION_KEY` | Clave Fernet para cifrar los tokens de los tenants en la DB |
 
 ## Ítem a validar experimentalmente (Tarea 5)
 
@@ -89,7 +102,7 @@ de evento no lo incluyera, la contingencia es probar los tokens de los tenants c
 
 ## Seguridad
 
-- Tokens cifrados en reposo con Fernet (`MP_TOKEN_KEY`). Un volcado de la DB no expone
+- Tokens cifrados en reposo con Fernet (`MP_TOKEN_ENCRYPTION_KEY`). Un volcado de la DB no expone
   credenciales de cobro de los negocios.
 - Ningún endpoint devuelve tokens; el estado de conexión expone solo alias, `mp_user_id`
   y fecha de expiración.
