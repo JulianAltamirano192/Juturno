@@ -78,7 +78,7 @@ Si un doc contradice el código, manda el código: avisá y proponé corregir el
     entrega legítima con la misma clave se procesa igual.
 - ~~CSRF en `/panel/*`: `validate_csrf` solo exige que exista la cookie, no la compara con el form.~~ — **Resuelto en `7be0fcd`**: ahora lee el form body y compara con `hmac.compare_digest` (double-submit).
 - ~~`idempotency_key` es UNIQUE global~~ — **Resuelto en `8cfa0d6`** (migración `b0e5b8028ae7`): constraint ahora es `(tenant_id, idempotency_key)`.
-- ~~`BookingCreate` acepta `price_at_booking` del cliente~~ — **Resuelto en `8cfa0d6`**: campo eliminado del schema. Pendiente: montos `float` en schemas públicos (`PublicServiceRead`, `BookingCreate`) — dinero debería ser `Decimal`.
+- ~~`BookingCreate` acepta `price_at_booking` del cliente~~ — **Resuelto en `8cfa0d6`**: campo eliminado del schema. Los schemas públicos ya usan `Decimal`.
 - ~~Webhook MP: falta validar monto >= seña y `booking.tenant_id == tenant resuelto`.~~
   **Resuelto en `4e3af49`** (guard de collector_id para todos los estados, currency ARS, amount
   is_finite). ~~Pendiente: `deposit_at_booking`, race condition Payment, CHECK deposit >= 0~~
@@ -86,13 +86,41 @@ Si un doc contradice el código, manda el código: avisá y proponé corregir el
   fijo, migration backfill + CHECK >= 0, SELECT FOR UPDATE serializa webhooks concurrentes.
   ~~MEDIA #2: booking cargado sin SELECT FOR UPDATE; race con job de expiración.~~
   **Resuelto**: `app/mp_webhooks.py` usa `select(Booking).with_for_update()`; scheduler usa
-  `.with_for_update(skip_locked=True, of=Booking)`. Também: CHECK en `__table_args__` para
+  `.with_for_update(skip_locked=True, of=Booking)`. También: CHECK en `__table_args__` para
   `deposit_at_booking >= 0` (BAJA #2); doble cálculo `effective_deposit` eliminado (BAJA #4).
 - ~~Outbox (D-016): commit por lote → riesgo de reenvíos y mensajes "veneno"~~ — **Resuelto (D-022)**: commit por evento y reintentos de `failed` con backoff (máx. 7 intentos, ventana 2 h).
 - ~~Sin rate limiting en endpoints públicos~~; uvicorn sin `--forwarded-allow-ips` detrás de Traefik. — **Resuelto parcialmente en `6ab9cac`**: slowapi activo (10/min login, 5/min register, 20/min public bookings). **Pendiente ops**: configurar `--forwarded-allow-ips=<IP_Traefik>` en Coolify para que `get_remote_address` reciba la IP real del cliente y no la de Traefik.
 - ~~CI solo corre pytest~~; sin branch protection confirmada. — **Resuelto parcialmente en `614e278`**: ruff y mypy agregados al workflow. Pendiente: confirmar branch protection en GitHub.
 - ~~Backups sin copia externa ni restore probado~~ — **Resuelto en `746778c`**: `backup_db.sh` sube a S3 (condicional a `S3_BACKUP_BUCKET`); nuevo `restore_db.sh` con soporte local y S3.
-- Docs desactualizados: PLAN_MP.
+- Docs: reescritos completos el 2026-10-08 contra el código. PLAN_MP_POR_TENANT.md sigue siendo histórico.
+
+## Hallazgos abiertos (code-review de `app/`, 2026-10-08) — sin corregir
+
+Verificados a mano: 1, 6, 10 y 12. El resto viene del review y hay que confirmarlo antes de arreglar.
+
+1. Registro (`app/routers/auth.py`) no setea `timezone`: el tenant queda en `UTC` (default del
+   modelo) y el panel no permite cambiarlo. Slots, agenda y texto de WhatsApp quedan desfasados
+   (`outbox_worker.format_booking_datetime` trata `UTC` como Buenos Aires).
+2. `POST /public/bookings` (y `api.py`) no valida `start_time` contra ahora, horario de atención,
+   grilla de slots ni si servicio/staff están activos; solo el EXCLUDE evita solapamientos.
+3. Acciones de agenda en el panel cargan el booking sin `FOR UPDATE`: un cancelar concurrente con
+   el webhook MP puede pisar `confirmed` y dejar viva la outbox de confirmación.
+4. Confirmar desde el panel permite `expired → confirmed` sin capturar `IntegrityError` (500 en
+   vez de 409) y sin encolar la confirmación.
+5. `DELETE /tenants/me/mp` no tiene el guard de señas pendientes que sí tiene
+   `/panel/mp/disconnect`, y duplica su lógica.
+6. Recordatorios: ventana fija `[now+24h, now+24h+5m]`; un run salteado o un turno confirmado con
+   menos de 24h de anticipación nunca recibe recordatorio.
+7. `process_mp_token_refresh` sin try/except por tenant: una excepción corta el refresh del resto.
+8. Guard de desconexión MP del panel: con `deposit_expiration_minutes` null un pending abandonado
+   bloquea la desconexión para siempre; con deadline vencido pero no expirado aún, la permite.
+9. CSRF: cada GET del panel rota la cookie `csrf_token`; formularios de otras pestañas dan 403.
+10. `app/webhooks.py`: el verify token de Meta se compara con `==`, no con `hmac.compare_digest`.
+11. Menores: reembolso/contracargo no cambia el booking; booking inexistente en webhook se marca
+    procesado; `Payment.amount` y `create_mp_preference` usan `float`; el form de servicios
+    acepta `Infinity`/montos fuera de `Numeric(10,2)` (500).
+12. Nada en `app/` incrementa `Tenant.session_version`: `/logout` solo borra la cookie, no hay
+    forma de invalidar sesiones activas (verificado; ver D-013).
 
 ## Flujo de trabajo
 
