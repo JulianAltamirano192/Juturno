@@ -245,7 +245,7 @@ Igual que público pero **requiere API Key** y valida que `tenant_id` coincida c
 2. Replay: `|now - ts| <= 300s` (5 min). 403 si fuera de ventana.
 3. Idempotencia: `payment_events.event_id` (PK). Estados: `received` → `processing` → `processed`|`failed`.
 
-**Payload:** Soporta formatos viejo (`id`, `topic`) y nuevo (`data.id`, `type`, `action`).
+**Payload:** Formato Webhook (`data.id`, `type`, `action`), con firma `x-signature`. Las notificaciones IPN (`?id=X&topic=...` sin `data.id`) no traen firma validable: se responden 200 `IPN_IGNORED` sin procesarlas (el mismo evento llega también como Webhook firmado).
 
 **Procesamiento:**
 - Extrae `data_id` (payment ID) → consulta MP con token resuelto (`_resolve_token_for_payment`):
@@ -259,7 +259,7 @@ Igual que público pero **requiere API Key** y valida que `tenant_id` coincida c
 - Si el pago no está `approved`: el `Payment` se crea/actualiza con el status actual; el booking queda como está.
 
 **Response codes:**
-- 200 `EVENT_PROCESSED` / `DUPLICATE_EVENT_IGNORED` / `PAYMENT_NOT_FOUND_ON_MP` / `NO_BOOKING_LINKED` / `EVENT_IGNORED_NO_DATA_ID`
+- 200 `EVENT_PROCESSED` / `IPN_IGNORED` / `DUPLICATE_EVENT_IGNORED` / `PAYMENT_NOT_FOUND_ON_MP` / `NO_BOOKING_LINKED` / `EVENT_IGNORED_NO_DATA_ID`
 - 401 Firma inválida
 - 403 Timestamp fuera de ventana
 - 500 Error inesperado (incluye MP API rechazos no-404 y `MPTokenCryptoError`) — el evento queda `failed` y MP reintenta

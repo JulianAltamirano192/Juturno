@@ -356,6 +356,13 @@ async def mercadopago_webhook(
     x_request_id: str = Header(None, alias="x-request-id"),
     session: AsyncSession = Depends(get_db),
 ):
+    # IPN (?id=X&topic=...) no trae firma validable; el mismo evento llega
+    # también como Webhook firmado (?data.id=X&type=...). Se confirma la
+    # recepción para cortar los reintentos de MP, sin procesar nada.
+    query = request.query_params
+    if "topic" in query and "data.id" not in query:
+        return Response(content="IPN_IGNORED", status_code=200)
+
     payload = await request.json()
 
     event_id = _extract_event_id(payload, request)
