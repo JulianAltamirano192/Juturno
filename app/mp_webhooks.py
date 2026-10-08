@@ -364,7 +364,7 @@ async def mercadopago_webhook(
 
     # Clave de idempotencia solo con valores firmados: el "id" del body no
     # está firmado y permitiría saltear el dedupe reenviando un request.
-    event_id = f"{data_id}:{x_request_id}"
+    event_id = f"{data_id.lower()}:{x_request_id}"  # misma forma que firma MP
 
     # 2. Gate de idempotencia con soporte de reintentos
     try:

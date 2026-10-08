@@ -588,6 +588,37 @@ async def test_webhook_replay_with_new_body_id_is_duplicate(
 
 
 @pytest.mark.asyncio
+async def test_webhook_replay_with_other_id_case_is_duplicate(
+    client, db_session, monkeypatch
+):
+    """La firma usa data.id en minúsculas: "ABC" y "abc" firman igual, así
+    que la clave de idempotencia también se normaliza."""
+    secret = "test-webhook-secret"
+    monkeypatch.setattr(mp_webhooks.settings, "MP_SECRET_KEY", secret)
+
+    async def mock_get_payment_details(data_id: str, access_token: str | None = None):
+        return None
+
+    monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_get_payment_details)
+
+    ts = int(datetime.now(timezone.utc).timestamp())
+    headers = {
+        "x-signature": _sign_webhook("abc123", "req_case", ts, secret),
+        "x-request-id": "req_case",
+    }
+    body = {"data": {"id": "abc123"}}
+    res1 = await client.post(
+        "/webhooks/mercadopago?data.id=ABC123&type=payment", json=body, headers=headers
+    )
+    res2 = await client.post(
+        "/webhooks/mercadopago?data.id=abc123&type=payment", json=body, headers=headers
+    )
+
+    assert res1.text == "PAYMENT_NOT_FOUND_ON_MP"
+    assert res2.text == "DUPLICATE_EVENT_IGNORED"
+
+
+@pytest.mark.asyncio
 async def test_webhook_payment_not_found_on_mp(client, db_session, monkeypatch):
     """
     Test B4: MP responde 404 para el pago (ID del simulador o evento viejo)
