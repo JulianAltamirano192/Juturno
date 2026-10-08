@@ -12,10 +12,12 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends gcc libpq-dev curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copiar requirements e instalarlos
-COPY requirements.txt /app/
+# Copiar requirements e instalarlos. Prod usa requirements.txt; el compose de
+# desarrollo pasa requirements-dev.txt para tener pytest/ruff/mypy en el contenedor.
+ARG REQUIREMENTS=requirements.txt
+COPY requirements.txt requirements-dev.txt /app/
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+    pip install --no-cache-dir -r ${REQUIREMENTS}
 
 # Copiar el código fuente
 COPY . /app/
