@@ -65,6 +65,15 @@ class Settings(BaseSettings):
                 raise ValueError(
                     f"Missing required env vars in production: {', '.join(missing)}"
                 )
+            # Un typo no rompe el arranque pero deja reservas pagas sin confirmar.
+            url = self.MP_NOTIFICATION_URL
+            if not (
+                url.startswith("https://") and url.endswith("/webhooks/mercadopago")
+            ):
+                raise ValueError(
+                    "MP_NOTIFICATION_URL must be https://.../webhooks/mercadopago "
+                    "in production"
+                )
 
     class Config:
         env_file = ".env"
