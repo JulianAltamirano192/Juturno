@@ -221,30 +221,6 @@ def _extract_data_id(request: Request) -> str:
     return request.query_params.get("data.id", "")
 
 
-def _extract_event_id(payload: dict, request: Request) -> str:
-    """
-    Devuelve un identificador único para idempotencia.
-    Si no hay un id global, sintetiza uno con data_id + tipo de evento.
-    """
-    event_id = (
-        payload.get("id")
-        or request.query_params.get("id")
-        or payload.get("data", {}).get("id")
-        or request.query_params.get("data.id")
-    )
-    if event_id is not None:
-        return str(event_id)
-    # Fallback: usar data_id + action como clave sintética
-    data_id = _extract_data_id(request)
-    action = (
-        payload.get("action")
-        or payload.get("type")
-        or request.query_params.get("topic")
-        or "unknown"
-    )
-    return f"{data_id}:{action}"
-
-
 def _extract_event_type(payload: dict, request: Request) -> str:
     return str(
         payload.get("action")
@@ -368,7 +344,6 @@ async def mercadopago_webhook(
     if not isinstance(payload, dict) or not isinstance(payload.get("data", {}), dict):
         raise HTTPException(status_code=400, detail="Payload de webhook inválido")
 
-    event_id = _extract_event_id(payload, request)
     event_type = _extract_event_type(payload, request)
     data_id = _extract_data_id(request)
 
@@ -386,6 +361,10 @@ async def mercadopago_webhook(
     # Si no hay data_id extraíble (ej. merchant_order mal formado), salimos limpio
     if not data_id:
         return Response(content="EVENT_IGNORED_NO_DATA_ID", status_code=200)
+
+    # Clave de idempotencia solo con valores firmados: el "id" del body no
+    # está firmado y permitiría saltear el dedupe reenviando un request.
+    event_id = f"{data_id.lower()}:{x_request_id}"  # misma forma que firma MP
 
     # 2. Gate de idempotencia con soporte de reintentos
     try:

@@ -248,8 +248,9 @@ REQUIRE_STARTED = {"no_show", "completed"}  # solo si start_time <= now
 4. Job `process_outbox` (cada 60s) → `SELECT ... FOR UPDATE SKIP LOCKED` → por cada evento:
    - Carga booking + tenant (para timezone)
    - `WhatsAppService.send_confirmation()` o `send_reminder()` (template Meta Utility)
-   - Si OK → `status="sent"`; si falla → `status="failed"`, `retry_count+=1`, `error_message=exc`
-   - **Commit por batch** (un solo `async with session.begin()` engloba todo el loop). Si un evento falla, todo el batch hace rollback y se reintenta en el próximo ciclo (~60s). Ver D-016.
+   - Si OK → `status="sent"`; si falla (cualquier excepción) → `status="failed"`, `retry_count+=1`, `error_message=exc`
+   - **Commit por evento**: cada evento en su propia transacción; un error no afecta a los demás.
+   - **Reintentos**: los `failed` con `retry_count < 7` y menos de 2 h se reintentan a los `2^n - 1` min de encolados (1, 3, 7, 15, 31, 63). Ver D-022.
 
 ---
 
@@ -294,7 +295,7 @@ REQUIRE_STARTED = {"no_show", "completed"}  # solo si start_time <= now
 - **Verificaciones**:
   - HMAC SHA256: header `x-signature` = `ts=timestamp,v1=hmac` → `manifest = "id:{data_id};request-id:{x_request_id};ts:{ts};"` (`data_id` = `?data.id` del query en minúsculas; si no viene se omite `id:...;` y no se procesa nada; el `data.id` del body no está firmado y se ignora) → `hmac.compare_digest`.
   - Replay protection: `|now - ts| <= 300s` (5 min).
-  - Idempotencia: tabla `payment_events` con `event_id` PK. Estados: `received` → `processing` → `processed`|`failed`. Reintentos legítimos (estado `processing`/`failed`) reprocesan.
+  - Idempotencia: tabla `payment_events` con `event_id` PK = `{data.id}:{x-request-id}` (solo valores firmados: reenviar un request firmado con otro `id` en el body no saltea el dedupe). Estados: `received` → `processing` → `processed`|`failed`. Reintentos legítimos (estado `processing`/`failed`) reprocesan.
 - **Resolución de token** (`_resolve_token_for_payment`):
   - Payload MP trae `user_id` (collector_id) en raíz o en `data.user_id`.
   - Busca `Tenant.mp_user_id == user_id` → usa su token descifrado (a lo sumo una fila, por `uq_tenant_mp_user_id`).

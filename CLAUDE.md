@@ -87,7 +87,7 @@ Si un doc contradice el código, manda el código: avisá y proponé corregir el
   **Resuelto**: `app/mp_webhooks.py` usa `select(Booking).with_for_update()`; scheduler usa
   `.with_for_update(skip_locked=True, of=Booking)`. Também: CHECK en `__table_args__` para
   `deposit_at_booking >= 0` (BAJA #2); doble cálculo `effective_deposit` eliminado (BAJA #4).
-- Outbox (D-016): commit por lote → riesgo de reenvíos y mensajes "veneno"; pasar a commit por evento.
+- ~~Outbox (D-016): commit por lote → riesgo de reenvíos y mensajes "veneno"~~ — **Resuelto (D-022)**: commit por evento y reintentos de `failed` con backoff (máx. 7 intentos, ventana 2 h).
 - ~~Sin rate limiting en endpoints públicos~~; uvicorn sin `--forwarded-allow-ips` detrás de Traefik. — **Resuelto parcialmente en `6ab9cac`**: slowapi activo (10/min login, 5/min register, 20/min public bookings). **Pendiente ops**: configurar `--forwarded-allow-ips=<IP_Traefik>` en Coolify para que `get_remote_address` reciba la IP real del cliente y no la de Traefik.
 - ~~CI solo corre pytest~~; sin branch protection confirmada. — **Resuelto parcialmente en `614e278`**: ruff y mypy agregados al workflow. Pendiente: confirmar branch protection en GitHub.
 - ~~Backups sin copia externa ni restore probado~~ — **Resuelto en `746778c`**: `backup_db.sh` sube a S3 (condicional a `S3_BACKUP_BUCKET`); nuevo `restore_db.sh` con soporte local y S3.
