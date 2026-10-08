@@ -412,6 +412,8 @@ La causa raíz: `config.py` tiene un validador que rechaza `SECRET_KEY == "chang
 
 **Fecha**: Octubre 2026
 
+**Estado**: Reemplazada por D-022 (commit por evento + reintentos).
+
 **Contexto**: `process_outbox` (app/outbox_worker.py:32-91) usa un solo `async with session.begin()` que engloba todo el loop de eventos. Si un evento falla (ej. WhatsApp timeout), **todos** los eventos del batch hacen rollback — incluso los que se enviaron OK. Con commit por evento (diseño original), cada evento commiteaba su estado independiente.
 
 **Decisión**: Mantener commit por batch (comportamiento actual). Rationale: volumen actual bajo (<200 eventos/min), simplicidad transaccional, y `FOR UPDATE SKIP LOCKED` ya aísla eventos entre workers. Si un evento falla, se reintentará en el próximo ciclo (60s).
@@ -633,6 +635,29 @@ modelo). En `GET /mp/connect/callback`, si el `commit` lanza `IntegrityError` se
 Migración: `c7d8e9f0a1b2_add_unique_tenant_mp_user_id.py`.
 Tests en `tests/test_panel_mp_connect.py`.
 Commit: `92a24d9`.
+
+---
+
+## D-022: Outbox con commit por evento y reintentos con backoff
+
+**Fecha**: Octubre 2026
+
+**Contexto**: D-016 describía un rollback del batch que el código no hacía (cada envío estaba en su propio `try`), pero quedaban tres problemas reales: los eventos `failed` nunca se reintentaban (una caída de Meta de más de ~3 s dejaba al cliente sin confirmación), un error fuera del `try` (p. ej. timezone inválida del tenant) abortaba el lote entero cada minuto (mensaje veneno), y un crash a mitad del lote reenviaba lo ya enviado.
+
+**Decisión**: `process_outbox` lista los ids elegibles y procesa cada evento en su propia transacción (`FOR UPDATE SKIP LOCKED` por fila); cualquier excepción marca solo ese evento `failed` y suma `retry_count`. Los `failed` se reintentan hasta `MAX_OUTBOX_ATTEMPTS = 7` intentos, con backoff calculado desde `created_at`: tras n fallos el próximo es a los `2^n - 1` minutos (1, 3, 7, 15, 31, 63). Fallidos con más de 2 h no se reintentan.
+
+**Alternativas**:
+- **Columna `next_attempt_at`**: calendario explícito, pero requiere migración; el backoff desde `created_at` alcanza mientras los reintentos los genere solo este job.
+- **Reenvío manual desde el panel**: útil para soporte, se puede sumar después; no reemplaza el reintento automático.
+
+**Consecuencias**:
+- **Ventaja** — Un evento roto no bloquea al resto y lo enviado queda commiteado.
+- **Ventaja** — Sin migración.
+- **Riesgo** — Errores permanentes de Meta (número inválido, 131030) se reintentan igual hasta agotar los intentos (~1 h); es ruido en logs, no reenvíos.
+- **Riesgo** — Un reintento no revisa si el turno sigue confirmado (igual que el primer envío).
+- **Deuda** — Fallidos agotados quedan en `failed` sin alerta; mirar RUNBOOK.
+
+**Implementación**: `app/outbox_worker.py`, `tests/test_outbox_worker.py`.
 
 ---
 

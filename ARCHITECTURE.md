@@ -248,8 +248,9 @@ REQUIRE_STARTED = {"no_show", "completed"}  # solo si start_time <= now
 4. Job `process_outbox` (cada 60s) → `SELECT ... FOR UPDATE SKIP LOCKED` → por cada evento:
    - Carga booking + tenant (para timezone)
    - `WhatsAppService.send_confirmation()` o `send_reminder()` (template Meta Utility)
-   - Si OK → `status="sent"`; si falla → `status="failed"`, `retry_count+=1`, `error_message=exc`
-   - **Commit por batch** (un solo `async with session.begin()` engloba todo el loop). Si un evento falla, todo el batch hace rollback y se reintenta en el próximo ciclo (~60s). Ver D-016.
+   - Si OK → `status="sent"`; si falla (cualquier excepción) → `status="failed"`, `retry_count+=1`, `error_message=exc`
+   - **Commit por evento**: cada evento en su propia transacción; un error no afecta a los demás.
+   - **Reintentos**: los `failed` con `retry_count < 7` y menos de 2 h se reintentan a los `2^n - 1` min de encolados (1, 3, 7, 15, 31, 63). Ver D-022.
 
 ---
 
