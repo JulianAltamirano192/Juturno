@@ -6,6 +6,7 @@ from typing import Any
 from sqlalchemy import (
     CheckConstraint,
     DateTime,
+    Index,
     Integer,
     Numeric,
     UniqueConstraint,
@@ -25,6 +26,16 @@ class Tenant(SQLModel, table=True):
     """
 
     __tablename__ = "tenant"
+    __table_args__ = (
+        # Una cuenta de MP pertenece a un solo negocio: el webhook resuelve el
+        # tenant por mp_user_id. Parcial para que convivan los NULL.
+        Index(
+            "uq_tenant_mp_user_id",
+            "mp_user_id",
+            unique=True,
+            postgresql_where=text("mp_user_id IS NOT NULL"),
+        ),
+    )
 
     id: int | None = Field(default=None, primary_key=True)
     name: str = Field(index=True)

@@ -34,6 +34,7 @@
 | **WhatsApp no llega (confirmación/recordatorio)** | `docker compose logs api \| grep -i whatsapp` | `SELECT * FROM notification_outbox WHERE status='failed' ORDER BY created_at DESC LIMIT 20;` | Verificar `WHATSAPP_TOKEN` no vencido, `WHATSAPP_PHONE_NUMBER_ID` correcto; reintentar outbox | Monitorear rate limits Meta; plantillas aprobadas |
 | **Booking creado pero sin payment_url (502)** | `docker compose logs api \| grep -i "preference\|checkout"` | `SELECT * FROM booking WHERE id=?;` + `SELECT * FROM payment WHERE booking_id=?;` | Verificar `resolve_mp_access_token` → token válido; `MP_SANDBOX` coherente | D-012 regla prod vs sandbox; validar OAuth conectado |
 | **502 "Error al procesar el cobro del negocio"** (`MPTokenCryptoError`) | `docker compose logs api \| grep -i "descifrar\|MPTokenCryptoError"` | `docker compose exec api printenv \| grep MP_TOKEN_ENCRYPTION_KEY` | Verificar que `MP_TOKEN_ENCRYPTION_KEY` en Coolify es la misma con la que se cifraron los tokens (rotación sin migración = tokens ilegibles) | Recuperar la clave original; si se perdió, cada tenant debe reconectar MP vía OAuth (regenera tokens con la clave nueva) |
+| **Conexión MP termina en `?mp=account_in_use`** | `docker compose logs api \| grep -i "mp/connect/callback"` | `SELECT id, name, mp_user_id FROM tenant WHERE mp_user_id = '<mp_user_id>';` | La cuenta MP ya está vinculada a otro tenant: el dueño debe conectar una cuenta distinta, o desconectar la cuenta del otro negocio si fue un error | Índice único `uq_tenant_mp_user_id` (D-021); no hay que tocar nada en DB si el rechazo es correcto |
 | **Conexión MP termina en `?mp=other_browser`** | `docker compose logs api \| grep -i "mp/connect/callback"` | `docker compose exec api printenv \| grep -E "PUBLIC_BASE_URL\|MP_MARKETPLACE_REDIRECT_URL"` | Si el dueño abrió el link en otro navegador/app, repetir desde el panel en el mismo navegador. Si pasa siempre: la cookie `mp_oauth_state` usa `Domain` = host de `PUBLIC_BASE_URL` solo si el callback es subdominio de ese host; con `PUBLIC_BASE_URL=https://www.juturno.com` y callback `api.juturno.com` la cookie no llega | Corregir `PUBLIC_BASE_URL` (p. ej. `https://juturno.com`) en Coolify y redeploy |
 
 ---
@@ -74,6 +75,13 @@ docker compose exec redis redis-cli
 ```
 
 ### 3.3 Ejecutar migración en prod
+
+> ⚠️ **Antes de desplegar `c7d8e9f0a1b2` (`uq_tenant_mp_user_id`)**: si hay `mp_user_id` duplicados, `CREATE UNIQUE INDEX` falla, la migración no se aplica y el contenedor **no arranca** (el entrypoint corre `alembic upgrade head`). Verificá en la DB de prod:
+> ```sql
+> SELECT mp_user_id, count(*) FROM tenant WHERE mp_user_id IS NOT NULL GROUP BY 1 HAVING count(*) > 1;
+> SELECT id, name, mp_user_id FROM tenant WHERE mp_user_id IN ('', 'None');
+> ```
+> Si la primera devuelve filas, decidí a mano qué tenant conserva la cuenta y desconectá/limpiá la del otro (`mp_user_id = NULL` y tokens). Las filas con `''` o `'None'` (valores basura de versiones viejas) se pisan con `NULL`. Recién ahí desplegá.
 ```bash
 # En Coolify: botón "Redeploy" (entrypoint corre alembic upgrade head)
 # O manual:

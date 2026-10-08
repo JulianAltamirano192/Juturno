@@ -33,6 +33,7 @@ import httpx
 import redis.asyncio as redis
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_tenant
@@ -370,12 +371,16 @@ async def mp_connect_callback(
         )
 
     mp_user_id, mp_alias = await _fetch_mp_profile(access_token)
+    mp_user_id = token_resp.get("user_id") or mp_user_id
+    if not mp_user_id:
+        # Sin la cuenta no hay unicidad ni guard de collector_id posibles.
+        return _finish_flow("error")
 
     tenant.mp_access_token_enc = encrypt_token(access_token)
     tenant.mp_refresh_token_enc = (
         encrypt_token(refresh_token) if refresh_token else None
     )
-    tenant.mp_user_id = str(token_resp.get("user_id") or mp_user_id)
+    tenant.mp_user_id = str(mp_user_id)
     tenant.mp_alias = mp_alias
 
     expires_in = token_resp.get("expires_in")
@@ -385,7 +390,13 @@ async def mp_connect_callback(
         )
 
     session.add(tenant)
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError:
+        # uq_tenant_mp_user_id: la cuenta de MP ya está vinculada a otro
+        # negocio. El rollback descarta los tokens; el otro tenant no cambia.
+        await session.rollback()
+        return _finish_flow("account_in_use")
     await session.refresh(tenant)
 
     return _finish_flow("connected")

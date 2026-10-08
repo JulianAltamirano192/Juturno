@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 import redis.asyncio as redis
 from cryptography.fernet import Fernet
+from sqlalchemy.exc import IntegrityError
 
 from app import mp_connect
 from app.models import Booking, Payment, Service, Tenant
@@ -563,3 +564,127 @@ async def test_callback_error_without_cookie_keeps_state(client, db_session):
     assert resp.status_code == 302
     assert resp.headers["location"].endswith("/panel/settings?mp=error")
     assert await _raw_state(state) == str(tenant.id)
+
+
+# ---------------------------------------------------------------------------
+# Una cuenta de MP pertenece a un solo negocio (mp_user_id único)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_callback_rejects_mp_account_linked_to_another_tenant(
+    client, db_session, monkeypatch
+):
+    """Si la cuenta de MP ya está vinculada a otro negocio, se vuelve al panel
+    con un mensaje claro y no se guardan los tokens; el otro queda intacto."""
+    monkeypatch.setattr(mp_connect.settings, "PUBLIC_BASE_URL", "https://juturno.test")
+    owner = await _create_tenant(db_session, "cb-owner")
+    owner.mp_access_token_enc = encrypt_token("owner-token")
+    owner.mp_user_id = "9876543210"
+    db_session.add(owner)
+    await db_session.commit()
+
+    tenant = await _create_tenant(db_session, "cb-dup")
+    state = "panel-state-dup"
+    await mp_connect._store_state(state, tenant.id)
+    _patch_exchange(monkeypatch)  # MP devuelve user_id 9876543210
+
+    resp = await client.get(
+        f"/mp/connect/callback?code=dup-code&state={state}",
+        cookies={STATE_COOKIE: state},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 302
+    assert (
+        resp.headers["location"]
+        == "https://juturno.test/panel/settings?mp=account_in_use"
+    )
+    assert "max-age=0" in _state_set_cookie(resp)
+
+    await db_session.refresh(tenant)
+    assert tenant.mp_access_token_enc is None
+    assert tenant.mp_refresh_token_enc is None
+    assert tenant.mp_user_id is None
+    await db_session.refresh(owner)
+    assert owner.mp_user_id == "9876543210"
+
+    page = await client.get(
+        "/panel/settings?mp=account_in_use",
+        cookies={"juturno_session": _make_cookie(tenant)},
+    )
+    assert "ya está vinculada a otro negocio" in page.text
+    assert "banner-danger" in page.text
+
+
+@pytest.mark.asyncio
+async def test_callback_reconnect_same_account_same_tenant(
+    client, db_session, monkeypatch
+):
+    """Reconectar la misma cuenta de MP en el mismo negocio sigue funcionando."""
+    tenant = await _create_tenant(db_session, "cb-reconnect")
+    tenant.mp_access_token_enc = encrypt_token("old-token")
+    tenant.mp_user_id = "9876543210"
+    db_session.add(tenant)
+    await db_session.commit()
+    state = "panel-state-reconnect"
+    await mp_connect._store_state(state, tenant.id)
+    _patch_exchange(monkeypatch)
+
+    resp = await client.get(
+        f"/mp/connect/callback?code=re-code&state={state}",
+        cookies={STATE_COOKIE: state},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 302
+    assert resp.headers["location"].endswith("/panel/settings?mp=connected")
+
+
+@pytest.mark.asyncio
+async def test_mp_user_id_unique_only_when_set(db_session):
+    """El índice único es parcial: varios tenants sin MP (NULL) conviven,
+    pero dos con la misma cuenta no."""
+    await _create_tenant(db_session, "uq-null-a")
+    await _create_tenant(db_session, "uq-null-b")
+
+    a = await _create_tenant(db_session, "uq-a")
+    a.mp_user_id = "111"
+    db_session.add(a)
+    await db_session.commit()
+
+    b = await _create_tenant(db_session, "uq-b")
+    b.mp_user_id = "111"
+    db_session.add(b)
+    with pytest.raises(IntegrityError):
+        await db_session.commit()
+
+
+@pytest.mark.asyncio
+async def test_callback_without_mp_user_id_saves_nothing(
+    client, db_session, monkeypatch
+):
+    """Sin user_id en el canje ni en /users/me no se puede identificar la
+    cuenta: no se guardan tokens (antes quedaba mp_user_id = "None")."""
+    tenant = await _create_tenant(db_session, "cb-no-uid")
+    state = "panel-state-no-uid"
+    await mp_connect._store_state(state, tenant.id)
+
+    async def mock_exchange(code: str):
+        return {"access_token": "APP_USR-x", "refresh_token": "TG-x"}
+
+    async def mock_profile(access_token: str):
+        return None, None
+
+    monkeypatch.setattr(mp_connect, "_exchange_code_for_tokens", mock_exchange)
+    monkeypatch.setattr(mp_connect, "_fetch_mp_profile", mock_profile)
+
+    resp = await client.get(
+        f"/mp/connect/callback?code=c&state={state}",
+        cookies={STATE_COOKIE: state},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 302
+    assert resp.headers["location"].endswith("/panel/settings?mp=error")
+
+    await db_session.refresh(tenant)
+    assert tenant.mp_access_token_enc is None
+    assert tenant.mp_user_id is None
