@@ -108,7 +108,7 @@ Tenant (1) ──────< Service
              └── received_at, processed_at
 ```
 
-El tenant guarda además: `slug` (único), `timezone` (default `UTC`), `deposit_expiration_minutes` (default 15, `NULL` = sin expiración), `owner_email` (único) + `password_hash` (PBKDF2), `session_version` y las credenciales MP (`mp_user_id`, `mp_alias`, `mp_public_key`, `mp_access_token_enc`, `mp_refresh_token_enc`, `mp_token_expires_at`; los tokens van cifrados con Fernet).
+El tenant guarda además: `slug` (único), `timezone` (default `America/Argentina/Buenos_Aires`; no se puede cambiar desde el panel), `deposit_expiration_minutes` (default 15, `NULL` = sin expiración), `owner_email` (único) + `password_hash` (PBKDF2), `session_version` y las credenciales MP (`mp_user_id`, `mp_alias`, `mp_public_key`, `mp_access_token_enc`, `mp_refresh_token_enc`, `mp_token_expires_at`; los tokens van cifrados con Fernet).
 
 **Constraints críticas:**
 - `ExcludeConstraint excl_overlapping_bookings` en `booking`:

@@ -56,6 +56,8 @@ async def test_post_register_success(client: AsyncClient, db_session: AsyncSessi
     assert tenant.owner_email == "dueno@estudio.com"
     assert tenant.whatsapp_number == "1155555555"
     assert tenant.session_version == 1
+    # Slots, agenda and WhatsApp texts use this zone; UTC shifted them 3 hours.
+    assert tenant.timezone == "America/Argentina/Buenos_Aires"
     assert tenant.password_hash is not None
     assert tenant.password_hash.startswith("pbkdf2_sha256$600000$")
     assert verify_password("supersecretpassword123", tenant.password_hash) is True

@@ -46,11 +46,7 @@ def format_booking_datetime(dt, tenant_timezone: str) -> str:
 
         dt = dt.replace(tzinfo=_tz.utc)
 
-    tz_name = (
-        tenant_timezone
-        if (tenant_timezone and tenant_timezone != "UTC")
-        else "America/Argentina/Buenos_Aires"
-    )
+    tz_name = tenant_timezone or "America/Argentina/Buenos_Aires"
     local_dt = dt.astimezone(ZoneInfo(tz_name))
     return local_dt.strftime("%d/%m/%Y a las %H:%M")
 
@@ -124,7 +120,7 @@ async def _send_event(session, whatsapp: WhatsAppService, event) -> None:
         raise RuntimeError("Booking not found")
 
     tenant = await session.get(Tenant, booking.tenant_id)
-    tenant_tz = tenant.timezone if tenant else "UTC"
+    tenant_tz = tenant.timezone if tenant else "America/Argentina/Buenos_Aires"
     fecha_legible = format_booking_datetime(booking.start_time, tenant_tz)
 
     send = (

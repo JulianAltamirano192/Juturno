@@ -98,9 +98,9 @@ Si un doc contradice el código, manda el código: avisá y proponé corregir el
 
 Verificados a mano: 1, 6, 10 y 12. El resto viene del review y hay que confirmarlo antes de arreglar.
 
-1. Registro (`app/routers/auth.py`) no setea `timezone`: el tenant queda en `UTC` (default del
+1. ~~Registro (`app/routers/auth.py`) no setea `timezone`: el tenant queda en `UTC` (default del
    modelo) y el panel no permite cambiarlo. Slots, agenda y texto de WhatsApp quedan desfasados
-   (`outbox_worker.format_booking_datetime` trata `UTC` como Buenos Aires).
+   (`outbox_worker.format_booking_datetime` trata `UTC` como Buenos Aires).~~ — **Resuelto** (rama `fix/tenant-default-timezone`): default `America/Argentina/Buenos_Aires` + migración `1589d328bf07`.
 2. `POST /public/bookings` (y `api.py`) no valida `start_time` contra ahora, horario de atención,
    grilla de slots ni si servicio/staff están activos; solo el EXCLUDE evita solapamientos.
 3. Acciones de agenda en el panel cargan el booking sin `FOR UPDATE`: un cancelar concurrente con
