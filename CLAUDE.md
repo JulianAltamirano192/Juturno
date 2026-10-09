@@ -111,7 +111,7 @@ Verificados a mano: 1, 6, 10 y 12. El resto viene del review y hay que confirmar
    `/panel/mp/disconnect`, y duplica su lógica.
 6. Recordatorios: ventana fija `[now+24h, now+24h+5m]`; un run salteado o un turno confirmado con
    menos de 24h de anticipación nunca recibe recordatorio.
-7. `process_mp_token_refresh` sin try/except por tenant: una excepción corta el refresh del resto.
+7. ~~`process_mp_token_refresh` sin try/except por tenant: una excepción corta el refresh del resto.~~ — **Resuelto** (rama `fix/mp-token-refresh-per-tenant`).
 8. Guard de desconexión MP del panel: con `deposit_expiration_minutes` null un pending abandonado
    bloquea la desconexión para siempre; con deadline vencido pero no expirado aún, la permite.
 9. CSRF: cada GET del panel rota la cookie `csrf_token`; formularios de otras pestañas dan 403.

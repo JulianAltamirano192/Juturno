@@ -301,7 +301,15 @@ async def process_mp_token_refresh(async_session_maker):
                 tenant = await session.get(Tenant, tenant_id)
                 if tenant is None:
                     continue
-                ok = await refresh_tenant_mp_token(session, tenant)
+                try:
+                    ok = await refresh_tenant_mp_token(session, tenant)
+                except Exception:
+                    # Un tenant roto no debe cortar la renovación del resto.
+                    logger.exception(
+                        "Error inesperado renovando token MP del tenant %s",
+                        tenant_id,
+                    )
+                    ok = False
                 if ok:
                     refreshed += 1
                 else:
