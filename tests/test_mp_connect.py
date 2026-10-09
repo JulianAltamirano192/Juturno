@@ -5,13 +5,15 @@ Red: todas las llamadas a MP se monkeypatchean. Redis es real (corre en
 el stack local) — el state se guarda y se consume de verdad.
 """
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 from cryptography.fernet import Fernet
 from sqlalchemy import text
 
 from app import mp_connect
 from app.auth import hash_api_key
-from app.models import ApiKey, Tenant
+from app.models import ApiKey, Booking, Payment, Service, Tenant
 from app.mp_crypto import decrypt_token, encrypt_token
 
 TEST_FERNET_KEY = Fernet.generate_key().decode()
@@ -249,3 +251,47 @@ async def test_delete_mp_is_idempotent_when_never_connected(client, db_session):
 async def test_get_and_delete_require_api_key(client):
     assert (await client.get("/tenants/me/mp")).status_code == 401
     assert (await client.delete("/tenants/me/mp")).status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_delete_mp_blocked_while_payment_link_is_valid(client, db_session):
+    """Finding #5: the API disconnect skipped the pending-deposit guard that
+    the panel has; now both share it."""
+    tenant, headers = await _tenant_with_api_key(db_session)
+    tenant.mp_access_token_enc = encrypt_token("APP_USR-token-vigente")
+    service = Service(
+        tenant_id=tenant.id, name="Servicio", duration_minutes=30, price=1000
+    )
+    db_session.add_all([tenant, service])
+    await db_session.flush()
+    start = datetime.now(timezone.utc) + timedelta(days=1)
+    booking = Booking(
+        tenant_id=tenant.id,
+        service_id=service.id,
+        client_name="Cliente",
+        client_phone="5493584166288",
+        start_time=start,
+        end_time=start + timedelta(minutes=30),
+        price_at_booking=1000,
+        idempotency_key="api-disconnect-guard",
+        status="pending",
+    )
+    db_session.add(booking)
+    await db_session.flush()
+    db_session.add(
+        Payment(
+            booking_id=booking.id,
+            amount=300,
+            method="mercado_pago",
+            status="pending",
+            mp_preference_id="pref-api",
+            mp_expires_at=datetime.now(timezone.utc) + timedelta(minutes=10),
+        )
+    )
+    await db_session.commit()
+
+    res = await client.delete("/tenants/me/mp", headers=headers)
+    assert res.status_code == 409
+
+    await db_session.refresh(tenant)
+    assert tenant.mp_access_token_enc is not None

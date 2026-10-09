@@ -324,6 +324,11 @@ class Payment(SQLModel, table=True):
     mp_payment_id: str | None = Field(default=None, index=True)
     mp_preference_id: str | None = Field(default=None, index=True)
     mp_checkout_url: str | None = Field(default=None)
+    # Vencimiento del link de pago en MP; después no se puede pagar.
+    mp_expires_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
     method: str
     status: str = Field(index=True)
     paid_at: datetime | None = Field(

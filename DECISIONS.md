@@ -861,6 +861,31 @@ Commit: `92a24d9`.
 
 ---
 
+## D-031: El link de pago de MP vence junto con la reserva
+
+**Fecha**: Octubre 2026
+
+**Contexto**: Las preferencias de MP se creaban sin vencimiento, así que el cliente podía pagar la seña en cualquier momento, incluso con el turno expirado (el webhook lo confirma si el horario sigue libre). Para verificar ese pago el webhook necesita el token del negocio, y el guard de desconexión de MP no tenía un momento seguro para permitirla: con plazo vencido dejaba desconectar y un pago tardío quedaba sin verificar; sin plazo configurado, un pendiente abandonado la bloqueaba para siempre (hallazgos #5 y #8).
+
+**Decisión**: La preferencia se crea con `expires=true` y `expiration_date_to` = plazo de la seña o la hora del turno, lo que llegue primero, con tope de 48 h (sin tope, cualquiera podía reservar un turno lejano y bloquear la desconexión hasta esa fecha), y excluye efectivo y cajero (`ticket`, `atm`). El vencimiento se guarda en `Payment.mp_expires_at`. Un guard compartido (`has_payable_mp_payment`) bloquea ambas desconexiones (panel y `DELETE /tenants/me/mp`) mientras haya un link vigente de un turno `pending`/`expired` (más 2 h de gracia para webhooks que MP reintenta) o un pago de MP sin estado final. Se mira el estado del turno y no el del `Payment` de la preferencia porque esa fila queda `pending` aunque se pague (el webhook crea otra fila con `mp_payment_id`).
+
+**Alternativas**:
+- **Links sin vencimiento y desconectar ignorando pagos tardíos**: más simple, pero un cliente puede pagar y quedar sin turno confirmado.
+- **Calcular el vencimiento con la config actual del tenant** en vez de guardarlo: sin migración, pero si el negocio cambia el plazo después, el guard deja de coincidir con lo que MP acepta.
+
+**Consecuencias**:
+- **Ventaja** — Ningún pago puede llegar después de que el guard permite desconectar; nunca queda bloqueado para siempre.
+- **Desventaja** — Un cliente que llega tarde no puede pagar la seña: tiene que reservar de nuevo. Sin efectivo ni cajero, quien no tiene tarjeta ni dinero en cuenta no puede señar.
+- **Desventaja** — Después del último vencimiento, la desconexión queda bloqueada hasta 2 h por la gracia.
+- **Riesgo** — Si el webhook de un pago aprobado justo antes del vencimiento llega más de 2 h tarde, ese pago queda sin verificar.
+- **Riesgo** — Con `start_time` en el pasado (no se valida todavía, hallazgo #2) el link nace vencido y MP puede rechazar la preferencia (502).
+- **Riesgo** — Los `Payment` anteriores a la migración `7f0ee645a6dd` no tienen `mp_expires_at` y el guard los ignora (al 2026-10-09 solo hay datos de prueba).
+- **Deuda** — Los plazos son fijos o solo por API: que el negocio configure desde el panel el plazo de la seña (`deposit_expiration_minutes`, hoy solo `PATCH /tenants/me` con API key) y el tope del link (48 h, hoy constante `_MAX_PAYMENT_LINK_LIFETIME` en `app/routers/public.py`). La gracia de 2 h es técnica (reintentos de MP) y no se expone.
+
+**Implementación**: `app/mp_webhooks.py` (`create_mp_preference`), `app/routers/public.py`, `app/mp_connect.py` (`has_payable_mp_payment`, `clear_mp_connection`), `app/routers/panel.py`. Tests en `tests/test_panel_mp_connect.py`, `tests/test_mp_connect.py`, `tests/test_mp_webhooks.py`, `tests/test_mp_tenant_payment.py`.
+
+---
+
 ## Roadmap de deuda técnica
 
 Ordenado por impacto/urgencia estimada:

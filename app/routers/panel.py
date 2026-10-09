@@ -1,4 +1,4 @@
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Annotated
 from zoneinfo import ZoneInfo
@@ -18,8 +18,12 @@ from app.booking_actions import (
 from app.config import settings
 from app.csrf import generate_csrf_token, set_csrf_cookie, validate_csrf
 from app.database import get_db
-from app.models import Booking, BusinessHours, Payment, Service, Staff, Tenant
-from app.mp_connect import mp_authorization_redirect
+from app.models import Booking, BusinessHours, Service, Staff, Tenant
+from app.mp_connect import (
+    clear_mp_connection,
+    has_payable_mp_payment,
+    mp_authorization_redirect,
+)
 from app.services import effective_deposit
 from app.templates import templates
 
@@ -385,35 +389,13 @@ async def panel_mp_disconnect(
     session: AsyncSession = Depends(get_db),
 ):
     await validate_csrf(request)
-    # Con señas de MP pendientes y todavía pagables, desconectar dejaría el
-    # webhook sin token para verificar el pago: se bloquea.
-    pending_mp = (
-        select(Booking)
-        .join(Payment, Payment.booking_id == Booking.id)
-        .where(
-            Booking.tenant_id == tenant.id,
-            Booking.status == "pending",
-            Payment.mp_preference_id.is_not(None),
-        )
-        .limit(1)
-    )
-    if tenant.deposit_expiration_minutes is not None:
-        # Mismo deadline que process_deposit_expiration (created_at + minutos)
-        cutoff = datetime.now(timezone.utc) - timedelta(
-            minutes=tenant.deposit_expiration_minutes
-        )
-        pending_mp = pending_mp.where(Booking.created_at >= cutoff)
-    if (await session.execute(pending_mp)).first() is not None:
+    # Si todavía puede llegar un pago, el webhook necesita el token para
+    # verificarlo: se bloquea.
+    if await has_payable_mp_payment(session, tenant.id):
         return RedirectResponse(
             url="/panel/settings?mp=pending", status_code=status.HTTP_302_FOUND
         )
-    # ponytail: solo borra los tokens locales; no revoca la autorización en MP.
-    tenant.mp_access_token_enc = None
-    tenant.mp_refresh_token_enc = None
-    tenant.mp_token_expires_at = None
-    tenant.mp_user_id = None
-    tenant.mp_public_key = None
-    tenant.mp_alias = None
+    clear_mp_connection(tenant)
     session.add(tenant)
     await session.commit()
     return RedirectResponse(

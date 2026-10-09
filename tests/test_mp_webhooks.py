@@ -929,7 +929,10 @@ async def test_create_mp_preference_selects_checkout_url_by_mode(
 
     with patch("app.mp_webhooks.httpx.AsyncClient", return_value=client_mock):
         result = await mp_webhooks.create_mp_preference(
-            booking_id=1, amount=30.0, client_name="Test"
+            booking_id=1,
+            amount=30.0,
+            client_name="Test",
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=15),
         )
 
     assert result["checkout_url"] == FAKE_PREFERENCE_RESPONSE[expected_url_key]
@@ -962,7 +965,10 @@ async def test_create_mp_preference_uses_configured_notification_url(
 
     with patch("app.mp_webhooks.httpx.AsyncClient", return_value=client_mock):
         await mp_webhooks.create_mp_preference(
-            booking_id=1, amount=30.0, client_name="Test"
+            booking_id=1,
+            amount=30.0,
+            client_name="Test",
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=15),
         )
 
     body = client_mock.post.call_args.kwargs["json"]
@@ -1933,3 +1939,31 @@ async def test_webhook_confirmed_booking_with_existing_outbox_no_duplicate(
         )
     )
     assert outbox_count.scalar_one() == 1
+
+
+@pytest.mark.asyncio
+async def test_create_mp_preference_expires_with_the_booking():
+    """The payment link expires at MP together with the booking, and cash /
+    ATM methods (payable days later) are excluded, so no payment can arrive
+    after the tenant is allowed to disconnect MP."""
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    fake_response = MagicMock()
+    fake_response.is_success = True
+    fake_response.json.return_value = FAKE_PREFERENCE_RESPONSE
+
+    client_mock = AsyncMock()
+    client_mock.post.return_value = fake_response
+    client_mock.__aenter__.return_value = client_mock
+
+    expires_at = datetime(2026, 10, 15, 12, 30, tzinfo=timezone.utc)
+    with patch("app.mp_webhooks.httpx.AsyncClient", return_value=client_mock):
+        await mp_webhooks.create_mp_preference(
+            booking_id=1, amount=30.0, client_name="Test", expires_at=expires_at
+        )
+
+    body = client_mock.post.call_args.kwargs["json"]
+    assert body["expires"] is True
+    assert body["expiration_date_to"] == "2026-10-15T12:30:00.000+00:00"
+    assert {"id": "ticket"} in body["payment_methods"]["excluded_payment_types"]
+    assert {"id": "atm"} in body["payment_methods"]["excluded_payment_types"]
