@@ -75,6 +75,9 @@ async def _add_booking(
     created_ago: timedelta,
     with_preference: bool = True,
     days_ahead: int = 1,
+    link_expires_in: timedelta | None = timedelta(minutes=10),
+    payment_status: str = "pending",
+    mp_payment_id: str | None = None,
 ) -> None:
     service = Service(
         tenant_id=tenant.id, name="Servicio", duration_minutes=30, price=1000.0
@@ -101,8 +104,14 @@ async def _add_booking(
             booking_id=booking.id,
             amount=500,
             method="mercado_pago",
-            status="pending",
+            status=payment_status,
             mp_preference_id="pref-123" if with_preference else None,
+            mp_payment_id=mp_payment_id,
+            mp_expires_at=(
+                datetime.now(timezone.utc) + link_expires_in
+                if link_expires_in is not None
+                else None
+            ),
         )
     )
     await db_session.commit()
@@ -375,21 +384,90 @@ async def test_panel_mp_disconnect_blocked_by_pending_deposit(client, db_session
     assert "señas pendientes" in page.text
 
 
-@pytest.mark.asyncio
-async def test_panel_mp_disconnect_blocked_without_expiration_limit(client, db_session):
-    """Sin límite de expiración configurado, una seña pendiente puede pagarse."""
-    tenant = await _create_tenant(db_session, "disc-noexp")
-    tenant.deposit_expiration_minutes = None
-    await _connect_mp(db_session, tenant)
-    await _add_booking(db_session, tenant, "pending", timedelta(days=3))
-
+async def _post_disconnect(client, tenant: Tenant):
     csrf, cookies = await _get_csrf(client, _make_cookie(tenant))
-    resp = await client.post(
+    return await client.post(
         "/panel/mp/disconnect",
         cookies=cookies,
         data={"csrf_token": csrf},
         follow_redirects=False,
     )
+
+
+@pytest.mark.asyncio
+async def test_panel_mp_disconnect_ok_without_expiration_limit_once_link_expired(
+    client, db_session
+):
+    """Finding #8: with no deposit expiration configured, an abandoned pending
+    booking used to block disconnection forever. The payment link now expires
+    at MP, so once it is past the grace period nothing else can be paid."""
+    tenant = await _create_tenant(db_session, "disc-noexp")
+    tenant.deposit_expiration_minutes = None
+    await _connect_mp(db_session, tenant)
+    await _add_booking(
+        db_session,
+        tenant,
+        "pending",
+        timedelta(days=3),
+        link_expires_in=-timedelta(days=1),
+    )
+
+    resp = await _post_disconnect(client, tenant)
+    assert resp.headers["location"] == "/panel/settings?mp=disconnected"
+
+
+@pytest.mark.asyncio
+async def test_panel_mp_disconnect_blocked_within_grace_after_link_expiry(
+    client, db_session
+):
+    """Finding #8: past the deposit deadline but before the scheduler ran (or
+    with a webhook still in flight), disconnecting used to be allowed. The
+    grace covers webhooks MP retries late."""
+    tenant = await _create_tenant(db_session, "disc-grace")
+    tenant.deposit_expiration_minutes = 30
+    await _connect_mp(db_session, tenant)
+    await _add_booking(
+        db_session,
+        tenant,
+        "expired",
+        timedelta(minutes=90),
+        link_expires_in=-timedelta(hours=1),
+    )
+
+    resp = await _post_disconnect(client, tenant)
+    assert resp.headers["location"] == "/panel/settings?mp=pending"
+
+
+@pytest.mark.asyncio
+async def test_panel_mp_disconnect_ignores_cancelled_booking_with_live_link(
+    client, db_session
+):
+    """A cancelled booking cannot be confirmed by a late payment."""
+    tenant = await _create_tenant(db_session, "disc-cancelled")
+    await _connect_mp(db_session, tenant)
+    await _add_booking(db_session, tenant, "cancelled", timedelta(minutes=5))
+
+    resp = await _post_disconnect(client, tenant)
+    assert resp.headers["location"] == "/panel/settings?mp=disconnected"
+
+
+@pytest.mark.asyncio
+async def test_panel_mp_disconnect_blocked_by_payment_in_process(client, db_session):
+    """A card payment under review needs the token for its final webhook."""
+    tenant = await _create_tenant(db_session, "disc-inprocess")
+    await _connect_mp(db_session, tenant)
+    await _add_booking(
+        db_session,
+        tenant,
+        "pending",
+        timedelta(hours=5),
+        with_preference=False,
+        link_expires_in=None,
+        payment_status="in_process",
+        mp_payment_id="mp-pay-1",
+    )
+
+    resp = await _post_disconnect(client, tenant)
     assert resp.headers["location"] == "/panel/settings?mp=pending"
 
 
@@ -398,10 +476,22 @@ async def test_panel_mp_disconnect_ok_with_expired_or_confirmed(client, db_sessi
     tenant = await _create_tenant(db_session, "disc-expired")
     tenant.deposit_expiration_minutes = 30
     await _connect_mp(db_session, tenant)
-    # Pendiente cuyo plazo de seña ya venció (el job aún no la marcó)
-    await _add_booking(db_session, tenant, "pending", timedelta(hours=2))
+    # Pendiente cuyo link de pago venció hace más que el margen de gracia
     await _add_booking(
-        db_session, tenant, "confirmed", timedelta(minutes=5), days_ahead=2
+        db_session,
+        tenant,
+        "pending",
+        timedelta(hours=5),
+        link_expires_in=-timedelta(hours=3),
+    )
+    # Confirmada: la seña ya se pagó. Como en producción, la fila de la
+    # preferencia sigue "pending" (el webhook crea otra con mp_payment_id).
+    await _add_booking(
+        db_session,
+        tenant,
+        "confirmed",
+        timedelta(minutes=5),
+        days_ahead=2,
     )
     # Pendiente sin preferencia de MP: no hay seña que pueda acreditarse
     await _add_booking(

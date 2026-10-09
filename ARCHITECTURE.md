@@ -320,7 +320,7 @@ Registrados en el `lifespan` de `app/main.py` con `AsyncIOScheduler` (trigger `i
   7. Una cuenta MP pertenece a un solo negocio: índice único parcial `uq_tenant_mp_user_id` sobre `tenant(mp_user_id) WHERE mp_user_id IS NOT NULL` (migración `c7d8e9f0a1b2`; los `NULL` conviven). Si el `commit` del callback lanza `IntegrityError`, hace `rollback` (no se guardan tokens, el otro tenant no cambia) y redirige a `?mp=account_in_use` (D-021).
 - **Única vía de conexión**: el panel (`GET /panel/settings` con cookie + `POST /panel/mp/connect/start` con cookie + CSRF). `GET /mp/connect/start` por API key se eliminó (404): una URL de autorización devuelta por API no tiene navegador al cual atar el state (account-linking, D-026). `GET`/`DELETE /tenants/me/mp` (API key) siguen.
 - **Callback**: siempre 302 a `PUBLIC_BASE_URL/panel/settings?mp=connected|error|other_browser|account_in_use`. `account_in_use` = la cuenta MP ya está vinculada a otro tenant. `other_browser` = cookie ausente o distinta del state: no se consume el state ni se vincula nada. Si MP vuelve con `error=` (el dueño canceló), solo el navegador con la cookie correcta consume el state; igual se redirige a `?mp=error`. Siguen siendo 400 JSON (falta code/state, state inválido/vencido/usado), 404 (tenant del state no existe) y 502 (falla el canje en MP o no devuelve `access_token`). Ojo: si el host de `PUBLIC_BASE_URL` no es padre del host del callback, la cookie no llega y toda conexión termina en `other_browser`.
-- **Desconexión desde el panel** (`POST /panel/mp/disconnect`, cookie + CSRF): limpia en local `mp_access_token_enc`, `mp_refresh_token_enc`, `mp_token_expires_at`, `mp_user_id`, `mp_public_key` y `mp_alias`; no revoca la autorización en MP. Se bloquea (302 `?mp=pending`) si hay un turno `pending` con `Payment.mp_preference_id` y el plazo de seña (`created_at + deposit_expiration_minutes`, mismo criterio que `process_deposit_expiration`) no venció; con minutos `NULL` siempre bloquea, porque el webhook necesita el token para verificar el pago. `DELETE /tenants/me/mp` (API key) desconecta sin ese chequeo.
+- **Desconexión desde el panel** (`POST /panel/mp/disconnect`, cookie + CSRF): limpia en local `mp_access_token_enc`, `mp_refresh_token_enc`, `mp_token_expires_at`, `mp_user_id`, `mp_public_key` y `mp_alias`; no revoca la autorización en MP. Se bloquea (302 `?mp=pending`) mientras pueda llegar un pago que el webhook tenga que verificar con el token (`has_payable_mp_payment` en `app/mp_connect.py`): un `Payment` con preferencia de un turno `pending`/`expired` cuyo `mp_expires_at` más 2 h de gracia (webhooks reintentados) está en el futuro, o un pago de MP sin estado final (`pending`/`in_process`/`authorized`). `DELETE /tenants/me/mp` (API key) usa el mismo guard (409).
 - **Regla de cobro (D-012)**: `resolve_mp_access_token(tenant)`:
   - Tenant con cuenta → su `access_token` descifrado.
   - Sandbox + sin cuenta → `MP_ACCESS_TOKEN` de la plataforma (dinero de prueba).
@@ -354,6 +354,7 @@ Registrados en el `lifespan` de `app/main.py` con `AsyncIOScheduler` (trigger `i
 ### 10.3 Creación de preferencia (`create_mp_preference`)
 - Usa API `/checkout/preferences` (Checkout Pro, "legacy" pero estable).
 - `external_reference = "booking-{id}"`, `unit_price` = seña (`deposit_at_booking`), `currency_id = ARS`, `notification_url = MP_NOTIFICATION_URL` (omitida si está vacía; obligatoria en prod y debe ser `https://.../webhooks/mercadopago`, D-029), `back_urls` con `PUBLIC_BASE_URL/t/{slug}?booking={id}` (más `result=failure|pending`) y `auto_return=approved`.
+- **Vencimiento**: `expires=true` y `expiration_date_to` = plazo de la seña (`now + deposit_expiration_minutes`) o la hora del turno, lo que llegue primero, con tope de 48 h. Se guarda en `Payment.mp_expires_at`. Efectivo y cajero (`ticket`, `atm`) se excluyen porque sus cupones se pagan días después.
 - `checkout_url` = `sandbox_init_point` si `MP_SANDBOX=true`, sino `init_point`.
 - Lanza `HTTPException 502` si MP rechaza o da timeout → caller hace rollback del booking.
 
@@ -415,7 +416,7 @@ app/
 - Cookie firmada (`juturno_session`) → `routers/panel.py` o `routers/auth.py`
 - Header `X-Tenant-API-Key` → `routers/api.py`
 
-Los routers de `mp_connect.py`, `mp_webhooks.py` y `webhooks.py` viven junto a su integración. La suite tiene 313 tests en 31 archivos (`tests/`), que corren con `./scripts/test.sh`.
+Los routers de `mp_connect.py`, `mp_webhooks.py` y `webhooks.py` viven junto a su integración. La suite tiene 353 tests en 33 archivos (`tests/`), que corren con `./scripts/test.sh`.
 
 ---
 

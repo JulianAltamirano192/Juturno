@@ -1,5 +1,5 @@
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Annotated
 from zoneinfo import ZoneInfo
@@ -24,6 +24,8 @@ from app.services import compute_available_slots, effective_deposit
 from app.templates import templates
 
 logger = logging.getLogger(__name__)
+
+_MAX_PAYMENT_LINK_LIFETIME = timedelta(hours=48)
 
 router = APIRouter()
 
@@ -186,7 +188,6 @@ async def create_public_booking(
     Si la creación de la preferencia de MP falla, el booking se revierte.
     Es totalmente idempotente por idempotency_key.
     """
-    from datetime import timedelta
 
     from app.phone import InvalidPhoneError, normalize_whatsapp_phone
 
@@ -307,11 +308,24 @@ async def create_public_booking(
     if mp_access_token is None:
         raise HTTPException(status_code=422, detail=ERR_PAGO_NO_CONFIGURADO)
 
+    # El link vence junto con la reserva: al expirar la seña o, sin
+    # expiración configurada, a la hora del turno. Con tope de 48 h: un
+    # turno lejano no puede mantener vivo el link (ni bloquear la
+    # desconexión de MP) hasta esa fecha.
+    now = datetime.now(timezone.utc)
+    link_expires_at = min(start_time, now + _MAX_PAYMENT_LINK_LIFETIME)
+    if tenant.deposit_expiration_minutes is not None:
+        link_expires_at = min(
+            link_expires_at,
+            now + timedelta(minutes=tenant.deposit_expiration_minutes),
+        )
+
     try:
         mp_result = await create_mp_preference(
             booking_id=new_booking.id,
             amount=float(deposit_decimal),
             client_name=payload.client_name,
+            expires_at=link_expires_at,
             back_url=(
                 f"{settings.PUBLIC_BASE_URL}/t/{tenant.slug}"
                 f"?booking={new_booking.id}"
@@ -329,6 +343,7 @@ async def create_public_booking(
         status="pending",
         mp_preference_id=mp_result["preference_id"],
         mp_checkout_url=mp_result["checkout_url"],
+        mp_expires_at=link_expires_at,
     )
     session.add(new_payment)
 

@@ -14,10 +14,10 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from cryptography.fernet import Fernet
-from sqlalchemy import text
+from sqlalchemy import select, text
 
 from app import main as main_module
-from app.models import Service, Tenant
+from app.models import Payment, Service, Tenant
 from app.mp_crypto import encrypt_token
 
 TEST_FERNET_KEY = Fernet.generate_key().decode()
@@ -163,3 +163,61 @@ async def test_token_indescifrable_devuelve_502(
 
     assert res.status_code == 502
     assert fake_mp == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("expiration_minutes", [15, None])
+async def test_payment_link_expires_with_the_booking(
+    client, db_session, fake_mp, expiration_minutes
+):
+    """Link expiry = deposit deadline, or the appointment start when the
+    tenant has no deposit expiration; it is stored on the Payment so the MP
+    disconnect guard knows when nothing else can be paid."""
+    tenant, service = await _tenant_with_service(db_session, connected=True)
+    tenant.deposit_expiration_minutes = expiration_minutes
+    db_session.add(tenant)
+    await db_session.commit()
+    payload = _booking_payload(tenant.id, service.id, f"exp-{expiration_minutes}")
+
+    before = datetime.now(timezone.utc)
+    res = await client.post("/public/bookings", json=payload)
+    after = datetime.now(timezone.utc)
+    assert res.status_code == 201
+
+    expires_at = fake_mp["expires_at"]
+    if expiration_minutes is None:
+        assert expires_at == datetime.fromisoformat(payload["start_time"])
+    else:
+        assert before + timedelta(minutes=15) <= expires_at
+        assert expires_at <= after + timedelta(minutes=15)
+
+    payment = (
+        await db_session.execute(
+            select(Payment).where(Payment.booking_id == res.json()["booking_id"])
+        )
+    ).scalar_one()
+    assert payment.mp_expires_at == expires_at
+
+
+@pytest.mark.asyncio
+async def test_payment_link_is_capped_for_far_away_bookings(
+    client, db_session, fake_mp
+):
+    """Without a deposit expiration, a booking far in the future (anyone can
+    create one) must not keep a payment link alive, and MP disconnection
+    blocked, until that date."""
+    tenant, service = await _tenant_with_service(db_session, connected=True)
+    tenant.deposit_expiration_minutes = None
+    db_session.add(tenant)
+    await db_session.commit()
+    payload = _booking_payload(tenant.id, service.id, "far")
+    payload["start_time"] = (
+        datetime.now(timezone.utc) + timedelta(days=365)
+    ).isoformat()
+
+    before = datetime.now(timezone.utc)
+    res = await client.post("/public/bookings", json=payload)
+    after = datetime.now(timezone.utc)
+    assert res.status_code == 201
+    assert before + timedelta(hours=48) <= fake_mp["expires_at"]
+    assert fake_mp["expires_at"] <= after + timedelta(hours=48)

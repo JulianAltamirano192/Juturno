@@ -107,13 +107,13 @@ Verificados a mano: 1, 6, 10 y 12. El resto viene del review y hay que confirmar
    el webhook MP puede pisar `confirmed` y dejar viva la outbox de confirmación.
 4. Confirmar desde el panel permite `expired → confirmed` sin capturar `IntegrityError` (500 en
    vez de 409) y sin encolar la confirmación.
-5. `DELETE /tenants/me/mp` no tiene el guard de señas pendientes que sí tiene
-   `/panel/mp/disconnect`, y duplica su lógica.
+5. ~~`DELETE /tenants/me/mp` no tiene el guard de señas pendientes que sí tiene
+   `/panel/mp/disconnect`, y duplica su lógica.~~ — **Resuelto** (rama `fix/mp-disconnect-guard`): guard compartido `has_payable_mp_payment`; el link de pago vence en MP junto con la reserva (`Payment.mp_expires_at`).
 6. Recordatorios: ventana fija `[now+24h, now+24h+5m]`; un run salteado o un turno confirmado con
    menos de 24h de anticipación nunca recibe recordatorio.
 7. ~~`process_mp_token_refresh` sin try/except por tenant: una excepción corta el refresh del resto.~~ — **Resuelto** (rama `fix/mp-token-refresh-per-tenant`).
-8. Guard de desconexión MP del panel: con `deposit_expiration_minutes` null un pending abandonado
-   bloquea la desconexión para siempre; con deadline vencido pero no expirado aún, la permite.
+8. ~~Guard de desconexión MP del panel: con `deposit_expiration_minutes` null un pending abandonado
+   bloquea la desconexión para siempre; con deadline vencido pero no expirado aún, la permite.~~ — **Resuelto** (rama `fix/mp-disconnect-guard`): guard compartido `has_payable_mp_payment`; el link de pago vence en MP junto con la reserva (`Payment.mp_expires_at`).
 9. ~~CSRF: cada GET del panel rota la cookie `csrf_token`; formularios de otras pestañas dan 403.~~ — **Resuelto** (rama `fix/csrf-reuse-token`): se reusa el token y la cookie dura como la sesión (antes 2 h: un panel abierto daba 403 JSON hasta en `/logout`).
 10. ~~`app/webhooks.py`: el verify token de Meta se compara con `==`, no con `hmac.compare_digest`.~~ — **Resuelto** (rama `fix/meta-verify-token-compare`).
 11. Menores: reembolso/contracargo no cambia el booking; booking inexistente en webhook se marca

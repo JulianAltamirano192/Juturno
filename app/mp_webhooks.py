@@ -94,6 +94,7 @@ async def create_mp_preference(
     booking_id: int,
     amount: float,
     client_name: str,
+    expires_at: datetime,
     back_url: str | None = None,
     access_token: str | None = None,
 ) -> dict[str, str]:
@@ -115,6 +116,10 @@ async def create_mp_preference(
     notification_url sale de settings.MP_NOTIFICATION_URL (una por entorno);
     si está vacía no se manda y MP no notifica esta preferencia.
 
+    expires_at: el link deja de aceptar pagos en ese momento (vence junto
+    con la reserva). Efectivo y cajero se excluyen porque generan cupones
+    que se pagan días después.
+
     Si se pasa back_url, configura back_urls (success/failure/pending)
     y auto_return para que MP redirija al cliente de vuelta a la página
     de reserva tras el pago.
@@ -133,6 +138,14 @@ async def create_mp_preference(
         ],
         "external_reference": f"booking-{booking_id}",
         "payer": {"name": client_name},
+        "expires": True,
+        "expiration_date_from": datetime.now(timezone.utc).isoformat(
+            timespec="milliseconds"
+        ),
+        "expiration_date_to": expires_at.isoformat(timespec="milliseconds"),
+        "payment_methods": {
+            "excluded_payment_types": [{"id": "ticket"}, {"id": "atm"}],
+        },
     }
     if settings.MP_NOTIFICATION_URL:
         body["notification_url"] = settings.MP_NOTIFICATION_URL

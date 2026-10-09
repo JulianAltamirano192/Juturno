@@ -363,7 +363,9 @@ Si no está conectado, `mp_user_id`, `mp_alias` y `mp_token_expires_at` son `nul
 
 ### 7.4 `DELETE /tenants/me/mp`
 
-**Response 200:** `{ "disconnected": true }` (idempotente). Borra tokens y metadata local; a diferencia de la variante del panel, **no** bloquea si hay señas pendientes y no revoca la autorización en MP. Después, en producción, el tenant no puede cobrar (422 `ERR_PAGO_NO_CONFIGURADO`) hasta reconectar.
+**Response 200:** `{ "disconnected": true }` (idempotente). Borra tokens y metadata local; no revoca la autorización en MP.
+
+**409** mientras pueda llegar un pago que el webhook tenga que verificar (link de pago vigente o pago de MP sin estado final), igual que `POST /panel/mp/disconnect`. Después, en producción, el tenant no puede cobrar (422 `ERR_PAGO_NO_CONFIGURADO`) hasta reconectar.
 
 ---
 

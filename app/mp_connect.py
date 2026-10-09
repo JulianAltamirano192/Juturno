@@ -33,13 +33,14 @@ import httpx
 import redis.asyncio as redis
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
+from sqlalchemy import and_, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_tenant
 from app.config import settings
 from app.database import get_db
-from app.models import Tenant
+from app.models import Booking, Payment, Tenant
 from app.mp_crypto import decrypt_token, encrypt_token
 
 router = APIRouter(tags=["mercadopago-oauth"])
@@ -428,6 +429,53 @@ async def get_my_mp_connection(
     }
 
 
+# Margen para webhooks demorados (MP reintenta durante horas) de pagos
+# hechos justo antes del vencimiento del link.
+_PAYMENT_WEBHOOK_GRACE = timedelta(hours=2)
+# Pagos de MP que todavía esperan un webhook con su estado final.
+_IN_FLIGHT_PAYMENT_STATUSES = ("pending", "in_process", "authorized")
+
+
+async def has_payable_mp_payment(session: AsyncSession, tenant_id: int) -> bool:
+    """True si al tenant le puede llegar un pago de MP que el webhook tenga
+    que verificar con su token: un link de pago vigente sin pagar, o un pago
+    de MP sin estado final (p. ej. tarjeta en revisión)."""
+    link_cutoff = datetime.now(timezone.utc) - _PAYMENT_WEBHOOK_GRACE
+    stmt = (
+        select(Payment)
+        .join(Booking, Booking.id == Payment.booking_id)
+        .where(
+            Booking.tenant_id == tenant_id,
+            or_(
+                # La fila de la preferencia queda "pending" aunque se pague
+                # (el webhook crea otra): cuenta solo si el turno todavía
+                # puede confirmarse con un pago.
+                and_(
+                    Payment.mp_preference_id.is_not(None),
+                    Booking.status.in_(("pending", "expired")),
+                    Payment.mp_expires_at > link_cutoff,
+                ),
+                and_(
+                    Payment.mp_payment_id.is_not(None),
+                    Payment.status.in_(_IN_FLIGHT_PAYMENT_STATUSES),
+                ),
+            ),
+        )
+        .limit(1)
+    )
+    return (await session.execute(stmt)).first() is not None
+
+
+def clear_mp_connection(tenant: Tenant) -> None:
+    """Borra las credenciales locales; no revoca la autorización en MP."""
+    tenant.mp_user_id = None
+    tenant.mp_alias = None
+    tenant.mp_public_key = None
+    tenant.mp_access_token_enc = None
+    tenant.mp_refresh_token_enc = None
+    tenant.mp_token_expires_at = None
+
+
 @router.delete("/tenants/me/mp")
 async def disconnect_my_mp_connection(
     current_tenant: Tenant = Depends(get_current_tenant),
@@ -435,17 +483,21 @@ async def disconnect_my_mp_connection(
 ):
     """
     Desconecta la cuenta MP del tenant: borra credenciales y metadata.
-    Es idempotente (borrar dos veces no falla).
+    Es idempotente (borrar dos veces no falla). 409 mientras pueda llegar
+    un pago que el webhook necesite verificar con el token.
 
     Tras desconectarse, la regla D-012 le bloquea el cobro en producción
     hasta que vuelva a conectarse por OAuth.
     """
-    current_tenant.mp_user_id = None
-    current_tenant.mp_alias = None
-    current_tenant.mp_public_key = None
-    current_tenant.mp_access_token_enc = None
-    current_tenant.mp_refresh_token_enc = None
-    current_tenant.mp_token_expires_at = None
+    if await has_payable_mp_payment(session, current_tenant.id):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Hay señas de Mercado Pago que todavía pueden pagarse; "
+                "reintentá cuando venzan."
+            ),
+        )
+    clear_mp_connection(current_tenant)
     session.add(current_tenant)
     await session.commit()
 
