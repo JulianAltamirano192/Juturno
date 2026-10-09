@@ -227,7 +227,7 @@ Procedimiento completo en [`DEPLOYMENT.md`](DEPLOYMENT.md).
 ./scripts/test.sh
 ```
 
-- **353 tests** en 33 archivos (`tests/test_*.py`), contados con `./scripts/test.sh --collect-only -q`.
+- **356 tests** en 34 archivos (`tests/test_*.py`), contados con `./scripts/test.sh --collect-only -q`.
 - Fixtures en `tests/conftest.py`: `setup_db` (crea/borra tablas + `btree_gist`), `db_session`, `client` (httpx.ASGITransport).
 - El scheduler **se deshabilita automáticamente** cuando `TEST_DATABASE_URL` está seteada.
 - CI corre ruff, mypy y pytest en cada push y PR a `main`. Que el merge quede bloqueado si falla depende de la branch protection de GitHub, que **no está confirmada**.

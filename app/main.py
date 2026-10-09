@@ -44,6 +44,11 @@ def _strip_query_string(event, hint):
     return event
 
 
+def _drop_access_log_breadcrumb(crumb, hint):
+    # La línea del access log de uvicorn trae el query string completo.
+    return None if crumb.get("category") == "uvicorn.access" else crumb
+
+
 def sentry_options(dsn: str) -> dict:
     return {
         "dsn": dsn,
@@ -69,6 +74,7 @@ def sentry_options(dsn: str) -> dict:
         "before_send": _strip_query_string,
         # before_send no corre sobre transacciones, que también llevan request.
         "before_send_transaction": _strip_query_string,
+        "before_breadcrumb": _drop_access_log_breadcrumb,
     }
 
 
