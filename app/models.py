@@ -41,7 +41,7 @@ class Tenant(SQLModel, table=True):
     name: str = Field(index=True)
     slug: str | None = Field(default=None, index=True, unique=True)
     whatsapp_number: str | None = None
-    timezone: str = Field(default="UTC")
+    timezone: str = Field(default="America/Argentina/Buenos_Aires")
     deposit_expiration_minutes: int | None = Field(
         default=15,
         sa_column=Column(Integer(), nullable=True),

@@ -201,3 +201,15 @@ async def test_db_error_in_one_event_does_not_abort_the_batch(
     assert broken.status == "failed"
     assert broken.retry_count == 1
     assert ok.status == "sent"
+
+
+def test_format_booking_datetime_uses_tenant_timezone_literally():
+    """WhatsApp must show the same local time as the slots and the agenda,
+    which use tenant.timezone as-is (UTC included)."""
+    dt = datetime(2026, 10, 15, 12, 0, tzinfo=timezone.utc)
+
+    assert outbox_worker.format_booking_datetime(dt, "UTC") == "15/10/2026 a las 12:00"
+    assert (
+        outbox_worker.format_booking_datetime(dt, "America/Argentina/Buenos_Aires")
+        == "15/10/2026 a las 09:00"
+    )
