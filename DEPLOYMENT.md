@@ -323,7 +323,7 @@ Un restore exitoso confirma que el backup no está corrupto.
 **Checks:**
 - CI corre ruff, mypy y pytest. `black --check` no está en el workflow: corre localmente vía pre-commit (`.pre-commit-config.yaml`, junto con ruff y mypy).
 - El workflow no despliega: el deploy es manual desde Coolify.
-- Pendiente: confirmar que `main` tiene branch protection en GitHub exigiendo este check; hoy no está confirmado.
+- `main` tiene branch protection (desde 2026-10-09): PR obligatorio (0 aprobaciones), check `test` obligatorio, aplica también a admins, sin force-push ni borrado. Ningún cambio entra a `main` sin pasar el CI.
 
 ---
 
