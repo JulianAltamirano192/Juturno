@@ -157,7 +157,7 @@ async def mi_endpoint(
     return MiResponse(resultado="ok")
 ```
 
-Para el **panel** (formularios POST): llamá `await validate_csrf(request)` al principio (403 si falla), generá el token con `generate_csrf_token()` + `set_csrf_cookie(response, token)` en los GET/re-renders, y respondé con `RedirectResponse(..., status_code=303)`. Filtrá por `tenant.id` y devolvé 404 si el recurso no es del tenant.
+Para el **panel** (formularios POST): llamá `await validate_csrf(request)` al principio (403 si falla), obtené el token con `generate_csrf_token(request)` (reusa el de la cookie) + `set_csrf_cookie(response, token)` en los GET/re-renders, y respondé con `RedirectResponse(..., status_code=303)`. Filtrá por `tenant.id` y devolvé 404 si el recurso no es del tenant.
 
 Para **rate limiting**: `@limiter.limit("N/minute")` (de `app.limiter`) debajo de `@router.post(...)`, y el handler tiene que recibir `request: Request`. Hoy solo lo usan `/login`, `/register` y `/public/bookings`.
 

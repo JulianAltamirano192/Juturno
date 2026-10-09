@@ -32,7 +32,7 @@ router = APIRouter()
 @router.get("/register", response_class=HTMLResponse)
 async def register_page(request: Request):
     """Muestra el formulario de registro de negocio."""
-    csrf_token = generate_csrf_token()
+    csrf_token = generate_csrf_token(request)
     response = templates.TemplateResponse(
         request,
         "register.html",
@@ -72,7 +72,7 @@ async def register_submit(
 
     cookie_csrf = request.cookies.get(CSRF_COOKIE_NAME)
     if not validate_csrf_double_submit(csrf_token, cookie_csrf):
-        new_csrf = generate_csrf_token()
+        new_csrf = generate_csrf_token(request)
         response = templates.TemplateResponse(
             request,
             "register.html",
@@ -87,7 +87,7 @@ async def register_submit(
         return response
 
     if len(password) < 8:
-        new_csrf = generate_csrf_token()
+        new_csrf = generate_csrf_token(request)
         response = templates.TemplateResponse(
             request,
             "register.html",
@@ -109,7 +109,7 @@ async def register_submit(
     ).scalar_one_or_none()
 
     if existing_owner is not None:
-        new_csrf = generate_csrf_token()
+        new_csrf = generate_csrf_token(request)
         response = templates.TemplateResponse(
             request,
             "register.html",
@@ -167,7 +167,7 @@ async def login_page(
                     url=safe_next, status_code=status.HTTP_303_SEE_OTHER
                 )
 
-    csrf_token = generate_csrf_token()
+    csrf_token = generate_csrf_token(request)
     info_message = (
         "Tu cuenta fue creada con éxito. Iniciá sesión para continuar."
         if registered == "1"
@@ -205,7 +205,7 @@ async def login_submit(
 
     cookie_csrf = request.cookies.get(CSRF_COOKIE_NAME)
     if not validate_csrf_double_submit(csrf_token, cookie_csrf):
-        new_csrf = generate_csrf_token()
+        new_csrf = generate_csrf_token(request)
         response = templates.TemplateResponse(
             request,
             "login.html",
@@ -233,7 +233,7 @@ async def login_submit(
         or not tenant.password_hash
         or not verify_password(password, tenant.password_hash)
     ):
-        new_csrf = generate_csrf_token()
+        new_csrf = generate_csrf_token(request)
         response = templates.TemplateResponse(
             request,
             "login.html",
@@ -251,6 +251,9 @@ async def login_submit(
 
     redirect = RedirectResponse(url=safe_next, status_code=status.HTTP_303_SEE_OTHER)
     set_session_cookie(redirect, tenant.id, tenant.session_version)
+    # Token nuevo por sesión: el de antes del login lo pudo ver otro usuario
+    # del mismo navegador.
+    set_csrf_cookie(redirect, generate_csrf_token())
     return redirect
 
 
@@ -260,4 +263,5 @@ async def logout(request: Request):
     await validate_csrf(request)
     response = RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
     delete_session_cookie(response)
+    response.delete_cookie(CSRF_COOKIE_NAME, path="/")
     return response
