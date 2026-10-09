@@ -7,6 +7,7 @@ cualquier caller (endpoints del panel, webhook de MP, scheduler) use
 la misma lógica. Antes de este módulo, la transición se hacía inline
 (ej: mp_webhooks.py asignaba booking.status = "confirmed" a mano).
 """
+
 from datetime import datetime, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -95,12 +96,13 @@ async def transition_booking_status(
 
     session.add(booking)
 
-    # Al cancelar, cancelar los outbox pendientes del booking para no
-    # mandar un WhatsApp de confirmación/recordatorio después de cancelar.
+    # Al cancelar, cancelar los outbox sin enviar del booking (pending y los
+    # failed que process_outbox reintenta) para no mandar un WhatsApp de
+    # confirmación/recordatorio después de cancelar.
     if new_status == "cancelled":
         outbox_stmt = select(NotificationOutbox).where(
             NotificationOutbox.booking_id == booking.id,
-            NotificationOutbox.status == "pending",
+            NotificationOutbox.status.in_(("pending", "failed")),
         )
         pending_outbox = (await session.execute(outbox_stmt)).scalars().all()
         for evt in pending_outbox:

@@ -68,11 +68,32 @@ async def get_payment_details(
     return payment_response.json()
 
 
+async def search_approved_payment_ids(
+    external_reference: str, access_token: str
+) -> list[str]:
+    """
+    IDs de los pagos aprobados en MP con ese external_reference, buscando en
+    la cuenta dueña del token. Lanza si MP falla o no responde: el caller no
+    debe concluir "no hay pago" sin una respuesta válida.
+    """
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.get(
+            "https://api.mercadopago.com/v1/payments/search",
+            params={"external_reference": external_reference},
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+    response.raise_for_status()
+    return [
+        str(result["id"])
+        for result in response.json().get("results", [])
+        if result.get("status") == "approved"
+    ]
+
+
 async def create_mp_preference(
     booking_id: int,
     amount: float,
     client_name: str,
-    notification_url: str = "https://api.juturno.com/webhooks/mercadopago",
     back_url: str | None = None,
     access_token: str | None = None,
 ) -> dict[str, str]:
@@ -91,6 +112,9 @@ async def create_mp_preference(
     Enviar al cliente la URL del ambiente equivocado hace que el pago
     sea imposible.
 
+    notification_url sale de settings.MP_NOTIFICATION_URL (una por entorno);
+    si está vacía no se manda y MP no notifica esta preferencia.
+
     Si se pasa back_url, configura back_urls (success/failure/pending)
     y auto_return para que MP redirija al cliente de vuelta a la página
     de reserva tras el pago.
@@ -108,9 +132,10 @@ async def create_mp_preference(
             }
         ],
         "external_reference": f"booking-{booking_id}",
-        "notification_url": notification_url,
         "payer": {"name": client_name},
     }
+    if settings.MP_NOTIFICATION_URL:
+        body["notification_url"] = settings.MP_NOTIFICATION_URL
 
     if back_url:
         separator = "&" if "?" in back_url else "?"
@@ -174,7 +199,10 @@ def verify_mp_signature(x_signature: str, x_request_id: str, data_id: str) -> bo
         if not ts or not v1:
             return False
 
-        manifest = f"id:{data_id};request-id:{x_request_id};ts:{ts};"
+        # Template de MP: id:[data.id_url];request-id:[x-request-id];ts:[ts];
+        # data.id (del query) va en minúsculas; si no vino, se omite.
+        id_part = f"id:{data_id.lower()};" if data_id else ""
+        manifest = f"{id_part}request-id:{x_request_id};ts:{ts};"
 
         expected_hmac = hmac.new(
             settings.MP_SECRET_KEY.encode(), manifest.encode(), hashlib.sha256
@@ -207,44 +235,12 @@ def verify_timestamp_freshness(x_signature: str) -> bool:
 # ─────────────────────────────────────────────────────────────────
 
 
-def _extract_data_id(payload: dict, request: Request) -> str:
+def _extract_data_id(request: Request) -> str:
     """
-    Extrae el ID del recurso afectado. MP manda dos formatos:
-    - Nuevo: ?data.id=X&type=payment  → payload["data"]["id"] o query param
-    - Viejo: ?id=X&topic=payment      → payload["id"] o query param
+    ID del recurso afectado: ?data.id=X del query string. Es el único id
+    que cubre la firma de MP; el del body no está firmado y se ignora.
     """
-    data_id = payload.get("data", {}).get("id")
-    if data_id is None:
-        data_id = request.query_params.get("data.id")
-    if data_id is None:
-        data_id = payload.get("id")
-    if data_id is None:
-        data_id = request.query_params.get("id")
-    return str(data_id) if data_id else ""
-
-
-def _extract_event_id(payload: dict, request: Request) -> str:
-    """
-    Devuelve un identificador único para idempotencia.
-    Si no hay un id global, sintetiza uno con data_id + tipo de evento.
-    """
-    event_id = (
-        payload.get("id")
-        or request.query_params.get("id")
-        or payload.get("data", {}).get("id")
-        or request.query_params.get("data.id")
-    )
-    if event_id is not None:
-        return str(event_id)
-    # Fallback: usar data_id + action como clave sintética
-    data_id = _extract_data_id(payload, request)
-    action = (
-        payload.get("action")
-        or payload.get("type")
-        or request.query_params.get("topic")
-        or "unknown"
-    )
-    return f"{data_id}:{action}"
+    return request.query_params.get("data.id", "")
 
 
 def _extract_event_type(payload: dict, request: Request) -> str:
@@ -349,6 +345,175 @@ async def _resolve_token_for_payment(
 # ─────────────────────────────────────────────────────────────────
 
 
+class DuplicatePaymentError(Exception):
+    """El Payment con este mp_payment_id ya lo insertó otro proceso."""
+
+
+async def apply_payment_details(
+    session: AsyncSession, mp_payment_id: str, details: dict[str, Any]
+) -> tuple[str, int | None]:
+    """
+    Aplica un pago de MP (respuesta autenticada de /v1/payments/{id}) a su
+    reserva: guards de tenant/moneda/monto, upsert del Payment, confirmación
+    y outbox. La usan el webhook y la reconciliación previa a expirar.
+
+    No commitea. Devuelve (outcome, booking_id vinculado o None); outcome es
+    EVENT_PROCESSED o el guard que lo frenó. Un INSERT concurrente del mismo
+    Payment lanza DuplicatePaymentError (la sesión queda para rollback).
+    """
+    payment_status = details.get(
+        "status"
+    )  # approved, pending, rejected, in_process, ...
+    external_reference = details.get("external_reference") or ""
+    booking_id = _parse_booking_id_from_external_reference(external_reference)
+
+    linked_booking_id: int | None = None
+    if booking_id is None:
+        # El pago no está vinculado a un booking de Juturno
+        return "NO_BOOKING_LINKED", linked_booking_id
+
+    # SELECT FOR UPDATE before the guards to serialize concurrent updates
+    # on the same mp_payment_id. The UNIQUE constraint handles concurrent INSERTs.
+    stmt_pay = (
+        select(Payment).where(Payment.mp_payment_id == mp_payment_id).with_for_update()
+    )
+    payment = (await session.execute(stmt_pay)).scalar_one_or_none()
+
+    # Guards run BEFORE creating the Payment record so a rejected webhook
+    # never commits a Payment row for a fraudulent/invalid payment.
+    # Guard 1 (tenant) applies to ALL statuses to prevent cross-tenant data injection.
+    # Guards 2 and 3 (currency, amount) only apply to approved payments.
+    stmt_booking = select(Booking).where(Booking.id == booking_id).with_for_update()
+    booking = (await session.execute(stmt_booking)).scalar_one_or_none()
+    if booking is not None:
+        linked_booking_id = booking.id
+
+        # Guard 1: collector_id from the authenticated MP response must match
+        # the tenant that owns this booking. Applies to every payment status.
+        booking_tenant = await session.get(Tenant, booking.tenant_id)
+        collector_id = str(details.get("collector_id") or "")
+        if booking_tenant is None or not booking_tenant.mp_user_id:
+            if settings.is_production:
+                logger.warning(
+                    "Webhook MP: tenant %s sin mp_user_id en producción (booking %s)",
+                    booking.tenant_id,
+                    booking_id,
+                )
+                return "TENANT_MISMATCH", linked_booking_id
+            # sandbox/dev: skip guard (platform-account fallback is expected)
+        elif collector_id != booking_tenant.mp_user_id:
+            logger.warning(
+                "Webhook MP: tenant mismatch — collector_id %s, "
+                "booking %s pertenece a tenant %s (mp_user_id %s)",
+                collector_id,
+                booking_id,
+                booking.tenant_id,
+                booking_tenant.mp_user_id,
+            )
+            return "TENANT_MISMATCH", linked_booking_id
+
+        if payment_status == "approved":
+            # Guard 2: only ARS payments are valid for Juturno bookings.
+            if details.get("currency_id") != "ARS":
+                logger.warning(
+                    "Webhook MP: moneda no soportada — %s (booking %s)",
+                    details.get("currency_id"),
+                    booking_id,
+                )
+                return "CURRENCY_NOT_SUPPORTED", linked_booking_id
+
+            # Guard 3: paid amount must cover the effective deposit.
+            # Use booking.deposit_at_booking (snapshotted at reservation time) so
+            # a service price change after the booking doesn't reject a valid payment.
+            # Fall back to effective_deposit() for older bookings without the snapshot.
+            if booking.deposit_at_booking is not None:
+                deposit = booking.deposit_at_booking
+            else:
+                service = await session.get(Service, booking.service_id)
+                if service is None:
+                    # Defensive: CASCADE makes this unreachable normally; fail closed.
+                    logger.warning(
+                        "Webhook MP: service %s no encontrado para booking %s (fail closed)",
+                        booking.service_id,
+                        booking_id,
+                    )
+                    return "AMOUNT_INSUFFICIENT", linked_booking_id
+                deposit = effective_deposit(service.price, service.deposit_amount)
+            paid_amount = Decimal(str(details.get("transaction_amount") or 0))
+            if not paid_amount.is_finite() or paid_amount < deposit:
+                logger.warning(
+                    "Webhook MP: monto insuficiente — pagado %s, seña requerida %s (booking %s)",
+                    paid_amount,
+                    deposit,
+                    booking_id,
+                )
+                return "AMOUNT_INSUFFICIENT", linked_booking_id
+
+    # All guards passed. Create or update the Payment record.
+    # (payment already fetched via SELECT FOR UPDATE above)
+    # For concurrent INSERTs the UNIQUE constraint on mp_payment_id is the
+    # safety net; the caller handles DuplicatePaymentError.
+    if payment is None:
+        # Auto-crear el Payment con los datos de MP
+        transaction_amount = details.get("transaction_amount") or 0
+        payment_method_id = details.get("payment_method_id") or "unknown"
+        paid_at = _parse_mp_datetime(details.get("date_approved"))
+
+        payment = Payment(
+            booking_id=booking_id,
+            amount=transaction_amount,
+            mp_payment_id=mp_payment_id,
+            method=payment_method_id,
+            status=payment_status,
+            paid_at=paid_at if payment_status == "approved" else None,
+        )
+        session.add(payment)
+        try:
+            await session.flush()
+        except IntegrityError as exc:
+            # Otro webhook (o la reconciliación) insertó este mp_payment_id.
+            raise DuplicatePaymentError(mp_payment_id) from exc
+    else:
+        # Actualizar el estado si cambió
+        if payment.status != payment_status:
+            payment.status = payment_status
+            if payment_status == "approved" and payment.paid_at is None:
+                payment.paid_at = _parse_mp_datetime(
+                    details.get("date_approved")
+                ) or datetime.now(timezone.utc)
+            session.add(payment)
+
+    # Confirm booking if approved (booking already fetched above).
+    if payment_status == "approved" and booking is not None:
+        # Solo cambiar estado a confirmed si estaba en pending
+        if (
+            booking.status == "pending"
+            or booking.status == "expired"
+            and await _slot_still_free(session, booking)
+        ):
+            await transition_booking_status(
+                session, booking, "confirmed", actor="webhook_mp"
+            )
+
+        # Generar outbox de confirmación si el booking está confirmado y no existe previa
+        if booking.status == "confirmed":
+            outbox_stmt = select(NotificationOutbox).where(
+                NotificationOutbox.booking_id == booking.id,
+                NotificationOutbox.notification_type == "confirmation",
+            )
+            existing_outbox = (await session.execute(outbox_stmt)).scalar_one_or_none()
+
+            if existing_outbox is None:
+                outbox_event = NotificationOutbox(
+                    booking_id=booking.id,
+                    notification_type="confirmation",
+                    status="pending",
+                )
+                session.add(outbox_event)
+
+    return "EVENT_PROCESSED", linked_booking_id
+
+
 @router.post("/webhooks/mercadopago")
 async def mercadopago_webhook(
     request: Request,
@@ -356,11 +521,22 @@ async def mercadopago_webhook(
     x_request_id: str = Header(None, alias="x-request-id"),
     session: AsyncSession = Depends(get_db),
 ):
-    payload = await request.json()
+    # IPN (?id=X&topic=...) no trae firma validable; el mismo evento llega
+    # también como Webhook firmado (?data.id=X&type=...). Se confirma la
+    # recepción para cortar los reintentos de MP, sin procesar nada.
+    query = request.query_params
+    if "topic" in query and "data.id" not in query:
+        return Response(content="IPN_IGNORED", status_code=200)
 
-    event_id = _extract_event_id(payload, request)
+    try:
+        payload = await request.json()
+    except (ValueError, RecursionError):  # vacío, inválido, no UTF-8, anidado
+        payload = None
+    if not isinstance(payload, dict) or not isinstance(payload.get("data", {}), dict):
+        raise HTTPException(status_code=400, detail="Payload de webhook inválido")
+
     event_type = _extract_event_type(payload, request)
-    data_id = _extract_data_id(payload, request)
+    data_id = _extract_data_id(request)
 
     # 1. Verificación estricta de firma HMAC
     if not verify_mp_signature(x_signature, x_request_id, data_id):
@@ -376,6 +552,10 @@ async def mercadopago_webhook(
     # Si no hay data_id extraíble (ej. merchant_order mal formado), salimos limpio
     if not data_id:
         return Response(content="EVENT_IGNORED_NO_DATA_ID", status_code=200)
+
+    # Clave de idempotencia solo con valores firmados: el "id" del body no
+    # está firmado y permitiría saltear el dedupe reenviando un request.
+    event_id = f"{data_id.lower()}:{x_request_id}"  # misma forma que firma MP
 
     # 2. Gate de idempotencia con soporte de reintentos
     try:
@@ -408,206 +588,41 @@ async def mercadopago_webhook(
         details = await get_payment_details(data_id, access_token=token)
 
         if details is None:
-            # MP no encuentra el pago. Puede ser un ID del simulador o un evento viejo.
-            webhook_event.status = "processed"
-            webhook_event.processed_at = datetime.now(timezone.utc)
+            # MP no encuentra el pago: ID del simulador, evento viejo o un token
+            # equivocado (el user_id del body no está firmado). Queda 'failed'
+            # para que una entrega posterior con la misma clave lo procese.
+            webhook_event.status = "failed"
             session.add(webhook_event)
             await session.commit()
             return Response(content="PAYMENT_NOT_FOUND_ON_MP", status_code=200)
 
-        payment_status = details.get(
-            "status"
-        )  # approved, pending, rejected, in_process, ...
-        external_reference = details.get("external_reference") or ""
-        booking_id = _parse_booking_id_from_external_reference(external_reference)
-
-        if booking_id is None:
-            # El pago no está vinculado a un booking de Juturno
-            webhook_event.status = "processed"
-            webhook_event.processed_at = datetime.now(timezone.utc)
-            session.add(webhook_event)
-            await session.commit()
-            return Response(content="NO_BOOKING_LINKED", status_code=200)
-
-        # SELECT FOR UPDATE before the guards to serialize concurrent updates
-        # on the same mp_payment_id. The UNIQUE constraint handles concurrent INSERTs.
-        stmt_pay = (
-            select(Payment).where(Payment.mp_payment_id == data_id).with_for_update()
-        )
-        payment = (await session.execute(stmt_pay)).scalar_one_or_none()
-
-        # Guards run BEFORE creating the Payment record so a rejected webhook
-        # never commits a Payment row for a fraudulent/invalid payment.
-        # Guard 1 (tenant) applies to ALL statuses to prevent cross-tenant data injection.
-        # Guards 2 and 3 (currency, amount) only apply to approved payments.
-        stmt_booking = select(Booking).where(Booking.id == booking_id).with_for_update()
-        booking = (await session.execute(stmt_booking)).scalar_one_or_none()
-        if booking is not None:
-            webhook_event.booking_id = booking.id
-
-            # Guard 1: collector_id from the authenticated MP response must match
-            # the tenant that owns this booking. Applies to every payment status.
-            booking_tenant = await session.get(Tenant, booking.tenant_id)
-            collector_id = str(details.get("collector_id") or "")
-            if booking_tenant is None or not booking_tenant.mp_user_id:
-                if settings.is_production:
-                    logger.warning(
-                        "Webhook MP: tenant %s sin mp_user_id en producción (booking %s)",
-                        booking.tenant_id,
-                        booking_id,
-                    )
-                    webhook_event.status = "processed"
-                    webhook_event.processed_at = datetime.now(timezone.utc)
-                    session.add(webhook_event)
-                    await session.commit()
-                    return Response(content="TENANT_MISMATCH", status_code=200)
-                # sandbox/dev: skip guard (platform-account fallback is expected)
-            elif collector_id != booking_tenant.mp_user_id:
-                logger.warning(
-                    "Webhook MP: tenant mismatch — collector_id %s, "
-                    "booking %s pertenece a tenant %s (mp_user_id %s)",
-                    collector_id,
-                    booking_id,
-                    booking.tenant_id,
-                    booking_tenant.mp_user_id,
-                )
-                webhook_event.status = "processed"
-                webhook_event.processed_at = datetime.now(timezone.utc)
-                session.add(webhook_event)
-                await session.commit()
-                return Response(content="TENANT_MISMATCH", status_code=200)
-
-            if payment_status == "approved":
-                # Guard 2: only ARS payments are valid for Juturno bookings.
-                if details.get("currency_id") != "ARS":
-                    logger.warning(
-                        "Webhook MP: moneda no soportada — %s (booking %s)",
-                        details.get("currency_id"),
-                        booking_id,
-                    )
-                    webhook_event.status = "processed"
-                    webhook_event.processed_at = datetime.now(timezone.utc)
-                    session.add(webhook_event)
-                    await session.commit()
-                    return Response(content="CURRENCY_NOT_SUPPORTED", status_code=200)
-
-                # Guard 3: paid amount must cover the effective deposit.
-                # Use booking.deposit_at_booking (snapshotted at reservation time) so
-                # a service price change after the booking doesn't reject a valid payment.
-                # Fall back to effective_deposit() for older bookings without the snapshot.
-                if booking.deposit_at_booking is not None:
-                    deposit = booking.deposit_at_booking
-                else:
-                    service = await session.get(Service, booking.service_id)
-                    if service is None:
-                        # Defensive: CASCADE makes this unreachable normally; fail closed.
-                        logger.warning(
-                            "Webhook MP: service %s no encontrado para booking %s (fail closed)",
-                            booking.service_id,
-                            booking_id,
-                        )
-                        webhook_event.status = "processed"
-                        webhook_event.processed_at = datetime.now(timezone.utc)
-                        session.add(webhook_event)
-                        await session.commit()
-                        return Response(content="AMOUNT_INSUFFICIENT", status_code=200)
-                    deposit = effective_deposit(service.price, service.deposit_amount)
-                paid_amount = Decimal(str(details.get("transaction_amount") or 0))
-                if not paid_amount.is_finite() or paid_amount < deposit:
-                    logger.warning(
-                        "Webhook MP: monto insuficiente — pagado %s, seña requerida %s (booking %s)",
-                        paid_amount,
-                        deposit,
-                        booking_id,
-                    )
-                    webhook_event.status = "processed"
-                    webhook_event.processed_at = datetime.now(timezone.utc)
-                    session.add(webhook_event)
-                    await session.commit()
-                    return Response(content="AMOUNT_INSUFFICIENT", status_code=200)
-
-        # All guards passed. Create or update the Payment record.
-        # (payment already fetched via SELECT FOR UPDATE above)
-        # For concurrent INSERTs the UNIQUE constraint on mp_payment_id is the
-        # safety net; the IntegrityError handler below covers that path.
-        if payment is None:
-            # Auto-crear el Payment con los datos de MP
-            transaction_amount = details.get("transaction_amount") or 0
-            payment_method_id = details.get("payment_method_id") or "unknown"
-            paid_at = _parse_mp_datetime(details.get("date_approved"))
-
-            payment = Payment(
-                booking_id=booking_id,
-                amount=transaction_amount,
-                mp_payment_id=data_id,
-                method=payment_method_id,
-                status=payment_status,
-                paid_at=paid_at if payment_status == "approved" else None,
+        try:
+            outcome, linked_booking_id = await apply_payment_details(
+                session, data_id, details
             )
-            session.add(payment)
-            try:
-                await session.flush()
-            except IntegrityError:
-                # A concurrent webhook beat us to the INSERT for this mp_payment_id.
-                # Treat as idempotent: mark this event processed and return.
-                await session.rollback()
-                stmt_ev = select(ProcessedWebhookEvent).where(
-                    ProcessedWebhookEvent.event_id == event_id
-                )
-                wh = (await session.execute(stmt_ev)).scalar_one_or_none()
-                if wh is not None:
-                    wh.status = "processed"
-                    wh.processed_at = datetime.now(timezone.utc)
-                    session.add(wh)
-                    await session.commit()
-                return Response(content="EVENT_PROCESSED", status_code=200)
-        else:
-            # Actualizar el estado si cambió
-            if payment.status != payment_status:
-                payment.status = payment_status
-                if payment_status == "approved" and payment.paid_at is None:
-                    payment.paid_at = _parse_mp_datetime(
-                        details.get("date_approved")
-                    ) or datetime.now(timezone.utc)
-                session.add(payment)
+        except DuplicatePaymentError:
+            # A concurrent webhook beat us to the INSERT for this mp_payment_id.
+            # Treat as idempotent: mark this event processed and return.
+            await session.rollback()
+            stmt_ev = select(ProcessedWebhookEvent).where(
+                ProcessedWebhookEvent.event_id == event_id
+            )
+            wh = (await session.execute(stmt_ev)).scalar_one_or_none()
+            if wh is not None:
+                wh.status = "processed"
+                wh.processed_at = datetime.now(timezone.utc)
+                session.add(wh)
+                await session.commit()
+            return Response(content="EVENT_PROCESSED", status_code=200)
 
-        # Confirm booking if approved (booking already fetched above).
-        if payment_status == "approved" and booking is not None:
-            # Solo cambiar estado a confirmed si estaba en pending
-            if (
-                booking.status == "pending"
-                or booking.status == "expired"
-                and await _slot_still_free(session, booking)
-            ):
-                await transition_booking_status(
-                    session, booking, "confirmed", actor="webhook_mp"
-                )
-
-            # Generar outbox de confirmación si el booking está confirmado y no existe previa
-            if booking.status == "confirmed":
-                outbox_stmt = select(NotificationOutbox).where(
-                    NotificationOutbox.booking_id == booking.id,
-                    NotificationOutbox.notification_type == "confirmation",
-                )
-                existing_outbox = (
-                    await session.execute(outbox_stmt)
-                ).scalar_one_or_none()
-
-                if existing_outbox is None:
-                    outbox_event = NotificationOutbox(
-                        booking_id=booking.id,
-                        notification_type="confirmation",
-                        status="pending",
-                    )
-                    session.add(outbox_event)
-
+        webhook_event.booking_id = linked_booking_id
         # 4. Marcar evento como processed y commitear
         webhook_event.status = "processed"
         webhook_event.processed_at = datetime.now(timezone.utc)
         session.add(webhook_event)
         await session.commit()
 
-        return Response(content="EVENT_PROCESSED", status_code=200)
+        return Response(content=outcome, status_code=200)
 
     except HTTPException:
         # Errores esperados (timeout, etc.) — marcar como failed y propagar

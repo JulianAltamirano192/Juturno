@@ -3,30 +3,37 @@ Flujo OAuth de Mercado Pago para que cada tenant conecte su propia cuenta
 (D-012 / PLAN_MP_POR_TENANT.md).
 
 Circuito:
-  1. GET /mp/connect/start (autenticado con X-Tenant-API-Key) → devuelve la
-     URL de autorización de MP con un state de un solo uso (anti-CSRF)
-     guardado en Redis con TTL.
-  2. El dueño del negocio abre esa URL, inicia sesión en MP y autoriza.
+  1. POST /panel/mp/connect/start (sesión del panel + CSRF) redirige a la
+     URL de autorización de MP con un state de un solo uso guardado en Redis
+     con TTL, y deja el mismo state en una cookie HttpOnly del navegador.
+  2. El dueño del negocio inicia sesión en MP y autoriza.
   3. MP redirige a GET /mp/connect/callback?code=...&state=...
-  4. El callback canjea el code por access_token + refresh_token en
-     POST /oauth/token, los cifra (app/mp_crypto) y los guarda en el tenant.
+  4. El callback exige que la cookie coincida con el state, canjea el code
+     por access_token + refresh_token en POST /oauth/token, los cifra
+     (app/mp_crypto), los guarda en el tenant y vuelve al panel.
 
 El state de OAuth NO lleva el tenant_id embebido: es un nonce opaco en
 Redis (TTL 600s, consumido de un solo uso). Así el payload no se puede
-forjar y un code interceptado no es reutilizable.
+forjar y un code interceptado no es reutilizable. La cookie ata el state al
+navegador que inició el flujo: un link de autorización compartido no sirve
+para vincular la cuenta MP de otra persona. Por eso no hay inicio por API
+key: una URL suelta no tiene navegador al cual atarse.
 
-Seguridad: ningún endpoint de este router expone tokens; la respuesta del
-callback trae únicamente datos de estado (conectado, user_id, alias).
+Seguridad: ningún endpoint de este router expone tokens; el callback solo
+redirige al panel con un flag de resultado.
 """
 
+import hmac
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 import httpx
 import redis.asyncio as redis
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import RedirectResponse
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_tenant
@@ -45,6 +52,8 @@ _MP_USERS_ME_URL = "https://api.mercadopago.com/users/me"
 # en loguearse a MP, y quedarse corto para limitar el replay.
 _STATE_TTL_SECONDS = 600
 _STATE_PREFIX = "mp_connect_state:"
+STATE_COOKIE_NAME = "mp_oauth_state"
+_STATE_COOKIE_PATH = "/mp/connect/callback"
 
 
 def _state_key(state: str) -> str:
@@ -53,7 +62,9 @@ def _state_key(state: str) -> str:
 
 async def _store_state(state: str, tenant_id: int) -> None:
     """Guarda el state en Redis. Se crea el cliente por llamada para
-    evitar clientes atados a otro event loop en tests (patrón health)."""
+    evitar clientes atados a otro event loop en tests (patrón health).
+    La URL de vuelta la arma el callback en el servidor, nunca viaja en
+    el state."""
     client = redis.from_url(settings.REDIS_URL, decode_responses=True)
     try:
         await client.set(_state_key(state), str(tenant_id), ex=_STATE_TTL_SECONDS)
@@ -62,18 +73,48 @@ async def _store_state(state: str, tenant_id: int) -> None:
 
 
 async def _consume_state(state: str) -> int | None:
-    """Devuelve el tenant_id del state y lo borra (un solo uso), o None."""
+    """Devuelve el tenant_id del state y lo borra (un solo uso)."""
     client = redis.from_url(settings.REDIS_URL, decode_responses=True)
     try:
         raw = await client.getdel(_state_key(state))
     finally:
         await client.aclose()
-    if raw is None:
-        return None
     try:
-        return int(raw)
-    except (TypeError, ValueError):
+        return int(raw) if raw is not None else None
+    except ValueError:
         return None
+
+
+def _state_cookie_domain() -> str | None:
+    """El panel (PUBLIC_BASE_URL) y el callback (MP_MARKETPLACE_REDIRECT_URL)
+    pueden vivir en hosts distintos: juturno.com y api.juturno.com. Si el
+    callback es un subdominio del panel, la cookie se emite para el dominio
+    del panel así llega a ambos; si no, queda atada al host (local)."""
+    panel_host = urlparse(settings.PUBLIC_BASE_URL).hostname or ""
+    callback_host = urlparse(settings.MP_MARKETPLACE_REDIRECT_URL).hostname or ""
+    if panel_host and callback_host.endswith(f".{panel_host}"):
+        return panel_host
+    return None
+
+
+def _state_matches_cookie(request: Request, state: str) -> bool:
+    cookie = request.cookies.get(STATE_COOKIE_NAME)
+    if not cookie:
+        return False
+    return hmac.compare_digest(cookie.encode(), state.encode())
+
+
+def _panel_settings_url(mp_flag: str) -> str:
+    return f"{settings.PUBLIC_BASE_URL.rstrip('/')}/panel/settings?mp={mp_flag}"
+
+
+def _finish_flow(mp_flag: str) -> RedirectResponse:
+    """Vuelve al panel y borra la cookie del state (ya consumido)."""
+    response = RedirectResponse(_panel_settings_url(mp_flag), status_code=302)
+    response.delete_cookie(
+        STATE_COOKIE_NAME, path=_STATE_COOKIE_PATH, domain=_state_cookie_domain()
+    )
+    return response
 
 
 async def _exchange_code_for_tokens(code: str) -> dict[str, Any]:
@@ -117,7 +158,7 @@ async def _exchange_code_for_tokens(code: str) -> dict[str, Any]:
             detail=(
                 f"Mercado Pago rechazó el canje del código "
                 f"(HTTP {resp.status_code}). El code vence a los ~10 minutos: "
-                "reiniciá la conexión desde /mp/connect/start."
+                "reiniciá la conexión desde Configuración del panel."
             ),
         )
     return resp.json()
@@ -238,24 +279,19 @@ async def refresh_tenant_mp_token(session: AsyncSession, tenant: Tenant) -> bool
 # ─────────────────────────────────────────────────────────────────
 
 
-@router.get("/mp/connect/start")
-async def mp_connect_start(
-    current_tenant: Tenant = Depends(get_current_tenant),
-):
+async def mp_authorization_redirect(tenant_id: int) -> RedirectResponse:
     """
-    Devuelve la URL de autorización de Mercado Pago para el tenant
-    autenticado. El dueño del negocio abre esa URL en el navegador,
-    autoriza, y MP redirige al callback.
+    Redirige a la autorización de MP: registra el state en Redis y lo deja
+    en una cookie HttpOnly del navegador que inicia el flujo. El callback
+    solo acepta el state si vuelve con esa cookie.
     """
     if not settings.MP_MARKETPLACE_CLIENT_ID:
         raise HTTPException(
             status_code=503,
             detail="OAuth de Mercado Pago no está configurado en la plataforma.",
         )
-
     state = secrets.token_urlsafe(32)
-    await _store_state(state, current_tenant.id)
-
+    await _store_state(state, tenant_id)
     params = urlencode(
         {
             "client_id": settings.MP_MARKETPLACE_CLIENT_ID,
@@ -265,14 +301,24 @@ async def mp_connect_start(
             "redirect_uri": settings.MP_MARKETPLACE_REDIRECT_URL,
         }
     )
-    return {
-        "authorization_url": f"{_MP_AUTH_URL}?{params}",
-        "expires_in_seconds": _STATE_TTL_SECONDS,
-    }
+    response = RedirectResponse(url=f"{_MP_AUTH_URL}?{params}", status_code=302)
+    response.set_cookie(
+        key=STATE_COOKIE_NAME,
+        value=state,
+        max_age=_STATE_TTL_SECONDS,
+        path=_STATE_COOKIE_PATH,
+        domain=_state_cookie_domain(),
+        httponly=True,
+        # Lax: MP vuelve con una navegación GET de nivel superior.
+        samesite="lax",
+        secure=settings.is_production,
+    )
+    return response
 
 
 @router.get("/mp/connect/callback")
 async def mp_connect_callback(
+    request: Request,
     session: AsyncSession = Depends(get_db),
     code: str | None = Query(default=None),
     state: str | None = Query(default=None),
@@ -280,20 +326,27 @@ async def mp_connect_callback(
 ):
     """
     Destino del redirect_uri registrado en MP Developers. Recibe el code,
-    valida el state de un solo uso, canjea por tokens y los persiste
-    cifrados en el tenant. Nunca devuelve tokens.
+    valida el state de un solo uso contra la cookie del navegador, canjea
+    por tokens, los persiste cifrados en el tenant y vuelve al panel.
+    Nunca devuelve tokens.
     """
     if error is not None:
-        # El dueño canceló o MP rechazó la autorización (p. ej. access_denied)
-        raise HTTPException(
-            status_code=400,
-            detail=f"Autorización de Mercado Pago cancelada o rechazada: {error}.",
-        )
+        # El dueño canceló o MP rechazó la autorización (p. ej. access_denied).
+        # Solo el navegador que inició el flujo puede descartar su state.
+        if state and _state_matches_cookie(request, state):
+            await _consume_state(state)
+            return _finish_flow("error")
+        return RedirectResponse(_panel_settings_url("error"), status_code=302)
     if not code or not state:
         raise HTTPException(
             status_code=400,
             detail="Callback de Mercado Pago incompleto (falta code o state).",
         )
+    if not _state_matches_cookie(request, state):
+        # El flujo no se inició en este navegador (un link de autorización
+        # compartido, o en el celular MP volvió por otra app/navegador):
+        # no se consume ni se vincula nada.
+        return RedirectResponse(_panel_settings_url("other_browser"), status_code=302)
 
     tenant_id = await _consume_state(state)
     if tenant_id is None:
@@ -318,12 +371,16 @@ async def mp_connect_callback(
         )
 
     mp_user_id, mp_alias = await _fetch_mp_profile(access_token)
+    mp_user_id = token_resp.get("user_id") or mp_user_id
+    if not mp_user_id:
+        # Sin la cuenta no hay unicidad ni guard de collector_id posibles.
+        return _finish_flow("error")
 
     tenant.mp_access_token_enc = encrypt_token(access_token)
     tenant.mp_refresh_token_enc = (
         encrypt_token(refresh_token) if refresh_token else None
     )
-    tenant.mp_user_id = str(token_resp.get("user_id") or mp_user_id)
+    tenant.mp_user_id = str(mp_user_id)
     tenant.mp_alias = mp_alias
 
     expires_in = token_resp.get("expires_in")
@@ -333,20 +390,16 @@ async def mp_connect_callback(
         )
 
     session.add(tenant)
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError:
+        # uq_tenant_mp_user_id: la cuenta de MP ya está vinculada a otro
+        # negocio. El rollback descarta los tokens; el otro tenant no cambia.
+        await session.rollback()
+        return _finish_flow("account_in_use")
     await session.refresh(tenant)
 
-    return {
-        "connected": True,
-        "tenant_id": tenant.id,
-        "mp_user_id": tenant.mp_user_id,
-        "mp_alias": tenant.mp_alias,
-        "mp_token_expires_at": (
-            tenant.mp_token_expires_at.isoformat()
-            if tenant.mp_token_expires_at
-            else None
-        ),
-    }
+    return _finish_flow("connected")
 
 
 # ─────────────────────────────────────────────────────────────────

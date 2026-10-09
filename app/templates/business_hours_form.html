@@ -13,6 +13,7 @@
   .days input:checked + label{border-color:var(--cyan);background:rgba(34,211,238,.16);color:#fff;box-shadow:0 0 12px rgba(34,211,238,.35)}
   .days input:focus-visible + label{outline:2px solid var(--cyan-l);outline-offset:2px}
   .times{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+  .times select{appearance:none;-webkit-appearance:none;padding-right:40px;font-variant-numeric:tabular-nums;background:var(--surface) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%239aa0ad' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M12 7v5l3 2'/%3E%3C/svg%3E") no-repeat right 14px center;cursor:pointer}
   .pv{display:flex;flex-direction:column;gap:8px;margin:4px 0 18px;padding:16px;border-radius:16px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08)}
   .pv > span{font-size:13px;font-weight:600;color:var(--muted)}
   .pv-bar{position:relative;height:14px;border-radius:7px;background:rgba(255,255,255,.06)}
@@ -22,11 +23,26 @@
   @media (max-width:900px){
     .days{flex-wrap:nowrap;gap:4px}
     .days label{flex:1 1 0;min-width:0;padding:0;font-size:13px}
-    .times input{height:56px;font-size:18px}
+    .times select{height:56px;font-size:18px}
     .form-actions .btn-p{width:100%;min-height:54px}
   }
 </style>
 {% endblock %}
+
+{% macro time_select(name, has_error) %}
+{%- set current = form.get(name, '') -%}
+<select id="{{ name }}" name="{{ name }}"{% if has_error %} class="has-error"{% endif %}>
+  <option value=""{% if not current %} selected{% endif %} disabled>--:--</option>
+  {%- set ns = namespace(found=false) %}
+  {%- for h in range(24) %}{% for m in range(0, 60, 15) %}
+  {%- set v = '%02d:%02d' % (h, m) %}{% if v == current %}{% set ns.found = true %}{% endif %}
+  <option value="{{ v }}"{% if v == current %} selected{% endif %}>{{ v }}</option>
+  {%- endfor %}{% endfor %}
+  {%- if current and not ns.found %}
+  <option value="{{ current }}" selected>{{ current }}</option>
+  {%- endif %}
+</select>
+{%- endmacro %}
 
 {% block dash_content %}
 {% set day_labels = [('Lunes', 'Lun'), ('Martes', 'Mar'), ('Miércoles', 'Mié'), ('Jueves', 'Jue'), ('Viernes', 'Vie'), ('Sábado', 'Sáb'), ('Domingo', 'Dom')] %}
@@ -55,11 +71,11 @@
   <div class="field times">
     <div>
       <label for="start_time">Apertura</label>
-      <input type="time" id="start_time" name="start_time" value="{{ form.get('start_time', '') }}" class="{% if errors.start_time or errors.order or errors.overlap %}has-error{% endif %}">
+      {{ time_select('start_time', errors.start_time or errors.order or errors.overlap) }}
     </div>
     <div>
       <label for="end_time">Cierre</label>
-      <input type="time" id="end_time" name="end_time" value="{{ form.get('end_time', '') }}" class="{% if errors.end_time or errors.order or errors.overlap %}has-error{% endif %}">
+      {{ time_select('end_time', errors.end_time or errors.order or errors.overlap) }}
     </div>
   </div>
   {% if errors.start_time %}<div class="field-error">{{ errors.start_time }}</div>{% endif %}
@@ -95,8 +111,7 @@
     bar.style.left = pct(Math.min(s, e)) + "%";
     bar.style.width = Math.max(pct(Math.max(s, e)) - pct(Math.min(s, e)), 1) + "%";
   }
-  start.addEventListener("input", update);
-  end.addEventListener("input", update);
+  for (const el of [start, end]) { el.addEventListener("input", update); el.addEventListener("change", update); }
   update();
 </script>
 {% endblock %}

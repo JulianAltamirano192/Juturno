@@ -12,11 +12,22 @@ from app.models import Booking, Payment, Service, Tenant
 
 # Helper para firmar webhooks
 def _sign_webhook(data_id: str, request_id: str, timestamp: int, secret: str) -> str:
-    manifest = f"id:{data_id};request-id:{request_id};ts:{timestamp};"
+    # Template de MP: id:[data.id_url];request-id:[x-request-id];ts:[ts];
+    # data.id va en minúsculas y, si no viene, se omite del template.
+    id_part = f"id:{data_id.lower()};" if data_id else ""
+    manifest = f"{id_part}request-id:{request_id};ts:{timestamp};"
     expected_hmac = hmac.new(
         secret.encode(), manifest.encode(), hashlib.sha256
     ).hexdigest()
     return f"ts={timestamp},v1={expected_hmac}"
+
+
+def _webhook_url(payload: dict) -> str:
+    """URL como la arma MP: el data.id va en el query (es lo que se firma)."""
+    data_id = payload.get("data", {}).get("id")
+    if not data_id:
+        return "/webhooks/mercadopago"
+    return f"/webhooks/mercadopago?data.id={data_id}&type=payment"
 
 
 def _make_payment_details(
@@ -112,16 +123,16 @@ async def test_webhook_idempotency_retry(client, db_session, monkeypatch):
 
     # Primer intento: debe fallar con la excepción simulada
     with pytest.raises(Exception, match="Simulated network failure"):
-        await client.post("/webhooks/mercadopago", json=payload, headers=headers)
+        await client.post(_webhook_url(payload), json=payload, headers=headers)
 
     # Verificar que quedó en 'failed' para trazabilidad
     result = await db_session.execute(
-        text("SELECT status FROM payment_events WHERE event_id='evt_retry_test'")
+        text("SELECT status FROM payment_events WHERE event_id='pay_999:req_1'")
     )
     assert result.scalar_one() == "failed"
 
     # Segundo intento (reintento de MP): debe procesar exitosamente
-    res2 = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
+    res2 = await client.post(_webhook_url(payload), json=payload, headers=headers)
     assert res2.status_code == 200
     assert res2.text == "EVENT_PROCESSED"
 
@@ -165,12 +176,12 @@ async def test_webhook_idempotency_processed(client, db_session, monkeypatch):
     }
     headers = {"x-signature": signature, "x-request-id": request_id}
 
-    res1 = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
+    res1 = await client.post(_webhook_url(payload), json=payload, headers=headers)
     assert res1.status_code == 200
     assert res1.text == "EVENT_PROCESSED"
 
     # Segundo intento: mismo event_id → debe ser ignorado
-    res2 = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
+    res2 = await client.post(_webhook_url(payload), json=payload, headers=headers)
     assert res2.status_code == 200
     assert res2.text == "DUPLICATE_EVENT_IGNORED"
 
@@ -193,7 +204,7 @@ async def test_webhook_replay_attack(client, db_session, monkeypatch):
     }
     headers = {"x-signature": signature, "x-request-id": request_id}
 
-    res = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
+    res = await client.post(_webhook_url(payload), json=payload, headers=headers)
     assert res.status_code == 403
     assert (
         res.json()["detail"] == "Timestamp del webhook fuera de ventana de tolerancia"
@@ -229,7 +240,7 @@ async def test_webhook_valid_timestamp(client, db_session, monkeypatch):
     }
     headers = {"x-signature": signature, "x-request-id": request_id}
 
-    res = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
+    res = await client.post(_webhook_url(payload), json=payload, headers=headers)
     assert res.status_code == 200
     assert res.text == "EVENT_PROCESSED"
 
@@ -267,7 +278,7 @@ async def test_webhook_different_event_ids_same_payment_no_duplication(
         "data": {"id": data_id},
     }
     res1 = await client.post(
-        "/webhooks/mercadopago",
+        _webhook_url(payload1),
         json=payload1,
         headers={"x-signature": sig1, "x-request-id": "req_dup_1"},
     )
@@ -281,7 +292,7 @@ async def test_webhook_different_event_ids_same_payment_no_duplication(
         "data": {"id": data_id},
     }
     res2 = await client.post(
-        "/webhooks/mercadopago",
+        _webhook_url(payload2),
         json=payload2,
         headers={"x-signature": sig2, "x-request-id": "req_dup_2"},
     )
@@ -334,13 +345,15 @@ async def test_webhook_invalid_signature_rejected(client, db_session, monkeypatc
     }
     headers = {"x-signature": signature, "x-request-id": request_id}
 
-    res = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
+    res = await client.post(_webhook_url(payload), json=payload, headers=headers)
     assert res.status_code == 401
     assert res.json()["detail"] == "Firma de Mercado Pago inválida"
 
     # El evento no debe quedar registrado: el rechazo es previo al gate de idempotencia
     result = await db_session.execute(
-        text("SELECT COUNT(*) FROM payment_events WHERE event_id='evt_invalid_sig'")
+        text(
+            "SELECT COUNT(*) FROM payment_events WHERE event_id='pay_bad_sig:req_bad_sig'"
+        )
     )
     assert result.scalar_one() == 0
 
@@ -361,9 +374,81 @@ async def test_webhook_missing_signature_headers_rejected(
         "data": {"id": "pay_x"},
     }
 
-    res = await client.post("/webhooks/mercadopago", json=payload)
+    res = await client.post(_webhook_url(payload), json=payload)
     assert res.status_code == 401
     assert res.json()["detail"] == "Firma de Mercado Pago inválida"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "query, body",
+    [
+        ("id=123456&topic=payment", None),
+        ("id=555&topic=payment", {"data": {"id": "555"}}),
+        (
+            "id=987&topic=merchant_order",
+            {"resource": "https://api.mercadolibre.com/merchant_orders/987"},
+        ),
+    ],
+)
+async def test_webhook_ipn_acknowledged_without_processing(
+    client, db_session, monkeypatch, query, body
+):
+    """IPN (?id=X&topic=...) llega sin firma validable; el mismo evento llega
+    como Webhook firmado. Se responde 200 para cortar los reintentos de MP,
+    sin consultar el pago ni registrar el evento."""
+    monkeypatch.setattr(mp_webhooks.settings, "MP_SECRET_KEY", "test-webhook-secret")
+
+    async def fail_get_payment(*args, **kwargs):
+        raise AssertionError("IPN must not be processed")
+
+    monkeypatch.setattr(mp_webhooks, "get_payment_details", fail_get_payment)
+
+    res = await client.post(f"/webhooks/mercadopago?{query}", json=body)
+    assert res.status_code == 200
+    assert res.text == "IPN_IGNORED"
+
+    result = await db_session.execute(text("SELECT COUNT(*) FROM payment_events"))
+    assert result.scalar_one() == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "body",
+    [
+        b"",
+        b"not-json",
+        b"[1, 2]",
+        b'"text"',
+        b"\xff\xfe\xfa",
+        b'{"data": 1}',
+        b'{"data": null}',
+        b"[" * 200000,
+    ],
+)
+async def test_webhook_malformed_body_returns_400(client, db_session, body):
+    """Un body vacío, inválido o que no es un objeto JSON es un request mal
+    formado (400), no un error del servidor (500)."""
+    res = await client.post(
+        "/webhooks/mercadopago?data.id=pay_x&type=payment",
+        content=body,
+        headers={"content-type": "application/json"},
+    )
+    assert res.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_webhook_with_data_id_and_topic_still_requires_signature(
+    client, db_session, monkeypatch
+):
+    """Agregar ?topic= a una notificación con data.id no saltea la firma."""
+    monkeypatch.setattr(mp_webhooks.settings, "MP_SECRET_KEY", "test-webhook-secret")
+
+    res = await client.post(
+        "/webhooks/mercadopago?data.id=pay_x&type=payment&topic=payment",
+        json={"action": "payment.updated", "data": {"id": "pay_x"}},
+    )
+    assert res.status_code == 401
 
 
 @pytest.mark.asyncio
@@ -383,7 +468,7 @@ async def test_webhook_without_data_id_ignored(client, db_session, monkeypatch):
     payload = {"action": "payment.updated"}
     headers = {"x-signature": signature, "x-request-id": "req_no_data"}
 
-    res = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
+    res = await client.post(_webhook_url(payload), json=payload, headers=headers)
     assert res.status_code == 200
     assert res.text == "EVENT_IGNORED_NO_DATA_ID"
 
@@ -393,10 +478,196 @@ async def test_webhook_without_data_id_ignored(client, db_session, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_webhook_signature_uses_lowercased_query_data_id(
+    client, db_session, monkeypatch
+):
+    """MP firma el data.id del query string en minúsculas si es alfanumérico."""
+    secret = "test-webhook-secret"
+    monkeypatch.setattr(mp_webhooks.settings, "MP_SECRET_KEY", secret)
+    called_with = []
+
+    async def mock_get_payment_details(data_id: str, access_token: str | None = None):
+        called_with.append(data_id)
+
+    monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_get_payment_details)
+
+    ts = int(datetime.now(timezone.utc).timestamp())
+    signature = _sign_webhook("ABC123", "req_upper", ts, secret)
+    res = await client.post(
+        "/webhooks/mercadopago?data.id=ABC123&type=payment",
+        json={"id": "evt_upper", "type": "payment", "data": {"id": "ABC123"}},
+        headers={"x-signature": signature, "x-request-id": "req_upper"},
+    )
+    assert res.status_code == 200
+    assert res.text == "PAYMENT_NOT_FOUND_ON_MP"
+    assert called_with == ["ABC123"]
+
+
+@pytest.mark.asyncio
+async def test_webhook_processes_signed_query_id_not_body_id(
+    client, db_session, monkeypatch
+):
+    """La firma cubre el data.id del query; el del body no está firmado y no
+    puede elegir qué pago se procesa."""
+    secret = "test-webhook-secret"
+    monkeypatch.setattr(mp_webhooks.settings, "MP_SECRET_KEY", secret)
+    called_with = []
+
+    async def mock_get_payment_details(data_id: str, access_token: str | None = None):
+        called_with.append(data_id)
+
+    monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_get_payment_details)
+
+    ts = int(datetime.now(timezone.utc).timestamp())
+    signature = _sign_webhook("pay_signed", "req_swap", ts, secret)
+    res = await client.post(
+        "/webhooks/mercadopago?data.id=pay_signed&type=payment",
+        json={"id": "evt_swap", "type": "payment", "data": {"id": "pay_other"}},
+        headers={"x-signature": signature, "x-request-id": "req_swap"},
+    )
+    assert res.status_code == 200
+    assert called_with == ["pay_signed"]
+
+
+@pytest.mark.asyncio
+async def test_webhook_body_data_id_without_query_is_ignored(
+    client, db_session, monkeypatch
+):
+    """Sin data.id en el query la firma no cubre ningún id: no se procesa el
+    del body."""
+    secret = "test-webhook-secret"
+    monkeypatch.setattr(mp_webhooks.settings, "MP_SECRET_KEY", secret)
+
+    async def mock_get_payment_details(data_id: str, access_token: str | None = None):
+        raise AssertionError("no debe consultar MP")
+
+    monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_get_payment_details)
+
+    ts = int(datetime.now(timezone.utc).timestamp())
+    signature = _sign_webhook("", "req_body_only", ts, secret)
+    res = await client.post(
+        "/webhooks/mercadopago",
+        json={"id": "evt_body_only", "data": {"id": "pay_body"}},
+        headers={"x-signature": signature, "x-request-id": "req_body_only"},
+    )
+    assert res.status_code == 200
+    assert res.text == "EVENT_IGNORED_NO_DATA_ID"
+
+
+@pytest.mark.asyncio
+async def test_webhook_replay_with_new_body_id_is_duplicate(
+    client, db_session, monkeypatch
+):
+    """La clave de idempotencia sale solo de valores firmados: reenviar un
+    request firmado cambiando el "id" del body no saltea el dedupe."""
+    secret = "test-webhook-secret"
+    monkeypatch.setattr(mp_webhooks.settings, "MP_SECRET_KEY", secret)
+    calls = 0
+
+    async def mock_get_payment_details(data_id: str, access_token: str | None = None):
+        nonlocal calls
+        calls += 1
+        return _make_payment_details("pending", "not-a-booking")
+
+    monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_get_payment_details)
+
+    ts = int(datetime.now(timezone.utc).timestamp())
+    headers = {
+        "x-signature": _sign_webhook("pay_replay", "req_replay", ts, secret),
+        "x-request-id": "req_replay",
+    }
+    url = "/webhooks/mercadopago?data.id=pay_replay&type=payment"
+    first = {"id": "evt_original", "data": {"id": "pay_replay"}}
+    replay = {"id": "evt_forged", "data": {"id": "pay_replay"}}
+
+    res1 = await client.post(url, json=first, headers=headers)
+    res2 = await client.post(url, json=replay, headers=headers)
+
+    assert res1.text == "NO_BOOKING_LINKED"
+    assert res2.text == "DUPLICATE_EVENT_IGNORED"
+    assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_webhook_replay_with_other_id_case_is_duplicate(
+    client, db_session, monkeypatch
+):
+    """La firma usa data.id en minúsculas: "ABC" y "abc" firman igual, así
+    que la clave de idempotencia también se normaliza."""
+    secret = "test-webhook-secret"
+    monkeypatch.setattr(mp_webhooks.settings, "MP_SECRET_KEY", secret)
+
+    async def mock_get_payment_details(data_id: str, access_token: str | None = None):
+        return _make_payment_details("pending", "not-a-booking")
+
+    monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_get_payment_details)
+
+    ts = int(datetime.now(timezone.utc).timestamp())
+    headers = {
+        "x-signature": _sign_webhook("abc123", "req_case", ts, secret),
+        "x-request-id": "req_case",
+    }
+    body = {"data": {"id": "abc123"}}
+    res1 = await client.post(
+        "/webhooks/mercadopago?data.id=ABC123&type=payment", json=body, headers=headers
+    )
+    res2 = await client.post(
+        "/webhooks/mercadopago?data.id=abc123&type=payment", json=body, headers=headers
+    )
+
+    assert res1.text == "NO_BOOKING_LINKED"
+    assert res2.text == "DUPLICATE_EVENT_IGNORED"
+
+
+@pytest.mark.asyncio
+async def test_webhook_booking_integrity_error_is_not_reported_as_processed(
+    client, db_session, monkeypatch
+):
+    """Solo el INSERT duplicado del Payment es idempotente. Un IntegrityError
+    de la reserva (p. ej. el horario se ocupó) deja el evento 'failed' para
+    que MP reintente, en vez de darlo por procesado."""
+    from sqlalchemy.exc import IntegrityError
+
+    secret = "test-webhook-secret"
+    monkeypatch.setattr(mp_webhooks.settings, "MP_SECRET_KEY", secret)
+    booking = await _create_booking(db_session, "book_integrity")
+
+    async def mock_get_payment_details(data_id: str, access_token: str | None = None):
+        return _make_payment_details("approved", f"booking-{booking.id}")
+
+    async def failing_transition(session, booking, new_status, actor="system"):
+        raise IntegrityError("UPDATE booking", {}, Exception("excl_overlapping"))
+
+    monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_get_payment_details)
+    monkeypatch.setattr(mp_webhooks, "transition_booking_status", failing_transition)
+
+    ts = int(datetime.now(timezone.utc).timestamp())
+    headers = {
+        "x-signature": _sign_webhook("pay_integrity", "req_integrity", ts, secret),
+        "x-request-id": "req_integrity",
+    }
+    with pytest.raises(IntegrityError):
+        await client.post(
+            "/webhooks/mercadopago?data.id=pay_integrity&type=payment",
+            json={"data": {"id": "pay_integrity"}},
+            headers=headers,
+        )
+
+    result = await db_session.execute(
+        text(
+            "SELECT status FROM payment_events "
+            "WHERE event_id='pay_integrity:req_integrity'"
+        )
+    )
+    assert result.scalar_one() == "failed"
+
+
+@pytest.mark.asyncio
 async def test_webhook_payment_not_found_on_mp(client, db_session, monkeypatch):
     """
     Test B4: MP responde 404 para el pago (ID del simulador o evento viejo)
-    -> PAYMENT_NOT_FOUND_ON_MP, evento marcado 'processed'.
+    -> PAYMENT_NOT_FOUND_ON_MP (200, MP no reintenta), evento 'failed': así
+    una entrega posterior con la misma clave todavía se puede procesar.
     """
     secret = "test-webhook-secret"
     monkeypatch.setattr(mp_webhooks.settings, "MP_SECRET_KEY", secret)
@@ -418,15 +689,60 @@ async def test_webhook_payment_not_found_on_mp(client, db_session, monkeypatch):
     }
     headers = {"x-signature": signature, "x-request-id": request_id}
 
-    res = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
+    res = await client.post(_webhook_url(payload), json=payload, headers=headers)
     assert res.status_code == 200
     assert res.text == "PAYMENT_NOT_FOUND_ON_MP"
 
-    # El evento igual queda 'processed': MP no debe reintentarlo eternamente
     result = await db_session.execute(
-        text("SELECT status FROM payment_events WHERE event_id='evt_not_found'")
+        text(
+            "SELECT status FROM payment_events WHERE event_id='pay_ghost_404:req_ghost'"
+        )
     )
-    assert result.scalar_one() == "processed"
+    assert result.scalar_one() == "failed"
+
+
+@pytest.mark.asyncio
+async def test_webhook_fake_user_id_replay_does_not_burn_the_event(
+    client, db_session, monkeypatch
+):
+    """El user_id del body no está firmado: un reenvío con un user_id falso
+    consulta con el token equivocado (404) y no debe impedir que la entrega
+    legítima, con la misma clave firmada, confirme la reserva."""
+    secret = "test-webhook-secret"
+    monkeypatch.setattr(mp_webhooks.settings, "MP_SECRET_KEY", secret)
+    booking = await _create_booking(db_session, "book_fake_user_id")
+
+    async def token_from_body(session, payload):
+        return payload.get("user_id")
+
+    async def mock_get_payment_details(data_id: str, access_token: str | None = None):
+        if access_token != "tenant-token":
+            return None
+        return _make_payment_details("approved", f"booking-{booking.id}")
+
+    monkeypatch.setattr(mp_webhooks, "_resolve_token_for_payment", token_from_body)
+    monkeypatch.setattr(mp_webhooks, "get_payment_details", mock_get_payment_details)
+
+    ts = int(datetime.now(timezone.utc).timestamp())
+    headers = {
+        "x-signature": _sign_webhook("pay_uid", "req_uid", ts, secret),
+        "x-request-id": "req_uid",
+    }
+    url = "/webhooks/mercadopago?data.id=pay_uid&type=payment"
+
+    forged = await client.post(
+        url, json={"user_id": "evil", "data": {"id": "pay_uid"}}, headers=headers
+    )
+    legit = await client.post(
+        url,
+        json={"user_id": "tenant-token", "data": {"id": "pay_uid"}},
+        headers=headers,
+    )
+
+    assert forged.text == "PAYMENT_NOT_FOUND_ON_MP"
+    assert legit.text == "EVENT_PROCESSED"
+    await db_session.refresh(booking)
+    assert booking.status == "confirmed"
 
 
 @pytest.mark.asyncio
@@ -457,12 +773,14 @@ async def test_webhook_payment_without_booking_link_ignored(
     }
     headers = {"x-signature": signature, "x-request-id": request_id}
 
-    res = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
+    res = await client.post(_webhook_url(payload), json=payload, headers=headers)
     assert res.status_code == 200
     assert res.text == "NO_BOOKING_LINKED"
 
     result = await db_session.execute(
-        text("SELECT status FROM payment_events WHERE event_id='evt_unlinked'")
+        text(
+            "SELECT status FROM payment_events WHERE event_id='pay_unlinked_1:req_unlinked'"
+        )
     )
     assert result.scalar_one() == "processed"
 
@@ -509,7 +827,7 @@ async def test_webhook_updates_existing_pending_payment(
     }
     headers = {"x-signature": signature, "x-request-id": request_id}
 
-    res = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
+    res = await client.post(_webhook_url(payload), json=payload, headers=headers)
     assert res.status_code == 200
     assert res.text == "EVENT_PROCESSED"
 
@@ -561,12 +879,14 @@ async def test_webhook_mp_timeout_marks_event_failed(client, db_session, monkeyp
     }
     headers = {"x-signature": signature, "x-request-id": request_id}
 
-    res = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
+    res = await client.post(_webhook_url(payload), json=payload, headers=headers)
     assert res.status_code == 504
 
     # El evento queda 'failed' para que el reintento de MP lo reprocese
     result = await db_session.execute(
-        text("SELECT status FROM payment_events WHERE event_id='evt_timeout'")
+        text(
+            "SELECT status FROM payment_events WHERE event_id='pay_timeout:req_timeout'"
+        )
     )
     assert result.scalar_one() == "failed"
 
@@ -615,6 +935,70 @@ async def test_create_mp_preference_selects_checkout_url_by_mode(
     assert result["checkout_url"] == FAKE_PREFERENCE_RESPONSE[expected_url_key]
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "configured_url",
+    ["https://sandbox.example.test/webhooks/mercadopago", ""],
+)
+async def test_create_mp_preference_uses_configured_notification_url(
+    monkeypatch, configured_url
+):
+    """
+    notification_url sale de MP_NOTIFICATION_URL (por entorno) y no está
+    hardcodeada a producción. Vacía = no se manda: MP no notifica a nadie
+    en vez de mandarle a prod los pagos de sandbox/local.
+    """
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    monkeypatch.setattr(mp_webhooks.settings, "MP_NOTIFICATION_URL", configured_url)
+
+    fake_response = MagicMock()
+    fake_response.is_success = True
+    fake_response.json.return_value = FAKE_PREFERENCE_RESPONSE
+
+    client_mock = AsyncMock()
+    client_mock.post.return_value = fake_response
+    client_mock.__aenter__.return_value = client_mock
+
+    with patch("app.mp_webhooks.httpx.AsyncClient", return_value=client_mock):
+        await mp_webhooks.create_mp_preference(
+            booking_id=1, amount=30.0, client_name="Test"
+        )
+
+    body = client_mock.post.call_args.kwargs["json"]
+    if configured_url:
+        assert body["notification_url"] == configured_url
+    else:
+        assert "notification_url" not in body
+
+
+@pytest.mark.asyncio
+async def test_search_approved_payment_ids_filters_by_reference_and_status():
+    """La búsqueda usa el external_reference y el token del tenant, y solo
+    devuelve pagos aprobados."""
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    fake_response = MagicMock()
+    fake_response.json.return_value = {
+        "results": [
+            {"id": 11, "status": "approved"},
+            {"id": 12, "status": "rejected"},
+        ]
+    }
+    client_mock = AsyncMock()
+    client_mock.get.return_value = fake_response
+    client_mock.__aenter__.return_value = client_mock
+
+    with patch("app.mp_webhooks.httpx.AsyncClient", return_value=client_mock):
+        ids = await mp_webhooks.search_approved_payment_ids("booking-7", "tok")
+
+    assert ids == ["11"]
+    kwargs = client_mock.get.call_args.kwargs
+    assert kwargs["params"] == {"external_reference": "booking-7"}
+    assert kwargs["headers"]["Authorization"] == "Bearer tok"
+    fake_response.raise_for_status.assert_called_once()
+
+
 # ---------------------------------------------------------------------------
 # Pago aprobado tardío sobre reserva expirada
 # ---------------------------------------------------------------------------
@@ -654,7 +1038,7 @@ async def test_webhook_approved_late_payment_reconfirms_expired(
     }
     headers = {"x-signature": signature, "x-request-id": request_id}
 
-    res = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
+    res = await client.post(_webhook_url(payload), json=payload, headers=headers)
     assert res.status_code == 200
     assert res.text == "EVENT_PROCESSED"
 
@@ -706,7 +1090,7 @@ async def test_webhook_tenant_mismatch(client, db_session, monkeypatch):
     }
     headers = {"x-signature": signature, "x-request-id": request_id}
 
-    res = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
+    res = await client.post(_webhook_url(payload), json=payload, headers=headers)
     assert res.status_code == 200
     assert res.text == "TENANT_MISMATCH"
 
@@ -744,7 +1128,7 @@ async def test_webhook_deposit_amount_zero(client, db_session, monkeypatch):
     }
     headers = {"x-signature": signature, "x-request-id": request_id}
 
-    res = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
+    res = await client.post(_webhook_url(payload), json=payload, headers=headers)
     assert res.status_code == 200
     assert res.text == "EVENT_PROCESSED"
 
@@ -783,7 +1167,7 @@ async def test_webhook_deposit_null_rounding(client, db_session, monkeypatch):
     }
     headers = {"x-signature": signature, "x-request-id": request_id}
 
-    res = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
+    res = await client.post(_webhook_url(payload), json=payload, headers=headers)
     assert res.status_code == 200
     assert res.text == "EVENT_PROCESSED"
 
@@ -817,7 +1201,7 @@ async def test_webhook_amount_too_low(client, db_session, monkeypatch):
     payload = {"id": "evt_low_1", "action": "payment.updated", "data": {"id": data_id}}
     headers = {"x-signature": signature, "x-request-id": request_id}
 
-    res = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
+    res = await client.post(_webhook_url(payload), json=payload, headers=headers)
     assert res.status_code == 200
     assert res.text == "AMOUNT_INSUFFICIENT"
 
@@ -855,7 +1239,7 @@ async def test_webhook_amount_exact(client, db_session, monkeypatch):
     }
     headers = {"x-signature": signature, "x-request-id": request_id}
 
-    res = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
+    res = await client.post(_webhook_url(payload), json=payload, headers=headers)
     assert res.status_code == 200
     assert res.text == "EVENT_PROCESSED"
 
@@ -889,7 +1273,7 @@ async def test_webhook_amount_overpaid(client, db_session, monkeypatch):
     payload = {"id": "evt_over_1", "action": "payment.updated", "data": {"id": data_id}}
     headers = {"x-signature": signature, "x-request-id": request_id}
 
-    res = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
+    res = await client.post(_webhook_url(payload), json=payload, headers=headers)
     assert res.status_code == 200
     assert res.text == "EVENT_PROCESSED"
 
@@ -932,7 +1316,7 @@ async def test_webhook_deposit_null_service(
     }
     headers = {"x-signature": signature, "x-request-id": request_id}
 
-    res = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
+    res = await client.post(_webhook_url(payload), json=payload, headers=headers)
     assert res.status_code == 200
     assert res.text == expected_text
 
@@ -987,7 +1371,7 @@ async def test_webhook_approved_late_payment_slot_taken_keeps_expired(
     }
     headers = {"x-signature": signature, "x-request-id": request_id}
 
-    res = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
+    res = await client.post(_webhook_url(payload), json=payload, headers=headers)
     assert res.status_code == 200
     assert res.text == "EVENT_PROCESSED"
 
@@ -1040,7 +1424,7 @@ async def test_webhook_no_payment_on_tenant_mismatch(client, db_session, monkeyp
     }
     headers = {"x-signature": signature, "x-request-id": request_id}
 
-    res = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
+    res = await client.post(_webhook_url(payload), json=payload, headers=headers)
     assert res.status_code == 200
     assert res.text == "TENANT_MISMATCH"
 
@@ -1085,7 +1469,7 @@ async def test_webhook_no_mp_user_id_production_rejected(
     }
     headers = {"x-signature": signature, "x-request-id": request_id}
 
-    res = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
+    res = await client.post(_webhook_url(payload), json=payload, headers=headers)
     assert res.status_code == 200
     assert res.text == "TENANT_MISMATCH"
 
@@ -1119,7 +1503,7 @@ async def test_webhook_no_mp_user_id_sandbox_allowed(client, db_session, monkeyp
     }
     headers = {"x-signature": signature, "x-request-id": request_id}
 
-    res = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
+    res = await client.post(_webhook_url(payload), json=payload, headers=headers)
     assert res.status_code == 200
     assert res.text == "EVENT_PROCESSED"
 
@@ -1158,7 +1542,7 @@ async def test_webhook_currency_not_ars(client, db_session, monkeypatch):
     }
     headers = {"x-signature": signature, "x-request-id": request_id}
 
-    res = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
+    res = await client.post(_webhook_url(payload), json=payload, headers=headers)
     assert res.status_code == 200
     assert res.text == "CURRENCY_NOT_SUPPORTED"
 
@@ -1206,7 +1590,7 @@ async def test_webhook_pending_payment_tenant_mismatch_no_payment(
     }
     headers = {"x-signature": signature, "x-request-id": request_id}
 
-    res = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
+    res = await client.post(_webhook_url(payload), json=payload, headers=headers)
     assert res.status_code == 200
     assert res.text == "TENANT_MISMATCH"
 
@@ -1262,7 +1646,7 @@ async def test_webhook_production_collector_matches_confirms(
     }
     headers = {"x-signature": signature, "x-request-id": request_id}
 
-    res = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
+    res = await client.post(_webhook_url(payload), json=payload, headers=headers)
     assert res.status_code == 200
     assert res.text == "EVENT_PROCESSED"
 
@@ -1308,7 +1692,7 @@ async def test_webhook_nan_transaction_amount(client, db_session, monkeypatch):
     }
     headers = {"x-signature": signature, "x-request-id": request_id}
 
-    res = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
+    res = await client.post(_webhook_url(payload), json=payload, headers=headers)
     assert res.status_code == 200
     assert res.text == "AMOUNT_INSUFFICIENT"
 
@@ -1425,7 +1809,7 @@ async def test_webhook_guard_uses_booking_deposit_at_booking(
     }
 
     res = await client.post(
-        "/webhooks/mercadopago",
+        _webhook_url(payload),
         json=payload,
         headers={"x-signature": sig, "x-request-id": request_id},
     )
@@ -1476,7 +1860,7 @@ async def test_webhook_already_confirmed_booking_no_duplicate_outbox(
     }
     headers = {"x-signature": signature, "x-request-id": request_id}
 
-    res = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
+    res = await client.post(_webhook_url(payload), json=payload, headers=headers)
     assert res.status_code == 200
     assert res.text == "EVENT_PROCESSED"
 
@@ -1538,7 +1922,7 @@ async def test_webhook_confirmed_booking_with_existing_outbox_no_duplicate(
     }
     headers = {"x-signature": signature, "x-request-id": request_id}
 
-    res = await client.post("/webhooks/mercadopago", json=payload, headers=headers)
+    res = await client.post(_webhook_url(payload), json=payload, headers=headers)
     assert res.status_code == 200
     assert res.text == "EVENT_PROCESSED"
 

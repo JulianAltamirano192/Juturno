@@ -1,4 +1,4 @@
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from typing import Annotated
 from zoneinfo import ZoneInfo
@@ -18,7 +18,8 @@ from app.booking_actions import (
 from app.config import settings
 from app.csrf import generate_csrf_token, set_csrf_cookie, validate_csrf
 from app.database import get_db
-from app.models import Booking, BusinessHours, Service, Staff, Tenant
+from app.models import Booking, BusinessHours, Payment, Service, Staff, Tenant
+from app.mp_connect import mp_authorization_redirect
 from app.services import effective_deposit
 from app.templates import templates
 
@@ -271,7 +272,7 @@ async def dashboard_page(
         {
             "key": "mp",
             "label": "Conectá Mercado Pago",
-            "href": None,
+            "href": "/panel/settings",
             "done": tenant.mp_access_token_enc is not None,
         },
     ]
@@ -295,6 +296,108 @@ async def dashboard_page(
     )
     set_csrf_cookie(response, csrf_token)
     return response
+
+
+# Panel: ajustes y conexión con Mercado Pago
+# ---------------------------------------------------------------------------
+
+_MP_FLASH = {
+    "connected": "Cuenta de Mercado Pago conectada.",
+    "disconnected": "Cuenta de Mercado Pago desconectada.",
+    "pending": (
+        "No podés desconectar Mercado Pago: tenés señas pendientes de pago. "
+        "Esperá a que se paguen o venzan."
+    ),
+    "error": "No se pudo conectar Mercado Pago. Probá de nuevo.",
+    "other_browser": (
+        "No se pudo conectar Mercado Pago: la autorización terminó en otro "
+        "navegador. Volvé a intentarlo y completala en el mismo navegador."
+    ),
+    "account_in_use": (
+        "Esa cuenta de Mercado Pago ya está vinculada a otro negocio. "
+        "Conectá una cuenta distinta."
+    ),
+}
+
+# Mensajes de error: se muestran con banner de error, no de éxito.
+_MP_FLASH_ERRORS = {"pending", "error", "other_browser", "account_in_use"}
+
+
+@router.get("/panel/settings", response_class=HTMLResponse)
+async def panel_settings(
+    request: Request,
+    mp: str | None = None,
+    tenant: Tenant = Depends(get_current_tenant_from_session),
+):
+    csrf_token = generate_csrf_token()
+    response = templates.TemplateResponse(
+        request,
+        "settings.html",
+        {
+            "tenant": tenant,
+            "csrf_token": csrf_token,
+            "mp_connected": tenant.mp_access_token_enc is not None,
+            # Solo mensajes fijos: nunca se refleja el query param.
+            "flash": _MP_FLASH.get(mp or ""),
+            "flash_error": mp in _MP_FLASH_ERRORS,
+        },
+    )
+    set_csrf_cookie(response, csrf_token)
+    return response
+
+
+@router.post("/panel/mp/connect/start")
+async def panel_mp_connect_start(
+    request: Request,
+    tenant: Tenant = Depends(get_current_tenant_from_session),
+):
+    await validate_csrf(request)
+    # El state queda atado a este navegador por cookie; la URL de vuelta la
+    # arma el callback en el servidor (sin open redirect a través del state).
+    return await mp_authorization_redirect(tenant.id)
+
+
+@router.post("/panel/mp/disconnect")
+async def panel_mp_disconnect(
+    request: Request,
+    tenant: Tenant = Depends(get_current_tenant_from_session),
+    session: AsyncSession = Depends(get_db),
+):
+    await validate_csrf(request)
+    # Con señas de MP pendientes y todavía pagables, desconectar dejaría el
+    # webhook sin token para verificar el pago: se bloquea.
+    pending_mp = (
+        select(Booking)
+        .join(Payment, Payment.booking_id == Booking.id)
+        .where(
+            Booking.tenant_id == tenant.id,
+            Booking.status == "pending",
+            Payment.mp_preference_id.is_not(None),
+        )
+        .limit(1)
+    )
+    if tenant.deposit_expiration_minutes is not None:
+        # Mismo deadline que process_deposit_expiration (created_at + minutos)
+        cutoff = datetime.now(timezone.utc) - timedelta(
+            minutes=tenant.deposit_expiration_minutes
+        )
+        pending_mp = pending_mp.where(Booking.created_at >= cutoff)
+    if (await session.execute(pending_mp)).first() is not None:
+        return RedirectResponse(
+            url="/panel/settings?mp=pending", status_code=status.HTTP_302_FOUND
+        )
+    # ponytail: solo borra los tokens locales; no revoca la autorización en MP.
+    tenant.mp_access_token_enc = None
+    tenant.mp_refresh_token_enc = None
+    tenant.mp_token_expires_at = None
+    tenant.mp_user_id = None
+    tenant.mp_public_key = None
+    tenant.mp_alias = None
+    session.add(tenant)
+    await session.commit()
+    return RedirectResponse(
+        url="/panel/settings?mp=disconnected", status_code=status.HTTP_302_FOUND
+    )
 
 
 # ---------------------------------------------------------------------------

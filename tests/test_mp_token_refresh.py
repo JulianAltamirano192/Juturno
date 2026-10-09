@@ -8,6 +8,7 @@ El job persiste ambos cifrados y recalcula mp_token_expires_at.
 
 from datetime import datetime, timedelta, timezone
 
+import httpx
 import pytest
 import redis.asyncio as redis_async
 from cryptography.fernet import Fernet
@@ -213,3 +214,59 @@ async def test_mp_rejection_is_logged_not_fatal(db_session, monkeypatch):
         )
     ).one()
     assert decrypt_token(row.mp_access_token_enc) == "APP_USR-access-RENOVADO"
+
+
+@pytest.mark.asyncio
+async def test_exception_in_one_tenant_does_not_stop_the_rest(
+    db_session, monkeypatch, caplog
+):
+    """An unexpected exception refreshing one tenant (network error, bad
+    response) is logged and the other tenants are still renewed."""
+    broken = await _tenant_with_mp(
+        db_session, "explota", expires_in_days=5, access_token="x"
+    )
+    fine = await _tenant_with_mp(
+        db_session, "sano", expires_in_days=5, access_token="viejo"
+    )
+
+    class ExplodingClient:
+        async def post(self, url, **kwargs):
+            if kwargs["json"]["refresh_token"] == "TG-refresh-explota":
+                raise httpx.ConnectError("connection refused")
+            return type(
+                "R",
+                (),
+                {
+                    "is_success": True,
+                    "json": lambda s: {
+                        "access_token": "APP_USR-access-RENOVADO",
+                        "refresh_token": "TG-refresh-OK",
+                        "expires_in": 15552000,
+                    },
+                },
+            )()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+    monkeypatch.setattr(
+        scheduler.refresh_tenant_mp_token.__globals__["httpx"],
+        "AsyncClient",
+        lambda **kwargs: ExplodingClient(),
+    )
+
+    await process_mp_token_refresh(TestingSessionLocal)
+
+    row = (
+        await db_session.execute(
+            text("SELECT mp_access_token_enc FROM tenant WHERE id = :tid").bindparams(
+                tid=fine.id
+            )
+        )
+    ).one()
+    assert decrypt_token(row.mp_access_token_enc) == "APP_USR-access-RENOVADO"
+    assert decrypt_token(broken.mp_access_token_enc) == "x"
+    assert f"tenant {broken.id}" in caplog.text

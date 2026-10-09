@@ -185,15 +185,17 @@ async def test_expired_to_confirmed_allowed():
 
 
 @pytest.mark.asyncio
-async def test_cancel_cancels_pending_outbox():
+@pytest.mark.parametrize("outbox_status", ["pending", "failed"])
+async def test_cancel_cancels_pending_outbox(outbox_status):
+    """Los 'failed' también: process_outbox los reintenta (D-022) y mandaría
+    la confirmación de un turno ya cancelado."""
     async with TestingSessionLocal() as session:
         _, _, booking = await _make_booking(session, status="confirmed")
 
-        # Crear un outbox pendiente
         outbox = NotificationOutbox(
             booking_id=booking.id,
             notification_type="confirmation",
-            status="pending",
+            status=outbox_status,
         )
         session.add(outbox)
         await session.commit()

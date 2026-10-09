@@ -9,7 +9,16 @@ from sqlalchemy import and_, select
 from app.booking_actions import transition_booking_status
 from app.config import settings
 from app.models import Booking, NotificationOutbox, Tenant
-from app.mp_connect import REFRESH_AHEAD_DAYS, refresh_tenant_mp_token
+from app.mp_connect import (
+    REFRESH_AHEAD_DAYS,
+    refresh_tenant_mp_token,
+    resolve_mp_access_token,
+)
+from app.mp_webhooks import (
+    apply_payment_details,
+    get_payment_details,
+    search_approved_payment_ids,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -91,19 +100,29 @@ async def process_reminders(async_session_maker):
             await redis_client.delete(lock_key)
 
 
+# Si MP no responde, una reserva vencida espera a lo sumo esto antes de vencerse
+# igual (token revocado, clave rota): el webhook reconfirma un 'expired' si el
+# horario sigue libre cuando el pago aparece.
+RECONCILE_GRACE = timedelta(hours=1)
+
+
 async def process_deposit_expiration(async_session_maker):
     """
     Job periódico que expira reservas 'pending' cuyo límite de pago de seña
     (deposit_expiration_minutes del tenant) venció. Al marcarlas 'expired'
     liberan el horario (el ExcludeConstraint solo bloquea pending/confirmed).
-    Mismo patrón de lock distribuido que los demás jobs.
+
+    Antes de expirar consulta a MP por si el pago se aprobó y el webhook
+    nunca llegó (D-023). Las llamadas a MP van antes de bloquear la fila, y
+    cada reserva se aplica en su propia transacción: un error en una no
+    frena al resto. Mismo patrón de lock distribuido que los demás jobs.
     """
     redis_client = _get_redis_client()
     lock_key = "deposit-expiration-job-lock"
     lock_value = uuid4().hex
 
-    # 1. Lock distribuido: SET NX con expiración de seguridad de 30 segundos
-    lock_acquired = await redis_client.set(lock_key, lock_value, nx=True, ex=30)
+    # 1. Lock distribuido: SET NX con TTL que cubre las llamadas a MP del lote
+    lock_acquired = await redis_client.set(lock_key, lock_value, nx=True, ex=300)
 
     if not lock_acquired:
         logger.debug(
@@ -114,42 +133,126 @@ async def process_deposit_expiration(async_session_maker):
     try:
         now = datetime.now(timezone.utc)
 
+        # 2. Pendientes de tenants con límite configurado que ya lo superaron
         async with async_session_maker() as session:
-            # 2. Pendientes de tenants con límite configurado
-            stmt = (
-                select(Booking, Tenant)
-                .join(Tenant, Booking.tenant_id == Tenant.id)
-                .where(
-                    and_(
-                        Booking.status == "pending",
-                        Tenant.deposit_expiration_minutes.is_not(None),
+            rows = (
+                await session.execute(
+                    select(
+                        Booking.id,
+                        Booking.created_at,
+                        Tenant.deposit_expiration_minutes,
+                    )
+                    .join(Tenant, Booking.tenant_id == Tenant.id)
+                    .where(
+                        and_(
+                            Booking.status == "pending",
+                            Tenant.deposit_expiration_minutes.is_not(None),
+                        )
                     )
                 )
-                .with_for_update(skip_locked=True, of=Booking)
-            )
-            result = await session.execute(stmt)
-            rows = result.all()
+            ).all()
+        overdue = [
+            (booking_id, created_at + timedelta(minutes=minutes))
+            for booking_id, created_at, minutes in rows
+            if now > created_at + timedelta(minutes=minutes)
+        ]
 
-            # 3. Vencer solo los que superaron su deadline
-            expired_count = 0
-            for booking, tenant in rows:
-                deadline = booking.created_at + timedelta(
-                    minutes=tenant.deposit_expiration_minutes
+        # 3. Por reserva: consultar MP, después bloquear y confirmar o vencer
+        expired_count = 0
+        for booking_id, deadline in overdue:
+            try:
+                approved, mp_answered = await _approved_payments_in_mp(
+                    async_session_maker, booking_id
                 )
-                if now > deadline:
+                async with async_session_maker() as session, session.begin():
+                    booking = (
+                        await session.execute(
+                            select(Booking)
+                            .where(
+                                Booking.id == booking_id, Booking.status == "pending"
+                            )
+                            .with_for_update(skip_locked=True)
+                        )
+                    ).scalar_one_or_none()
+                    if booking is None:  # ya cambió de estado u otro worker la tiene
+                        continue
+
+                    for payment_id, details in approved:
+                        outcome, _ = await apply_payment_details(
+                            session, payment_id, details
+                        )
+                        if booking.status == "confirmed":
+                            logger.info(
+                                "Booking %s confirmado por reconciliación (pago %s)",
+                                booking_id,
+                                payment_id,
+                            )
+                            break
+                        logger.warning(
+                            "Pago %s de booking %s no aplicado: %s",
+                            payment_id,
+                            booking_id,
+                            outcome,
+                        )
+                    if booking.status != "pending":
+                        continue
+                    if not mp_answered and now <= deadline + RECONCILE_GRACE:
+                        continue  # se reintenta en la próxima corrida
+
                     await transition_booking_status(
                         session, booking, "expired", actor="system"
                     )
                     expired_count += 1
-
-            if expired_count:
-                await session.commit()
-                logger.info(
-                    f"Se expiraron {expired_count} reservas por seña no pagada."
+            except Exception:
+                logger.exception(
+                    "No se pudo expirar/reconciliar booking %s", booking_id
                 )
+
+        if expired_count:
+            logger.info(f"Se expiraron {expired_count} reservas por seña no pagada.")
     finally:
         if await redis_client.get(lock_key) == lock_value:
             await redis_client.delete(lock_key)
+
+
+async def _approved_payments_in_mp(
+    async_session_maker, booking_id: int
+) -> tuple[list[tuple[str, dict]], bool]:
+    """
+    Pagos aprobados en MP de la reserva, buscados en la cuenta del tenant y
+    vueltos a pedir por id (misma fuente autenticada que el webhook).
+
+    Devuelve (pagos, mp_respondió). Sin token (tenant sin MP en producción)
+    no hay a quién preguntar: ([], True). Si MP o el token fallan: ([], False).
+    """
+    async with async_session_maker() as session:
+        booking = await session.get(Booking, booking_id)
+        tenant = await session.get(Tenant, booking.tenant_id) if booking else None
+    if tenant is None:
+        return [], True
+
+    reference = f"booking-{booking_id}"
+    try:
+        token = resolve_mp_access_token(tenant)
+        if not token:
+            return [], True
+        approved = []
+        for payment_id in await search_approved_payment_ids(reference, token):
+            details = await get_payment_details(payment_id, access_token=token)
+            if details is None or details.get("external_reference") != reference:
+                logger.warning(
+                    "Pago %s de la búsqueda de %s no encontrado o de otra reserva",
+                    payment_id,
+                    reference,
+                )
+                continue
+            approved.append((payment_id, details))
+    except Exception:
+        logger.warning(
+            "No se pudo consultar MP para booking %s", booking_id, exc_info=True
+        )
+        return [], False
+    return approved, True
 
 
 async def process_mp_token_refresh(async_session_maker):
@@ -198,7 +301,15 @@ async def process_mp_token_refresh(async_session_maker):
                 tenant = await session.get(Tenant, tenant_id)
                 if tenant is None:
                     continue
-                ok = await refresh_tenant_mp_token(session, tenant)
+                try:
+                    ok = await refresh_tenant_mp_token(session, tenant)
+                except Exception:
+                    # Un tenant roto no debe cortar la renovación del resto.
+                    logger.exception(
+                        "Error inesperado renovando token MP del tenant %s",
+                        tenant_id,
+                    )
+                    ok = False
                 if ok:
                     refreshed += 1
                 else:
