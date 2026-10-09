@@ -250,7 +250,7 @@ Es la única forma de editar el tenant por API key; el alta/edición de datos de
 
 **Verificación Meta (handshake):**
 - Query: `hub.mode=subscribe`, `hub.verify_token`, `hub.challenge`
-- Si `hub.mode == subscribe` y `hub.verify_token == META_VERIFY_TOKEN` → 200 PlainText `hub.challenge`
+- Si `hub.mode == subscribe` y `hub.verify_token` coincide con `META_VERIFY_TOKEN` (comparación en tiempo constante, `hmac.compare_digest`) → 200 PlainText `hub.challenge`
 - Si vienen `hub.mode` y `hub.verify_token` pero no coinciden → 403 "Forbidden: Token mismatch"
 - Si falta `hub.mode` o `hub.verify_token` → 400 "Bad Request"
 
