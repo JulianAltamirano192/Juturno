@@ -1,5 +1,5 @@
 from datetime import date, datetime, time, timedelta, timezone
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Annotated
 from zoneinfo import ZoneInfo
 
@@ -37,6 +37,21 @@ _AGENDA_STATUS_LABELS = {
 _AGENDA_ACTION_REDIRECT = "/panel/agenda"
 
 
+# Máximo de Numeric(10,2); un valor mayor hace fallar el INSERT con 500.
+_MAX_AMOUNT = Decimal("99999999.99")
+
+
+def _parse_amount(raw: str) -> Decimal:
+    """Monto del form redondeado como lo guarda Numeric(10,2).
+
+    Lanza ValueError/InvalidOperation si no es un número finito.
+    """
+    amount = Decimal(raw.replace(",", "."))
+    if not amount.is_finite():
+        raise ValueError
+    return amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
 def _parse_service_form(form: dict) -> tuple[dict, dict]:
     """Parsea y valida los campos del formulario de servicio.
 
@@ -60,26 +75,32 @@ def _parse_service_form(form: dict) -> tuple[dict, dict]:
         errors["duration_minutes"] = "La duración debe ser un número entero mayor a 0."
 
     try:
-        price = Decimal(form.get("price", "").replace(",", "."))
-        if price < Decimal("0.01"):
+        price = _parse_amount(form.get("price", ""))
+        if not Decimal("0.01") <= price <= _MAX_AMOUNT:
             raise ValueError
         data["price"] = price
     except Exception:
-        errors["price"] = "El precio debe ser un número mayor a 0 (ej: 5000.00)."
+        errors["price"] = (
+            "El precio debe ser un número entre 0.01 y 99999999.99 (ej: 5000.00)."
+        )
 
     deposit_raw = form.get("deposit_amount", "").strip()
     if deposit_raw == "":
         data["deposit_amount"] = None
     else:
         try:
-            deposit = Decimal(deposit_raw.replace(",", "."))
-            if deposit < Decimal(0):
+            deposit = _parse_amount(deposit_raw)
+            if not Decimal(0) <= deposit <= _MAX_AMOUNT:
                 raise ValueError
-            data["deposit_amount"] = deposit
         except Exception:
             errors["deposit_amount"] = (
-                "La seña debe ser un número mayor o igual a 0 (ej: 1500.00)."
+                "La seña debe ser un número entre 0 y 99999999.99 (ej: 1500.00)."
             )
+        else:
+            if "price" in data and deposit > data["price"]:
+                errors["deposit_amount"] = "La seña no puede ser mayor que el precio."
+            else:
+                data["deposit_amount"] = deposit
 
     return data, errors
 

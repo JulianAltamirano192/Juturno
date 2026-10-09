@@ -4,11 +4,13 @@ from decimal import Decimal
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.csrf import generate_csrf_token
 from app.main import app
 from app.models import Service, Tenant
+from app.routers.panel import _parse_service_form
 from app.session import create_session_token
 from tests.conftest import TestingSessionLocal
 
@@ -337,3 +339,105 @@ async def test_service_deposit_amount_negative_rejected(db_session):
     db_session.add(service)
     with pytest.raises(IntegrityError):
         await db_session.flush()
+
+
+def _service_form(price: str, deposit: str = "") -> dict:
+    return {
+        "name": "Corte",
+        "duration_minutes": "30",
+        "price": price,
+        "deposit_amount": deposit,
+    }
+
+
+@pytest.mark.parametrize(
+    "price",
+    [
+        "Infinity",
+        "-Infinity",
+        "NaN",
+        "sNaN",
+        "1e10",
+        "1e999999",
+        "100000000",
+        "99999999.995",
+        "abc",
+    ],
+)
+def test_parse_service_form_rejects_invalid_price(price):
+    """Non-finite or out of Numeric(10,2) range prices used to reach the DB
+    and fail with a 500."""
+    data, errors = _parse_service_form(_service_form(price))
+    assert "price" in errors
+    assert "price" not in data
+
+
+@pytest.mark.parametrize(
+    ("price", "deposit"),
+    [
+        ("1000", "Infinity"),
+        ("1000", "NaN"),
+        ("1000", "1000.01"),
+        ("1000", "999999"),
+        # Compared as stored in Numeric(10,2): 1000.00 vs 1000.01.
+        ("1000.004", "1000.005"),
+    ],
+)
+def test_parse_service_form_rejects_invalid_deposit(price, deposit):
+    """The deposit must be finite and never greater than the price."""
+    data, errors = _parse_service_form(_service_form(price, deposit))
+    assert "deposit_amount" in errors
+    assert "deposit_amount" not in data
+
+
+@pytest.mark.parametrize(
+    ("price", "deposit", "expected_deposit"),
+    [
+        ("99999999.99", "", None),
+        ("1000", "1000", Decimal(1000)),
+        ("1000", "0", Decimal(0)),
+        ("1000,50", "500,25", Decimal("500.25")),
+        # A huge negative exponent used to reach asyncpg unrounded.
+        ("1000", "1e-999999999", Decimal("0.00")),
+    ],
+)
+def test_parse_service_form_accepts_valid_amounts(price, deposit, expected_deposit):
+    data, errors = _parse_service_form(_service_form(price, deposit))
+    assert errors == {}
+    assert data["deposit_amount"] == expected_deposit
+
+
+@pytest.mark.asyncio
+async def test_create_service_deposit_greater_than_price_shows_error():
+    async with TestingSessionLocal() as session:
+        tenant = Tenant(
+            name="Biz Deposit",
+            slug="biz-deposit-gt-price",
+            owner_email="deposit-gt@test.com",
+            password_hash="x",
+            session_version=1,
+        )
+        session.add(tenant)
+        await session.commit()
+        await session.refresh(tenant)
+
+    cookie = make_session_cookie(tenant)
+    csrf = generate_csrf_token()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        client.cookies.set("juturno_session", cookie)
+        client.cookies.set("csrf_token", csrf)
+        resp = await client.post(
+            "/panel/services/new",
+            data={**_service_form("1000", "999999"), "csrf_token": csrf},
+        )
+    assert resp.status_code == 200
+    assert "La seña no puede ser mayor que el precio" in resp.text
+
+    async with TestingSessionLocal() as session:
+        services = await session.execute(
+            select(Service).where(Service.tenant_id == tenant.id)
+        )
+        assert services.scalars().all() == []
