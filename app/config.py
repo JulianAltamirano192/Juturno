@@ -53,6 +53,7 @@ class Settings(BaseSettings):
                 name
                 for name, val in [
                     ("META_APP_SECRET", self.META_APP_SECRET),
+                    ("META_VERIFY_TOKEN", self.META_VERIFY_TOKEN),
                     ("MP_TOKEN_ENCRYPTION_KEY", self.MP_TOKEN_ENCRYPTION_KEY),
                     ("MP_SECRET_KEY", self.MP_SECRET_KEY),
                     ("WHATSAPP_TOKEN", self.WHATSAPP_TOKEN),

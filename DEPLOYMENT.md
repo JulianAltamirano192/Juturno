@@ -71,7 +71,7 @@ sh -c "python -m alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.
 | `ENVIRONMENT` | `production` (el compose prod lo fija) | n/a |
 | `PUBLIC_BASE_URL` | `https://juturno.com` | No |
 | `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID` | Meta Developer Console (System User) | Validada |
-| `META_VERIFY_TOKEN` | Meta Webhook config | No |
+| `META_VERIFY_TOKEN` | Meta Webhook config | Validada (vacía = el handshake de Meta falla siempre) |
 | `META_APP_SECRET` | Meta Webhook config | Validada |
 | `MP_ACCESS_TOKEN` | Access token plataforma (solo fallback sandbox) | No |
 | `MP_SECRET_KEY` | MP Developers > Webhooks > Secret | Validada |

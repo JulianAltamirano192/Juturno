@@ -64,7 +64,7 @@ Si un doc contradice el código, manda el código: avisá y proponé corregir el
 ## Estado conocido (auditoría 2026-10-04) — mencionalo si tu tarea lo toca; no lo "arregles de pasada"
 
 - ~~D-017: slots duplicados~~ — **Resuelto**: lógica extraída a `compute_available_slots` en `app/services.py`; ambos endpoints la usan.
-- ~~D-018: env vars críticas sin validador en startup~~ — **Resuelto**: `model_post_init` valida `META_APP_SECRET`, `MP_TOKEN_ENCRYPTION_KEY`, `MP_SECRET_KEY`, `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID` en producción.
+- ~~D-018: env vars críticas sin validador en startup~~ — **Resuelto**: `model_post_init` valida `META_APP_SECRET`, `MP_TOKEN_ENCRYPTION_KEY`, `MP_SECRET_KEY`, `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `META_VERIFY_TOKEN` en producción.
 - ~~`PublicServiceRead.price/deposit_amount: float`~~ — **Resuelto**: ahora `Decimal` con `field_serializer` que serializa como número.
 - Alta autoservicio incompleta: conectar/desconectar MP ya se puede desde el panel con la cookie
   (`/panel/settings`, `POST /panel/mp/connect/start`, `POST /panel/mp/disconnect`), pero
