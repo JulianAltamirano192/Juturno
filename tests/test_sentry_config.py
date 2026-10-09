@@ -95,3 +95,35 @@ async def test_sentry_request_events_do_not_include_secrets_or_pii():
     assert api_key not in dump
     assert phone not in dump
     assert code not in dump
+
+
+def test_sentry_drops_uvicorn_access_log_breadcrumbs():
+    """uvicorn's access log line carries the full query string (OAuth code,
+    verify token) and would ride along as a breadcrumb on the next error."""
+    events = []
+
+    class CaptureTransport(Transport):
+        def capture_envelope(self, envelope):
+            for item in envelope.items:
+                if item.type == "event":
+                    events.append(item.payload.json)
+
+    code = uuid4().hex
+    sentry_sdk.init(
+        **sentry_options("https://key@o0.ingest.sentry.io/0"),
+        transport=CaptureTransport,
+    )
+    try:
+        logging.getLogger("uvicorn.access").info(
+            '127.0.0.1 - "GET /mp/connect/callback?code=%s HTTP/1.1" 302', code
+        )
+        logging.getLogger("test").info("kept breadcrumb")
+        logging.getLogger("test").error("boom")
+        sentry_sdk.flush()
+    finally:
+        sentry_sdk.init(dsn="")  # disable Sentry; "" avoids reading SENTRY_DSN
+
+    assert len(events) == 1
+    dump = json.dumps(events)
+    assert "kept breadcrumb" in dump
+    assert code not in dump

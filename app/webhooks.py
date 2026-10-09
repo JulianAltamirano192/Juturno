@@ -93,6 +93,7 @@ async def receive_whatsapp_event(request: Request):
         return Response(content="EVENT_RECEIVED", status_code=200)
 
     except Exception as e:
-        logger.error(f"Error procesando webhook de Meta: {e}")
+        # Solo el tipo: el mensaje de la excepción puede traer datos del payload.
+        logger.error("Error procesando webhook de Meta: %s", type(e).__name__)
         # Incluso si falla el parsing, devolvemos 200 para que Meta no reintente infinitamente un payload que no entendemos.
         return Response(content="ERROR_PARSING_BUT_RECEIVED", status_code=200)

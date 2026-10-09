@@ -416,7 +416,7 @@ app/
 - Cookie firmada (`juturno_session`) → `routers/panel.py` o `routers/auth.py`
 - Header `X-Tenant-API-Key` → `routers/api.py`
 
-Los routers de `mp_connect.py`, `mp_webhooks.py` y `webhooks.py` viven junto a su integración. La suite tiene 353 tests en 33 archivos (`tests/`), que corren con `./scripts/test.sh`.
+Los routers de `mp_connect.py`, `mp_webhooks.py` y `webhooks.py` viven junto a su integración. La suite tiene 356 tests en 34 archivos (`tests/`), que corren con `./scripts/test.sh`.
 
 ---
 

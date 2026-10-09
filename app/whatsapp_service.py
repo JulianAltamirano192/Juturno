@@ -65,16 +65,21 @@ class WhatsAppService:
                 if response.status_code == 429 or response.status_code >= 500:
                     response.raise_for_status()
 
-                # 4xx que no es rate limit: loggear el body completo antes de retornar
+                # 4xx que no es rate limit: solo los identificadores del error;
+                # el body completo puede repetir el teléfono del cliente.
                 if 400 <= response.status_code < 500:
                     try:
-                        error_body = response.json()
+                        error = response.json().get("error", {})
                     except Exception:
-                        error_body = response.text
+                        error = {}
                     logger.error(
-                        "Meta API rechazó la request (status=%s): %s",
+                        "Meta API rechazó la request (status=%s, code=%s, "
+                        "subcode=%s, type=%s, fbtrace_id=%s)",
                         response.status_code,
-                        error_body,
+                        error.get("code"),
+                        error.get("error_subcode"),
+                        error.get("type"),
+                        error.get("fbtrace_id"),
                     )
 
                 return response
