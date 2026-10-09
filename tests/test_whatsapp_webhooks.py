@@ -56,8 +56,10 @@ async def test_whatsapp_webhook_handshake_non_ascii_token_returns_403(
 
 
 @pytest.mark.asyncio
-async def test_whatsapp_webhook_valid_signature(client, monkeypatch):
-    """Test: Webhook POST con firma HMAC válida retorna 200."""
+async def test_whatsapp_webhook_valid_signature(client, monkeypatch, caplog):
+    """Test: Webhook POST con firma HMAC válida retorna 200, sin loguear el
+    teléfono ni el texto del cliente (llegarían a Sentry como breadcrumb)."""
+    caplog.set_level("INFO", logger="app.webhooks")
     secret = "meta-app-secret-key"
     monkeypatch.setattr(webhooks.settings, "META_APP_SECRET", secret)
 
@@ -92,6 +94,9 @@ async def test_whatsapp_webhook_valid_signature(client, monkeypatch):
     res = await client.post("/webhooks/whatsapp", content=raw_body, headers=headers)
     assert res.status_code == 200
     assert res.text == "EVENT_RECEIVED"
+    assert "wamid.1" in caplog.text
+    assert "5491112345678" not in caplog.text
+    assert "Hola" not in caplog.text
 
 
 @pytest.mark.asyncio
