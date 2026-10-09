@@ -74,7 +74,7 @@
 | GET | `/dashboard` | Vista principal: resumen del día, próximos turnos, checklist de configuración y link público de reserva (oculto si el tenant no tiene slug). Todo filtrado por `tenant_id` | Cookie |
 | GET | `/panel/services` | Listar servicios (activos/inactivos) con seña efectiva | Cookie |
 | GET | `/panel/services/new` | Formulario nuevo servicio | Cookie |
-| POST | `/panel/services/new` | Crear servicio. Form: `name` (obligatorio), `duration_minutes` (entero ≥ 1), `price` (`Decimal` ≥ 0.01), `deposit_amount?` (`Decimal` ≥ 0; vacío = 30% del precio). Error de validación: 200 con form re-renderizado. Éxito: 303 `/panel/services` | Cookie + CSRF |
+| POST | `/panel/services/new` | Crear servicio. Form: `name` (obligatorio), `duration_minutes` (entero ≥ 1), `price` (`Decimal` entre 0.01 y 99999999.99), `deposit_amount?` (`Decimal` entre 0 y el precio; vacío = 30% del precio). Ambos se redondean a 2 decimales antes de validar; `Infinity`/`NaN` se rechazan. Error de validación: 200 con form re-renderizado. Éxito: 303 `/panel/services` | Cookie + CSRF |
 | GET | `/panel/services/{service_id}/edit` | Formulario editar servicio (404 "Servicio no encontrado" si no es del tenant) | Cookie |
 | POST | `/panel/services/{service_id}/edit` | Actualizar servicio (mismas validaciones; 404 si no es del tenant, se chequea antes que el CSRF) | Cookie + CSRF |
 | POST | `/panel/services/{service_id}/toggle` | Activar/desactivar servicio (404 si no es del tenant) | Cookie + CSRF |
