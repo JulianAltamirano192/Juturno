@@ -9,6 +9,7 @@ _PROD_BASE = {
     "SECRET_KEY": "a-valid-secret-key-that-is-not-default",
     "MP_SANDBOX": False,
     "META_APP_SECRET": "meta-secret",
+    "META_VERIFY_TOKEN": "meta-verify-token",
     "MP_TOKEN_ENCRYPTION_KEY": "enc-key",
     "MP_SECRET_KEY": "mp-secret",
     "WHATSAPP_TOKEN": "wa-token",
@@ -25,6 +26,8 @@ def test_valid_production_settings():
     "missing_var",
     [
         "META_APP_SECRET",
+        # Empty: the Meta handshake fails silently and webhooks never subscribe.
+        "META_VERIFY_TOKEN",
         "MP_TOKEN_ENCRYPTION_KEY",
         "MP_SECRET_KEY",
         "WHATSAPP_TOKEN",
