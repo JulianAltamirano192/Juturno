@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.httpx import HttpxIntegration
 from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
+from sentry_sdk.scrubber import DEFAULT_DENYLIST, EventScrubber
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
@@ -35,20 +36,44 @@ from app.scheduler import (
 from app.session import delete_session_cookie, sanitize_next_url
 from app.webhooks import router as whatsapp_router
 
+
 # --- SENTRY (inicializar antes de crear la app) ---
-if settings.SENTRY_DSN:
-    sentry_sdk.init(
-        dsn=settings.SENTRY_DSN,
-        environment=settings.ENVIRONMENT,
-        integrations=[
+def _strip_query_string(event, hint):
+    # El query string puede traer el code OAuth de MP o el verify token de Meta.
+    event.get("request", {}).pop("query_string", None)
+    return event
+
+
+def sentry_options(dsn: str) -> dict:
+    return {
+        "dsn": dsn,
+        "environment": settings.ENVIRONMENT,
+        "integrations": [
             FastApiIntegration(transaction_style="endpoint"),
             SqlalchemyIntegration(),
             HttpxIntegration(),
         ],
-        traces_sample_rate=0.1,
-        profiles_sample_rate=0.1,
-        send_default_pii=False,
-    )
+        "traces_sample_rate": 0.1,
+        "profiles_sample_rate": 0.1,
+        "send_default_pii": False,
+        # Los frames del refresh MP tienen client_secret y tokens en claro;
+        # el scrubber de Sentry no es recursivo, así que no mandamos locals.
+        "include_local_variables": False,
+        # send_default_pii=False no filtra X-Tenant-API-Key; recursive cubre
+        # claves anidadas.
+        "event_scrubber": EventScrubber(
+            denylist=[*DEFAULT_DENYLIST, "x-tenant-api-key"], recursive=True
+        ),
+        # Los bodies traen teléfonos y nombres de clientes (reservas, webhooks).
+        "max_request_body_size": "never",
+        "before_send": _strip_query_string,
+        # before_send no corre sobre transacciones, que también llevan request.
+        "before_send_transaction": _strip_query_string,
+    }
+
+
+if settings.SENTRY_DSN:
+    sentry_sdk.init(**sentry_options(settings.SENTRY_DSN))
 
 
 logging.basicConfig(

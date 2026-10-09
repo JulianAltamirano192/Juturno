@@ -78,11 +78,9 @@ async def receive_whatsapp_event(request: Request):
                 # A) Escenario: El usuario nos envió un mensaje de respuesta
                 if "messages" in value:
                     for msg in value["messages"]:
-                        # Ruta de acceso exacta según el diseño
-                        wa_id = msg.get("from")
-                        msg_text = msg.get("text", {}).get("body", "")
-                        msg_id = msg.get("id")
-                        logger.info(f"Nuevo mensaje de {wa_id} ({msg_id}): {msg_text}")
+                        # Sin teléfono ni texto: es PII y llegaría a Sentry
+                        # como breadcrumb del siguiente error.
+                        logger.info("Nuevo mensaje entrante (%s)", msg.get("id"))
 
                 # B) Escenario: Meta nos avisa del cambio de estado (sent, delivered, read)
                 elif "statuses" in value:
