@@ -114,7 +114,7 @@ Verificados a mano: 1, 6, 10 y 12. El resto viene del review y hay que confirmar
 7. ~~`process_mp_token_refresh` sin try/except por tenant: una excepción corta el refresh del resto.~~ — **Resuelto** (rama `fix/mp-token-refresh-per-tenant`).
 8. Guard de desconexión MP del panel: con `deposit_expiration_minutes` null un pending abandonado
    bloquea la desconexión para siempre; con deadline vencido pero no expirado aún, la permite.
-9. CSRF: cada GET del panel rota la cookie `csrf_token`; formularios de otras pestañas dan 403.
+9. ~~CSRF: cada GET del panel rota la cookie `csrf_token`; formularios de otras pestañas dan 403.~~ — **Resuelto** (rama `fix/csrf-reuse-token`): se reusa el token y la cookie dura como la sesión (antes 2 h: un panel abierto daba 403 JSON hasta en `/logout`).
 10. ~~`app/webhooks.py`: el verify token de Meta se compara con `==`, no con `hmac.compare_digest`.~~ — **Resuelto** (rama `fix/meta-verify-token-compare`).
 11. Menores: reembolso/contracargo no cambia el booking; booking inexistente en webhook se marca
     procesado; `create_mp_preference` usa `float` (`Payment.amount` ya es `Decimal`); ~~el form de servicios

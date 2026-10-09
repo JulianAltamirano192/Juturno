@@ -2,8 +2,8 @@
 Protección CSRF basada en el patrón Double-Submit Cookie.
 
 Diseño:
-- En peticiones GET que renderizan formularios, se genera un token pseudoaleatorio
-  criptográficamente seguro (secrets.token_hex(32)).
+- En peticiones GET que renderizan formularios, se reusa el token de la cookie o se
+  genera uno criptográficamente seguro (secrets.token_hex(32)).
 - Se envía el token en una cookie 'csrf_token' (no HttpOnly para que pueda leerse si se necesita,
   SameSite=Lax, Path=/) y también se inyecta en el campo oculto del formulario HTML.
 - Al recibir el POST, se compara el token del formulario contra la cookie mediante
@@ -11,17 +11,30 @@ Diseño:
 """
 
 import hmac
+import re
 import secrets
 
-from fastapi import Response
+from fastapi import Request, Response
 
 from app.config import settings
+from app.session import SESSION_MAX_AGE_SECONDS
 
 CSRF_COOKIE_NAME = "csrf_token"
 
 
-def generate_csrf_token() -> str:
-    """Genera un token CSRF criptográficamente seguro."""
+_TOKEN_FORMAT = re.compile(r"[0-9a-f]{64}")
+
+
+def generate_csrf_token(request: Request | None = None) -> str:
+    """Devuelve el token CSRF de la cookie del request, o uno nuevo.
+
+    Reusar el token evita que abrir otra página del panel invalide los
+    formularios ya abiertos en otras pestañas (cada GET rotaba la cookie).
+    Un valor que no tiene el formato de nuestros tokens se reemplaza.
+    """
+    existing = request.cookies.get(CSRF_COOKIE_NAME) if request else None
+    if existing and _TOKEN_FORMAT.fullmatch(existing):
+        return existing
     return secrets.token_hex(32)
 
 
@@ -35,7 +48,9 @@ def set_csrf_cookie(response: Response, token: str) -> None:
         samesite="lax",
         secure=is_prod,
         path="/",
-        max_age=7200,  # 2 horas
+        # Igual que la sesión: si vence antes, el panel abierto da 403 en
+        # cualquier POST (incluido /logout).
+        max_age=SESSION_MAX_AGE_SECONDS,
     )
 
 

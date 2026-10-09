@@ -22,7 +22,7 @@
 - **Dependencia**: `get_current_tenant_from_session` → lanza `RedirectToLoginException` (303 → `/login?next=...`, borra la cookie) si falta, es inválida, venció, el tenant no existe o la `session_version` no coincide.
 
 ### 1.3 CSRF (formularios panel)
-- **Cookie**: `csrf_token` (no HttpOnly, SameSite=Lax, Secure en prod, 2h). La emite cada GET que renderiza un formulario.
+- **Cookie**: `csrf_token` (no HttpOnly, SameSite=Lax, Secure en prod, 14 días como la sesión). La emite cada GET que renderiza un formulario, reusando el token existente.
 - **Campo formulario**: `<input type="hidden" name="csrf_token" value="...">`
 - **Dos flujos de validación** (ambos double-submit con `hmac.compare_digest`):
   - **`POST /register` y `POST /login`**: `validate_csrf_double_submit` → si falla, **400** con formulario re-renderizado (nuevo token) y mensaje de error.

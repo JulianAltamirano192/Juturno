@@ -299,7 +299,7 @@ async def dashboard_page(
     ]
 
     public_base = settings.PUBLIC_BASE_URL.rstrip("/")
-    csrf_token = generate_csrf_token()
+    csrf_token = generate_csrf_token(request)
     response = templates.TemplateResponse(
         request,
         "dashboard.html",
@@ -350,7 +350,7 @@ async def panel_settings(
     mp: str | None = None,
     tenant: Tenant = Depends(get_current_tenant_from_session),
 ):
-    csrf_token = generate_csrf_token()
+    csrf_token = generate_csrf_token(request)
     response = templates.TemplateResponse(
         request,
         "settings.html",
@@ -432,7 +432,7 @@ async def panel_services_list(
     tenant: Tenant = Depends(get_current_tenant_from_session),
     session: AsyncSession = Depends(get_db),
 ):
-    csrf_token = generate_csrf_token()
+    csrf_token = generate_csrf_token(request)
     stmt = select(Service).where(Service.tenant_id == tenant.id).order_by(Service.id)
     services = (await session.execute(stmt)).scalars().all()
     services_with_deposit = [
@@ -456,7 +456,7 @@ async def panel_services_new_form(
     request: Request,
     tenant: Tenant = Depends(get_current_tenant_from_session),
 ):
-    csrf_token = generate_csrf_token()
+    csrf_token = generate_csrf_token(request)
     response = templates.TemplateResponse(
         request,
         "service_form.html",
@@ -483,7 +483,7 @@ async def panel_services_new_submit(
     form = dict(await request.form())
     data, errors = _parse_service_form(form)
 
-    csrf_token = generate_csrf_token()
+    csrf_token = generate_csrf_token(request)
 
     if errors:
         deposit_preview = None
@@ -530,7 +530,7 @@ async def panel_services_edit_form(
     if not service or service.tenant_id != tenant.id:
         raise HTTPException(status_code=404, detail="Servicio no encontrado")
 
-    csrf_token = generate_csrf_token()
+    csrf_token = generate_csrf_token(request)
     deposit_preview = effective_deposit(service.price, None)
     form = {
         "name": service.name,
@@ -571,7 +571,7 @@ async def panel_services_edit_submit(
     form = dict(await request.form())
     data, errors = _parse_service_form(form)
 
-    csrf_token = generate_csrf_token()
+    csrf_token = generate_csrf_token(request)
 
     if errors:
         deposit_preview = effective_deposit(data.get("price", service.price), None)
@@ -632,7 +632,7 @@ async def panel_staff_list(
     tenant: Tenant = Depends(get_current_tenant_from_session),
     session: AsyncSession = Depends(get_db),
 ):
-    csrf_token = generate_csrf_token()
+    csrf_token = generate_csrf_token(request)
     stmt = select(Staff).where(Staff.tenant_id == tenant.id).order_by(Staff.id)
     staff_members = (await session.execute(stmt)).scalars().all()
     response = templates.TemplateResponse(
@@ -653,7 +653,7 @@ async def panel_staff_new_form(
     request: Request,
     tenant: Tenant = Depends(get_current_tenant_from_session),
 ):
-    csrf_token = generate_csrf_token()
+    csrf_token = generate_csrf_token(request)
     response = templates.TemplateResponse(
         request,
         "staff_form.html",
@@ -686,7 +686,7 @@ async def panel_staff_new_submit(
     else:
         data["name"] = name
 
-    csrf_token = generate_csrf_token()
+    csrf_token = generate_csrf_token(request)
 
     if errors:
         response = templates.TemplateResponse(
@@ -724,7 +724,7 @@ async def panel_staff_edit_form(
     if not staff or staff.tenant_id != tenant.id:
         raise HTTPException(status_code=404, detail="Miembro no encontrado")
 
-    csrf_token = generate_csrf_token()
+    csrf_token = generate_csrf_token(request)
     form = {"name": staff.name}
     response = templates.TemplateResponse(
         request,
@@ -763,7 +763,7 @@ async def panel_staff_edit_submit(
     else:
         data["name"] = name
 
-    csrf_token = generate_csrf_token()
+    csrf_token = generate_csrf_token(request)
 
     if errors:
         response = templates.TemplateResponse(
@@ -815,7 +815,7 @@ async def panel_business_hours_list(
     tenant: Tenant = Depends(get_current_tenant_from_session),
     session: AsyncSession = Depends(get_db),
 ):
-    csrf_token = generate_csrf_token()
+    csrf_token = generate_csrf_token(request)
     stmt = (
         select(BusinessHours)
         .where(
@@ -857,7 +857,7 @@ async def panel_business_hours_new_form(
     request: Request,
     tenant: Tenant = Depends(get_current_tenant_from_session),
 ):
-    csrf_token = generate_csrf_token()
+    csrf_token = generate_csrf_token(request)
     response = templates.TemplateResponse(
         request,
         "business_hours_form.html",
@@ -905,7 +905,7 @@ async def panel_business_hours_new_submit(
                     )
                     break
 
-    csrf_token = generate_csrf_token()
+    csrf_token = generate_csrf_token(request)
 
     if errors:
         response = templates.TemplateResponse(
@@ -967,7 +967,7 @@ async def panel_business_hours_edit_form(
     if not bh or bh.tenant_id != tenant.id or bh.staff_id is not None:
         raise HTTPException(status_code=404, detail="Horario no encontrado")
 
-    csrf_token = generate_csrf_token()
+    csrf_token = generate_csrf_token(request)
     form = {
         "day_of_week": str(bh.day_of_week),
         "start_time": bh.start_time.strftime("%H:%M"),
@@ -1025,7 +1025,7 @@ async def panel_business_hours_edit_submit(
                 )
                 break
 
-    csrf_token = generate_csrf_token()
+    csrf_token = generate_csrf_token(request)
 
     if errors:
         response = templates.TemplateResponse(
@@ -1134,7 +1134,7 @@ async def panel_agenda(
         for b, s in rows
     ]
 
-    csrf_token = generate_csrf_token()
+    csrf_token = generate_csrf_token(request)
     response = templates.TemplateResponse(
         request,
         "agenda.html",
