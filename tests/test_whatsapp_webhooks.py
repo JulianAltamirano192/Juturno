@@ -21,6 +21,41 @@ async def test_whatsapp_webhook_handshake(client, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_whatsapp_webhook_handshake_uses_constant_time_compare(
+    client, monkeypatch
+):
+    """The verify token must be compared with hmac.compare_digest, not ==."""
+    monkeypatch.setattr(webhooks.settings, "META_VERIFY_TOKEN", "expected-token")
+    calls = []
+    real_compare = hmac.compare_digest
+
+    def spy(a, b):
+        calls.append((a, b))
+        return real_compare(a, b)
+
+    monkeypatch.setattr(webhooks.hmac, "compare_digest", spy)
+
+    res = await client.get(
+        "/webhooks/whatsapp?hub.mode=subscribe&hub.verify_token=wrong-token&hub.challenge=1"
+    )
+    assert res.status_code == 403
+    assert calls == [(b"wrong-token", b"expected-token")]
+
+
+@pytest.mark.asyncio
+async def test_whatsapp_webhook_handshake_non_ascii_token_returns_403(
+    client, monkeypatch
+):
+    """A non-ASCII token must be rejected with 403, not crash with 500."""
+    monkeypatch.setattr(webhooks.settings, "META_VERIFY_TOKEN", "expected-token")
+
+    res = await client.get(
+        "/webhooks/whatsapp?hub.mode=subscribe&hub.verify_token=%C3%B1and%C3%BA&hub.challenge=1"
+    )
+    assert res.status_code == 403
+
+
+@pytest.mark.asyncio
 async def test_whatsapp_webhook_valid_signature(client, monkeypatch):
     """Test: Webhook POST con firma HMAC válida retorna 200."""
     secret = "meta-app-secret-key"

@@ -23,7 +23,10 @@ async def verify_webhook(
     Verifica que el endpoint es tuyo comparando el verify_token.
     """
     if mode and token:
-        if mode == "subscribe" and token == settings.META_VERIFY_TOKEN:
+        token_ok = hmac.compare_digest(
+            token.encode(), settings.META_VERIFY_TOKEN.encode()
+        )
+        if mode == "subscribe" and token_ok:
             logger.info("Webhook verificado exitosamente por Meta.")
             # Obligatorio: devolver el challenge en texto plano con status 200
             return PlainTextResponse(content=challenge, status_code=200)

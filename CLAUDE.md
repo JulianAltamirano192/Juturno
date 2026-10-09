@@ -115,7 +115,7 @@ Verificados a mano: 1, 6, 10 y 12. El resto viene del review y hay que confirmar
 8. Guard de desconexión MP del panel: con `deposit_expiration_minutes` null un pending abandonado
    bloquea la desconexión para siempre; con deadline vencido pero no expirado aún, la permite.
 9. CSRF: cada GET del panel rota la cookie `csrf_token`; formularios de otras pestañas dan 403.
-10. `app/webhooks.py`: el verify token de Meta se compara con `==`, no con `hmac.compare_digest`.
+10. ~~`app/webhooks.py`: el verify token de Meta se compara con `==`, no con `hmac.compare_digest`.~~ — **Resuelto** (rama `fix/meta-verify-token-compare`).
 11. Menores: reembolso/contracargo no cambia el booking; booking inexistente en webhook se marca
     procesado; `Payment.amount` y `create_mp_preference` usan `float`; el form de servicios
     acepta `Infinity`/montos fuera de `Numeric(10,2)` (500).
