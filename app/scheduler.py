@@ -64,18 +64,24 @@ async def process_reminders(async_session_maker):
         logger.info("Lock adquirido exitosamente. Buscando turnos para recordatorio...")
 
         now = datetime.now(timezone.utc)
-        target_start = now + timedelta(hours=24)
-        target_end = target_start + timedelta(minutes=5)
 
         async with async_session_maker() as session:
-            # 2. Buscar bookings confirmados cuyo recordatorio aún no fue enviado
-            stmt = select(Booking).where(
-                and_(
-                    Booking.start_time >= target_start,
-                    Booking.start_time <= target_end,
-                    Booking.status == "confirmed",
-                    Booking.reminder_sent.is_(False),
+            # 2. Bookings confirmados que empiezan dentro de 24 h y todavía no
+            # tienen recordatorio: cubre corridas salteadas y turnos confirmados
+            # con menos de 24 h de anticipación (no una ventana fija de 5 min).
+            # SKIP LOCKED: si el lock de Redis (30 s) vence en una corrida larga,
+            # otra corrida saltea las filas tomadas en vez de duplicar el aviso.
+            stmt = (
+                select(Booking)
+                .where(
+                    and_(
+                        Booking.start_time > now,
+                        Booking.start_time <= now + timedelta(hours=24),
+                        Booking.status == "confirmed",
+                        Booking.reminder_sent.is_(False),
+                    )
                 )
+                .with_for_update(skip_locked=True)
             )
             result = await session.execute(stmt)
             bookings = result.scalars().all()

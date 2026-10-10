@@ -48,7 +48,7 @@
 5. Webhook valida HMAC, replay protection, idempotencia → consulta MP con token del tenant → `apply_payment_details` (guards de `collector_id`, moneda y monto)
 6. Si `approved` → `transition_booking_status(booking, "confirmed")` + crea `NotificationOutbox` (tipo `confirmation`) en **misma transacción**
 7. Job `process_outbox` (cada 1 min) envía WhatsApp via Meta Graph API
-8. Job `process_reminders` (cada 5 min) encola recordatorio 24h antes → outbox reminder
+8. Job `process_reminders` (cada 5 min) encola el recordatorio (hasta 24 h antes; ni bien el turno confirmado entra en esa ventana) → outbox reminder
 9. Job `process_deposit_expiration` (cada 1 min) → antes de expirar un `pending` vencido busca en MP (token del tenant, `external_reference=booking-{id}`) un pago aprobado perdido y lo aplica con los guards del webhook (`apply_payment_details`); si no hay, expira y libera el slot; si MP no responde, lo deja `pending` hasta 1 h después del vencimiento y luego expira (D-023)
 10. Job `process_mp_token_refresh` (cada 24 h) renueva tokens OAuth que vencen en <30 días
 
@@ -277,7 +277,7 @@ REQUIRE_STARTED = {"no_show", "completed"}  # solo si start_time <= now
 **Flujo:**
 1. Al crear booking (`POST /bookings` o `/public/bookings`) → inserta `Booking` (y en flujo público también `Payment`). **No** se crea `NotificationOutbox` acá.
 2. Al confirmar (webhook MP, reconciliación o panel) → marca `confirmed` + crea `NotificationOutbox(type="confirmation")` si no existe — **misma transacción** que la confirmación. Una confirmación manual desde el panel (`/panel/agenda/{id}/confirm`) también la encola (vía `transition_booking_status`).
-3. Job `process_reminders` (cada 5 min) → busca bookings `confirmed` con `start_time` en la ventana [+24 h, +24 h 5 min] y `reminder_sent=False` → marca `reminder_sent=True` + crea `NotificationOutbox(type="reminder")` en **lote atómico** (un solo commit).
+3. Job `process_reminders` (cada 5 min) → busca bookings `confirmed` que empiezan dentro de las próximas 24 h (`now < start_time <= now + 24 h`) y `reminder_sent=False` (cubre corridas salteadas y turnos confirmados con menos de 24 h; esos reciben confirmación y recordatorio casi juntos, aceptado). Lee con `FOR UPDATE SKIP LOCKED` para no duplicar si dos corridas se pisan → marca `reminder_sent=True` + crea `NotificationOutbox(type="reminder")` en **lote atómico** (un solo commit).
 4. Job `process_outbox` (cada 1 min) → lista los ids elegibles y procesa cada uno en su propia sesión/transacción con `SELECT ... FOR UPDATE SKIP LOCKED`:
    - Carga booking + tenant (para timezone)
    - `WhatsAppService.send_confirmation()` o `send_reminder()` (template Meta Utility)
