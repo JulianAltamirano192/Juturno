@@ -110,8 +110,8 @@ Verificados a mano: 1, 6, 10 y 12. El resto viene del review y hay que confirmar
    vez de 409) y sin encolar la confirmación.~~ — **Resuelto** (rama `fix/panel-agenda-locking`): 409 y `enqueue_confirmation` en toda transición a `confirmed`.
 5. ~~`DELETE /tenants/me/mp` no tiene el guard de señas pendientes que sí tiene
    `/panel/mp/disconnect`, y duplica su lógica.~~ — **Resuelto** (rama `fix/mp-disconnect-guard`): guard compartido `has_payable_mp_payment`; el link de pago vence en MP junto con la reserva (`Payment.mp_expires_at`).
-6. Recordatorios: ventana fija `[now+24h, now+24h+5m]`; un run salteado o un turno confirmado con
-   menos de 24h de anticipación nunca recibe recordatorio.
+6. ~~Recordatorios: ventana fija `[now+24h, now+24h+5m]`; un run salteado o un turno confirmado con
+   menos de 24h de anticipación nunca recibe recordatorio.~~ — **Resuelto** (rama `fix/reminder-window`): `process_reminders` toma todo `confirmed` sin recordatorio que empiece dentro de 24 h.
 7. ~~`process_mp_token_refresh` sin try/except por tenant: una excepción corta el refresh del resto.~~ — **Resuelto** (rama `fix/mp-token-refresh-per-tenant`).
 8. ~~Guard de desconexión MP del panel: con `deposit_expiration_minutes` null un pending abandonado
    bloquea la desconexión para siempre; con deadline vencido pero no expirado aún, la permite.~~ — **Resuelto** (rama `fix/mp-disconnect-guard`): guard compartido `has_payable_mp_payment`; el link de pago vence en MP junto con la reserva (`Payment.mp_expires_at`).

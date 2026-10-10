@@ -175,7 +175,7 @@ APScheduler ─────► 4 jobs (outbox, reminders, ───────�
 1. Se crea en `pending` (con seña) sin outbox: la notificación no se encola hasta que hay pago.
 2. El anti-solapamiento lo garantiza el `EXCLUDE USING gist` de Postgres (no el código); los endpoints devuelven 409 ante `IntegrityError`.
 3. Si hay pago, MP confirma vía webhook: el booking pasa a `confirmed` y el `NotificationOutbox` de confirmación se encola en la **misma transacción** (patrón Outbox).
-4. El job `process_reminders` encola el recordatorio 24h antes; el job `process_outbox` envía los WhatsApp (commit por evento, reintentos con backoff, D-022).
+4. El job `process_reminders` encola el recordatorio cuando el turno confirmado entra en las 24 h previas; el job `process_outbox` envía los WhatsApp (commit por evento, reintentos con backoff, D-022).
 5. Si la seña no se paga a tiempo, `process_deposit_expiration` pasa el booking a `expired` (antes reconcilia con MP, D-023).
 
 **Multi-tenancy con dinero real**: cada tenant conecta su **propia** cuenta de Mercado Pago vía OAuth (desde el panel, `/panel/settings`). El dinero de las señas va directo a la cuenta del negocio, no a la plataforma.
