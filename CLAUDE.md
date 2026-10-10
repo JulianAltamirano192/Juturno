@@ -40,7 +40,8 @@ Si un doc contradice el código, manda el código: avisá y proponé corregir el
   Los endpoints capturan `IntegrityError` → 409.
 - Estados de booking: `app/booking_actions.py` (`transition_booking_status`); no cambiar
   `booking.status` a mano.
-- Outbox: la confirmación se encola en la misma transacción que confirma el pago (webhook MP);
+- Outbox: toda transición a `confirmed` encola la confirmación en la misma transacción
+  (`enqueue_confirmation`: webhook MP, reconciliación y panel);
   el recordatorio 24h lo encola `process_reminders`. `process_outbox` envía por WhatsApp.
 - 4 jobs APScheduler en el proceso de la API (outbox, reminders, expiración de señas, refresh
   de tokens MP) con lock Redis / `SKIP LOCKED`. No escalar a >1 réplica sin worker separado.
@@ -103,10 +104,10 @@ Verificados a mano: 1, 6, 10 y 12. El resto viene del review y hay que confirmar
    (`outbox_worker.format_booking_datetime` trata `UTC` como Buenos Aires).~~ — **Resuelto** (rama `fix/tenant-default-timezone`): default `America/Argentina/Buenos_Aires` + migración `1589d328bf07`.
 2. ~~`POST /public/bookings` (y `api.py`) no valida `start_time` contra ahora, horario de atención,
    grilla de slots ni si servicio/staff están activos; solo el EXCLUDE evita solapamientos.~~ — **Resuelto** (rama `fix/validate-booking-start-time`): `is_bookable_start` (422) y servicio/staff inactivo = 404.
-3. Acciones de agenda en el panel cargan el booking sin `FOR UPDATE`: un cancelar concurrente con
-   el webhook MP puede pisar `confirmed` y dejar viva la outbox de confirmación.
-4. Confirmar desde el panel permite `expired → confirmed` sin capturar `IntegrityError` (500 en
-   vez de 409) y sin encolar la confirmación.
+3. ~~Acciones de agenda en el panel cargan el booking sin `FOR UPDATE`: un cancelar concurrente con
+   el webhook MP puede pisar `confirmed` y dejar viva la outbox de confirmación.~~ — **Resuelto** (rama `fix/panel-agenda-locking`): `_load_booking_for_tenant` usa `FOR UPDATE`.
+4. ~~Confirmar desde el panel permite `expired → confirmed` sin capturar `IntegrityError` (500 en
+   vez de 409) y sin encolar la confirmación.~~ — **Resuelto** (rama `fix/panel-agenda-locking`): 409 y `enqueue_confirmation` en toda transición a `confirmed`.
 5. ~~`DELETE /tenants/me/mp` no tiene el guard de señas pendientes que sí tiene
    `/panel/mp/disconnect`, y duplica su lógica.~~ — **Resuelto** (rama `fix/mp-disconnect-guard`): guard compartido `has_payable_mp_payment`; el link de pago vence en MP junto con la reserva (`Payment.mp_expires_at`).
 6. Recordatorios: ventana fija `[now+24h, now+24h+5m]`; un run salteado o un turno confirmado con

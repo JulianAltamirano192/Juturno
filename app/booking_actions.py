@@ -43,6 +43,24 @@ class BookingNotStartedError(Exception):
     """Se intentó marcar no_show/completed antes de start_time."""
 
 
+async def enqueue_confirmation(session: AsyncSession, booking: Booking) -> None:
+    """Encola la confirmación por WhatsApp si el booking todavía no tiene una
+    (en cualquier estado: una sola confirmación por booking, ni siquiera si
+    la anterior quedó failed/cancelled)."""
+    stmt = select(NotificationOutbox.id).where(
+        NotificationOutbox.booking_id == booking.id,
+        NotificationOutbox.notification_type == "confirmation",
+    )
+    if (await session.execute(stmt)).first() is None:
+        session.add(
+            NotificationOutbox(
+                booking_id=booking.id,
+                notification_type="confirmation",
+                status="pending",
+            )
+        )
+
+
 async def transition_booking_status(
     session: AsyncSession,
     booking: Booking,
@@ -95,6 +113,9 @@ async def transition_booking_status(
         booking.completed_at = now
 
     session.add(booking)
+
+    if new_status == "confirmed":
+        await enqueue_confirmation(session, booking)
 
     # Al cancelar, cancelar los outbox sin enviar del booking (pending y los
     # failed que process_outbox reintenta) para no mandar un WhatsApp de

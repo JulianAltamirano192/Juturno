@@ -11,12 +11,11 @@ from sqlalchemy import and_, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.booking_actions import transition_booking_status
+from app.booking_actions import enqueue_confirmation, transition_booking_status
 from app.config import settings
 from app.database import get_db
 from app.models import (
     Booking,
-    NotificationOutbox,
     Payment,
     ProcessedWebhookEvent,
     Service,
@@ -508,21 +507,10 @@ async def apply_payment_details(
                 session, booking, "confirmed", actor="webhook_mp"
             )
 
-        # Generar outbox de confirmación si el booking está confirmado y no existe previa
+        # La transición ya encola la confirmación; esto cubre un booking que
+        # ya estaba confirmado sin outbox.
         if booking.status == "confirmed":
-            outbox_stmt = select(NotificationOutbox).where(
-                NotificationOutbox.booking_id == booking.id,
-                NotificationOutbox.notification_type == "confirmation",
-            )
-            existing_outbox = (await session.execute(outbox_stmt)).scalar_one_or_none()
-
-            if existing_outbox is None:
-                outbox_event = NotificationOutbox(
-                    booking_id=booking.id,
-                    notification_type="confirmation",
-                    status="pending",
-                )
-                session.add(outbox_event)
+            await enqueue_confirmation(session, booking)
 
     return "EVENT_PROCESSED", linked_booking_id
 

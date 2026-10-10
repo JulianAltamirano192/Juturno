@@ -254,6 +254,8 @@ REQUIRE_STARTED = {"no_show", "completed"}  # solo si start_time <= now
 
 - ❌ No cambiar `booking.status` a mano: siempre `transition_booking_status(session, booking, new_status, actor, reason)`.
 - Transición inválida → `InvalidTransitionError`; `no_show`/`completed` antes de `start_time` → `BookingNotStartedError`. Los endpoints del panel (`/panel/agenda/{id}/confirm|cancel|no-show|complete`) los traducen a 409.
+- Toda transición a `confirmed` encola la confirmación por WhatsApp (`enqueue_confirmation`, una sola por booking), venga del webhook, la reconciliación o el panel.
+- El panel carga el booking con `SELECT ... FOR UPDATE` (como el webhook y el job de expiración), así una acción concurrente decide sobre el estado actual y no lo pisa. Reconfirmar un `expired` cuyo horario ya tomó otro turno choca con el `EXCLUDE` → 409.
 - Quién la llama: panel (`actor="owner"`), webhook MP y reconciliación (`actor="webhook_mp"`), scheduler (`actor="system"`, solo `expired`).
 
 **Auditoría (Tarea 8):**
@@ -274,7 +276,7 @@ REQUIRE_STARTED = {"no_show", "completed"}  # solo si start_time <= now
 
 **Flujo:**
 1. Al crear booking (`POST /bookings` o `/public/bookings`) → inserta `Booking` (y en flujo público también `Payment`). **No** se crea `NotificationOutbox` acá.
-2. Al confirmar por webhook MP o por reconciliación (`approved`) → marca `confirmed` + crea `NotificationOutbox(type="confirmation")` si no existe — **misma transacción** que la confirmación. Una confirmación manual desde el panel (`/panel/agenda/{id}/confirm`) no encola nada.
+2. Al confirmar (webhook MP, reconciliación o panel) → marca `confirmed` + crea `NotificationOutbox(type="confirmation")` si no existe — **misma transacción** que la confirmación. Una confirmación manual desde el panel (`/panel/agenda/{id}/confirm`) también la encola (vía `transition_booking_status`).
 3. Job `process_reminders` (cada 5 min) → busca bookings `confirmed` con `start_time` en la ventana [+24 h, +24 h 5 min] y `reminder_sent=False` → marca `reminder_sent=True` + crea `NotificationOutbox(type="reminder")` en **lote atómico** (un solo commit).
 4. Job `process_outbox` (cada 1 min) → lista los ids elegibles y procesa cada uno en su propia sesión/transacción con `SELECT ... FOR UPDATE SKIP LOCKED`:
    - Carga booking + tenant (para timezone)

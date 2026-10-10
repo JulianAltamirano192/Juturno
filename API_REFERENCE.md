@@ -91,7 +91,7 @@
 | POST | `/panel/horarios/{bh_id}/edit` | Actualizar horario (mismas validaciones y chequeo de solapamiento) | Cookie + CSRF |
 | POST | `/panel/horarios/{bh_id}/delete` | **Borrar** horario (404 si no existe, no es del tenant o tiene `staff_id`) | Cookie + CSRF |
 | GET | `/panel/agenda` | Vista día: todos los turnos que solapan el día (cualquier status), ordenados por inicio; `?day=YYYY-MM-DD` opcional (default hoy en la TZ del tenant; un valor inválido cae a hoy) | Cookie |
-| POST | `/panel/agenda/{booking_id}/confirm` | `pending → confirmed` (actor `owner`); 404 "Turno no encontrado" si no es del tenant; 409 si transición inválida; 303 a `/panel/agenda` | Cookie + CSRF |
+| POST | `/panel/agenda/{booking_id}/confirm` | `pending`/`expired → confirmed` (actor `owner`) y encola la confirmación por WhatsApp; 404 "Turno no encontrado" si no es del tenant; 409 si transición inválida o si el horario de un `expired` ya lo tomó otro turno ("El horario ya está ocupado por otro turno."); 303 a `/panel/agenda` | Cookie + CSRF |
 | POST | `/panel/agenda/{booking_id}/cancel` | `→ cancelled`; form field opcional `reason`; cancela outbox sin enviar (`pending`/`failed`); 409 si inválida | Cookie + CSRF |
 | POST | `/panel/agenda/{booking_id}/no-show` | `confirmed → no_show`; 409 si el turno aún no empezó (`BookingNotStartedError`) o transición inválida | Cookie + CSRF |
 | POST | `/panel/agenda/{booking_id}/complete` | `confirmed → completed`; 409 si el turno aún no empezó o transición inválida | Cookie + CSRF |
