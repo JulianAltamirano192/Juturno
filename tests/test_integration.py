@@ -11,6 +11,9 @@ from app.auth import hash_api_key
 from app.models import ApiKey, Booking, Service, Tenant
 from tests.test_mp_webhooks import _webhook_url
 
+# Bookings must be in the future: never hardcode a date that will expire.
+FUTURE_DAY = date.today() + timedelta(days=7)
+
 # --- HELPERS DE AUTENTICACIÓN ---
 
 
@@ -97,8 +100,8 @@ async def test_double_booking_conflict(client, db_session):
         "service_id": service.id,
         "client_name": "Ana Perez",
         "client_phone": "3584998877",
-        "start_time": "2026-10-15T14:00:00",
-        "end_time": "2026-10-15T15:00:00",
+        "start_time": f"{FUTURE_DAY}T14:00:00",
+        "end_time": f"{FUTURE_DAY}T15:00:00",
         "price_at_booking": 2000.0,
         "idempotency_key": "key-conflict-1",
     }
@@ -202,8 +205,8 @@ async def test_outbox_created_only_on_approved_payment(client, db_session, monke
         "service_id": service.id,
         "client_name": "Lucía",
         "client_phone": "3584112233",
-        "start_time": "2026-11-01T16:00:00",
-        "end_time": "2026-11-01T16:30:00",
+        "start_time": f"{FUTURE_DAY}T16:00:00",
+        "end_time": f"{FUTURE_DAY}T16:30:00",
         "price_at_booking": 5000.0,
         "idempotency_key": "outbox-test-key-99",
     }
@@ -283,7 +286,7 @@ async def test_booking_end_time_derived_from_duration(client, db_session):
         "service_id": service.id,
         "client_name": "Marcos",
         "client_phone": "1155667788",
-        "start_time": "2026-11-10T10:00:00Z",
+        "start_time": f"{FUTURE_DAY}T10:00:00Z",
         "idempotency_key": "key-derived-end-time-1",
     }
 
@@ -293,9 +296,9 @@ async def test_booking_end_time_derived_from_duration(client, db_session):
 
     booking = await db_session.get(Booking, booking_id)
     assert booking is not None
-    assert booking.start_time.isoformat().startswith("2026-11-10T10:00:00")
+    assert booking.start_time.isoformat().startswith(f"{FUTURE_DAY}T10:00:00")
     # end_time debe ser exactamente start_time + 45 min
-    assert booking.end_time.isoformat().startswith("2026-11-10T10:45:00")
+    assert booking.end_time.isoformat().startswith(f"{FUTURE_DAY}T10:45:00")
 
 
 @pytest.mark.asyncio
@@ -358,7 +361,7 @@ async def test_booking_creation_idempotency_retry_returns_200(client, db_session
         "service_id": service.id,
         "client_name": "Laura",
         "client_phone": "3584665544",
-        "start_time": "2026-12-20T11:00:00Z",
+        "start_time": f"{FUTURE_DAY}T11:00:00Z",
         "idempotency_key": "unique-retry-key-777",
     }
 

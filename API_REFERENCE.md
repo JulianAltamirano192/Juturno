@@ -172,6 +172,8 @@
 - `end_time` es opcional en el schema pero **se ignora**: siempre se calcula como `start_time + service.duration_minutes`.
 - El precio y la seña se toman del servicio (`price_at_booking = service.price`, `deposit_at_booking = effective_deposit(...)`, snapshot al crear); no hay campos de monto en el request.
 - Teléfono normalizado a `549XXXXXXXXXX` (`phone.py`). Se valida primero (422 antes que cualquier 404).
+- `start_time` sin zona se interpreta en la del tenant. Tiene que ser un turno que ofrecería `GET /public/available-slots`: futuro, dentro del horario de atención (del profesional si tiene uno propio), alineado a la grilla de 30 min, sin segundos, y con lugar para la duración del servicio (`is_bookable_start`). No mira las reservas existentes: un slot ocupado sigue siendo 409.
+- Servicio y profesional tienen que estar activos (inactivo = 404, igual que inexistente).
 
 **Response 201 (`PublicBookingResponse`):**
 ```json
@@ -187,6 +189,7 @@
 - 404 "Tenant not found" / "Service not found for tenant" / "Staff not found for tenant"
 - 409 "Slot ya reservado o superpuesto" (ExcludeConstraint `IntegrityError` sin booking previo con esa `idempotency_key`)
 - 422 "El WhatsApp no parece completo..." (teléfono inválido)
+- 422 "Ese horario no está disponible. Elegí uno de los turnos ofrecidos." (`start_time` fuera de la grilla, pasado o fuera de horario)
 - 422 `ERR_PAGO_NO_CONFIGURADO` (producción + tenant sin MP conectado; se hace rollback, no queda reserva). Texto: "Este negocio todavía no configuró su cuenta de Mercado Pago. Avisale al local para que conecte su cuenta y vuelvas a reservar."
 - 429 rate limit (20/minute por IP)
 - 502 "Error al procesar el cobro del negocio; contactá al administrador de la plataforma." (`MPTokenCryptoError` al descifrar el token del tenant)
@@ -223,11 +226,12 @@ Igual que el público pero **requiere API Key** y valida que `tenant_id` coincid
 **Request (`BookingCreate`):** igual que el público pero sin MP (no genera preferencia ni `Payment`).
 - `end_time` se deriva de `service.duration_minutes` (el campo del request se ignora).
 - Status inicial: `pending`.
+- Mismas reglas que el público para `start_time` y para servicio/profesional activos.
 
 **Response 201:** `{ "message": "Reserva creada", "booking_id": 42 }`
 **Response 200 (retry idempotente):** `{ "message": "Reserva recuperada (idempotente)", "booking_id": 42 }`
 
-**Errores:** 401 (API key), 404 ("Tenant not found" si `tenant_id` no es el de la key; "Service not found for tenant"; "Staff not found for tenant"), 409 "Slot ya reservado o superpuesto", 422 (teléfono inválido: "El teléfono del cliente no es válido...").
+**Errores:** 401 (API key), 404 ("Tenant not found" si `tenant_id` no es el de la key; "Service not found for tenant"; "Staff not found for tenant"), 409 "Slot ya reservado o superpuesto", 422 (teléfono inválido: "El teléfono del cliente no es válido..."; `start_time` no disponible: "start_time no es un turno disponible...").
 
 ### 5.3 `PATCH /tenants/me`
 
@@ -457,6 +461,7 @@ deposit_expiration_minutes: int | None = None  # ge=1
 | 409 | `POST /bookings`, `POST /public/bookings` | ExcludeConstraint violation (slot ocupado). Una colisión de `idempotency_key` del mismo tenant devuelve 200, no 409 |
 | 409 | `POST /panel/agenda/{id}/*` | Transición de estado inválida / turno no empezado |
 | 422 | `POST /public/bookings`, `POST /bookings` | Teléfono inválido (`InvalidPhoneError`) |
+| 422 | `POST /public/bookings`, `POST /bookings` | `start_time` no es un turno disponible (`is_bookable_start`) |
 | 422 | `POST /public/bookings` (prod) | `ERR_PAGO_NO_CONFIGURADO` (tenant sin MP conectado) |
 | 422 | Cualquiera con body/query | Validación Pydantic (tipos, `gt=0`, `ge=1`) |
 | 429 | `POST /login`, `POST /register`, `POST /public/bookings` | Rate limit (10 / 5 / 20 por minuto por IP) |

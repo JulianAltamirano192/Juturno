@@ -20,6 +20,9 @@ FAKE_MP_RESULT = {
 
 MP_PATCH = "app.routers.public.create_mp_preference"
 
+# Bookings must be in the future: never hardcode a date that will expire.
+FUTURE_DAY = date.today() + timedelta(days=7)
+
 
 # ---------------------------------------------------------------------------
 # Tenant detail
@@ -143,7 +146,7 @@ async def test_create_public_booking_returns_payment_url(client, db_session):
         "service_id": service.id,
         "client_name": "Valeria",
         "client_phone": "5491188776655",
-        "start_time": "2026-11-15T15:00:00Z",
+        "start_time": f"{FUTURE_DAY}T15:00:00Z",
         "idempotency_key": "pub-booking-mp-01",
     }
 
@@ -160,7 +163,7 @@ async def test_create_public_booking_returns_payment_url(client, db_session):
     assert booking is not None
     assert booking.status == "pending"
     assert booking.client_name == "Valeria"
-    assert booking.end_time.isoformat().startswith("2026-11-15T15:45:00")
+    assert booking.end_time.isoformat().startswith(f"{FUTURE_DAY}T15:45:00")
 
     # Verificar Payment creado
     stmt = select(Payment).where(Payment.booking_id == booking_id)
@@ -195,7 +198,7 @@ async def test_create_public_booking_deposit_amount_explicit(client, db_session)
         "service_id": service.id,
         "client_name": "Marcos",
         "client_phone": "5491122334455",
-        "start_time": "2026-11-16T10:00:00Z",
+        "start_time": f"{FUTURE_DAY}T10:00:00Z",
         "idempotency_key": "pub-booking-deposit-01",
     }
 
@@ -230,7 +233,7 @@ async def test_create_public_booking_idempotent_returns_same_url(client, db_sess
         "service_id": service.id,
         "client_name": "Lucía",
         "client_phone": "5491133445566",
-        "start_time": "2026-11-17T09:00:00Z",
+        "start_time": f"{FUTURE_DAY}T09:00:00Z",
         "idempotency_key": "pub-idem-key-01",
     }
 
@@ -274,7 +277,7 @@ async def test_create_public_booking_rolls_back_if_mp_fails(client, db_session):
         "service_id": service.id,
         "client_name": "Carmen",
         "client_phone": "5491144556677",
-        "start_time": "2026-11-18T11:00:00Z",
+        "start_time": f"{FUTURE_DAY}T11:00:00Z",
         "idempotency_key": "pub-booking-mp-fail-01",
     }
 
@@ -413,7 +416,7 @@ async def test_create_public_booking_normalizes_local_phone(client, db_session):
         "service_id": service.id,
         "client_name": "Ana",
         "client_phone": "03584 166288",
-        "start_time": "2026-11-20T13:00:00Z",
+        "start_time": f"{FUTURE_DAY}T13:00:00Z",
         "idempotency_key": "pub-booking-phone-norm-01",
     }
 
@@ -447,7 +450,7 @@ async def test_create_public_booking_rejects_bad_phone(client, db_session):
         "service_id": service.id,
         "client_name": "Ana",
         "client_phone": "1234",
-        "start_time": "2026-11-21T13:00:00Z",
+        "start_time": f"{FUTURE_DAY}T13:00:00Z",
         "idempotency_key": "pub-booking-phone-bad-01",
     }
 

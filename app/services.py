@@ -255,3 +255,39 @@ async def compute_available_slots(
         ]
 
     return slots
+
+
+async def is_bookable_start(
+    *,
+    session,
+    tenant_id: int,
+    service,
+    start_time: datetime,
+    staff_id,
+    tenant_timezone,
+) -> bool:
+    """True si start_time es un turno que la grilla ofrecería (futuro, dentro
+    del horario, alineado y con lugar para la duración), sin mirar reservas:
+    la superposición la resuelve el EXCLUDE (409). start_time debe tener tz."""
+    try:
+        local = start_time.astimezone(tenant_timezone)
+    except OverflowError:  # year 1 / 9999 with an explicit offset
+        return False
+    if local < datetime.now(tenant_timezone) or local.second or local.microsecond:
+        return False
+
+    windows = await resolve_day_windows(
+        session=session,
+        tenant_id=tenant_id,
+        day_of_week=local.weekday(),
+        day_date=local.date(),
+        tenant_timezone=tenant_timezone,
+        staff_id=staff_id,
+    )
+    slots = calculate_available_slots(
+        windows=windows,
+        bookings=[],
+        duration_min=service.duration_minutes,
+        granularity_min=30,
+    )
+    return local.strftime("%H:%M") in slots
