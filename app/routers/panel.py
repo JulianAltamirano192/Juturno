@@ -184,8 +184,15 @@ def _format_agenda_day_label(d: date) -> str:
 async def _load_booking_for_tenant(
     session: AsyncSession, booking_id: int, tenant: Tenant
 ) -> Booking:
-    booking = await session.get(Booking, booking_id)
-    if not booking or booking.tenant_id != tenant.id:
+    # FOR UPDATE: el webhook de MP y el job de expiración también bloquean el
+    # booking; sin el lock la acción decide sobre un estado viejo y lo pisa.
+    stmt = (
+        select(Booking)
+        .where(Booking.id == booking_id, Booking.tenant_id == tenant.id)
+        .with_for_update()
+    )
+    booking = (await session.execute(stmt)).scalar_one_or_none()
+    if booking is None:
         raise HTTPException(status_code=404, detail="Turno no encontrado")
     return booking
 
@@ -1152,9 +1159,15 @@ async def panel_agenda_confirm(
     booking = await _load_booking_for_tenant(session, booking_id, tenant)
     try:
         await transition_booking_status(session, booking, "confirmed", actor="owner")
+        await session.commit()
     except InvalidTransitionError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
-    await session.commit()
+    except IntegrityError:
+        # expired → confirmed: el horario ya lo tomó otro turno (EXCLUDE).
+        await session.rollback()
+        raise HTTPException(
+            status_code=409, detail="El horario ya está ocupado por otro turno."
+        )
     return _redirect_to_agenda(day)
 
 
