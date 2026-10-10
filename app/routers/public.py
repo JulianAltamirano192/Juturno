@@ -20,7 +20,11 @@ from app.mp_connect import ERR_PAGO_NO_CONFIGURADO, resolve_mp_access_token
 from app.mp_crypto import MPTokenCryptoError
 from app.mp_webhooks import create_mp_preference
 from app.schemas import AvailableSlotsResponse, BookingCreate
-from app.services import compute_available_slots, effective_deposit
+from app.services import (
+    compute_available_slots,
+    effective_deposit,
+    is_bookable_start,
+)
 from app.templates import templates
 
 logger = logging.getLogger(__name__)
@@ -233,12 +237,12 @@ async def create_public_booking(
         )
 
     service = await session.get(Service, payload.service_id)
-    if not service or service.tenant_id != payload.tenant_id:
+    if not service or service.tenant_id != payload.tenant_id or not service.is_active:
         raise HTTPException(status_code=404, detail="Service not found for tenant")
 
     if payload.staff_id is not None:
         staff = await session.get(Staff, payload.staff_id)
-        if not staff or staff.tenant_id != payload.tenant_id:
+        if not staff or staff.tenant_id != payload.tenant_id or not staff.is_active:
             raise HTTPException(status_code=404, detail="Staff not found for tenant")
 
     tenant_timezone = ZoneInfo(
@@ -247,6 +251,19 @@ async def create_public_booking(
     start_time = payload.start_time
     if start_time.tzinfo is None:
         start_time = start_time.replace(tzinfo=tenant_timezone)
+
+    if not await is_bookable_start(
+        session=session,
+        tenant_id=payload.tenant_id,
+        service=service,
+        start_time=start_time,
+        staff_id=payload.staff_id,
+        tenant_timezone=tenant_timezone,
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="Ese horario no está disponible. Elegí uno de los turnos ofrecidos.",
+        )
 
     end_time = start_time + timedelta(minutes=service.duration_minutes)
 

@@ -101,8 +101,8 @@ Verificados a mano: 1, 6, 10 y 12. El resto viene del review y hay que confirmar
 1. ~~Registro (`app/routers/auth.py`) no setea `timezone`: el tenant queda en `UTC` (default del
    modelo) y el panel no permite cambiarlo. Slots, agenda y texto de WhatsApp quedan desfasados
    (`outbox_worker.format_booking_datetime` trata `UTC` como Buenos Aires).~~ — **Resuelto** (rama `fix/tenant-default-timezone`): default `America/Argentina/Buenos_Aires` + migración `1589d328bf07`.
-2. `POST /public/bookings` (y `api.py`) no valida `start_time` contra ahora, horario de atención,
-   grilla de slots ni si servicio/staff están activos; solo el EXCLUDE evita solapamientos.
+2. ~~`POST /public/bookings` (y `api.py`) no valida `start_time` contra ahora, horario de atención,
+   grilla de slots ni si servicio/staff están activos; solo el EXCLUDE evita solapamientos.~~ — **Resuelto** (rama `fix/validate-booking-start-time`): `is_bookable_start` (422) y servicio/staff inactivo = 404.
 3. Acciones de agenda en el panel cargan el booking sin `FOR UPDATE`: un cancelar concurrente con
    el webhook MP puede pisar `confirmed` y dejar viva la outbox de confirmación.
 4. Confirmar desde el panel permite `expired → confirmed` sin capturar `IntegrityError` (500 en

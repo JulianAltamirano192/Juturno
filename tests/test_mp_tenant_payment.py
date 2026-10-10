@@ -10,7 +10,7 @@ Para forzar un ciphertext "de otra clave" se cifra con una Fernet key que NO
 es la activa en settings en ese momento.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
 
 import pytest
 from cryptography.fernet import Fernet
@@ -76,7 +76,12 @@ async def _tenant_with_service(db_session, *, connected: bool):
 
 
 def _booking_payload(tenant_id: int, service_id: int, key_suffix: str):
-    start = datetime.now(timezone.utc) + timedelta(days=2)
+    # Tomorrow 10:00 UTC: on the slot grid and always less than 48 h away.
+    start = datetime.combine(
+        datetime.now(timezone.utc).date() + timedelta(days=1),
+        time(10),
+        tzinfo=timezone.utc,
+    )
     return {
         "tenant_id": tenant_id,
         "service_id": service_id,
@@ -212,7 +217,7 @@ async def test_payment_link_is_capped_for_far_away_bookings(
     await db_session.commit()
     payload = _booking_payload(tenant.id, service.id, "far")
     payload["start_time"] = (
-        datetime.now(timezone.utc) + timedelta(days=365)
+        datetime.fromisoformat(payload["start_time"]) + timedelta(days=365)
     ).isoformat()
 
     before = datetime.now(timezone.utc)
