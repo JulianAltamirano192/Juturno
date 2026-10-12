@@ -182,6 +182,7 @@ async def test_create_service_no_deposit_stores_none():
                 "name": "Depilación",
                 "duration_minutes": "45",
                 "price": "2000.00",
+                "charge_deposit": "on",
                 "deposit_amount": "",
                 "csrf_token": csrf,
             },
@@ -221,6 +222,7 @@ async def test_edit_service():
                 "name": "Corte actualizado",
                 "duration_minutes": "45",
                 "price": "1200.00",
+                "charge_deposit": "on",
                 "deposit_amount": "400.00",
                 "csrf_token": csrf,
             },
@@ -346,6 +348,7 @@ def _service_form(price: str, deposit: str = "") -> dict:
         "name": "Corte",
         "duration_minutes": "30",
         "price": price,
+        "charge_deposit": "on",
         "deposit_amount": deposit,
     }
 
@@ -381,6 +384,13 @@ def test_parse_service_form_rejects_invalid_price(price):
         ("1000", "999999"),
         # Compared as stored in Numeric(10,2): 1000.00 vs 1000.01.
         ("1000.004", "1000.005"),
+        # "Cobrar seña" checked with an effective deposit of 0 is ambiguous:
+        # no deposit is chosen by unchecking the box.
+        ("1000", "0"),
+        # A huge negative exponent rounds to 0.00 (never reaches asyncpg).
+        ("1000", "1e-999999999"),
+        # Empty = 30% of the price, which rounds to 0.00 here.
+        ("0.01", ""),
     ],
 )
 def test_parse_service_form_rejects_invalid_deposit(price, deposit):
@@ -395,10 +405,7 @@ def test_parse_service_form_rejects_invalid_deposit(price, deposit):
     [
         ("99999999.99", "", None),
         ("1000", "1000", Decimal(1000)),
-        ("1000", "0", Decimal(0)),
         ("1000,50", "500,25", Decimal("500.25")),
-        # A huge negative exponent used to reach asyncpg unrounded.
-        ("1000", "1e-999999999", Decimal("0.00")),
     ],
 )
 def test_parse_service_form_accepts_valid_amounts(price, deposit, expected_deposit):
@@ -441,3 +448,124 @@ async def test_create_service_deposit_greater_than_price_shows_error():
             select(Service).where(Service.tenant_id == tenant.id)
         )
         assert services.scalars().all() == []
+
+
+# ---------------------------------------------------------------------------
+# Optional deposit ("Cobrar seña al reservar" checkbox)
+# ---------------------------------------------------------------------------
+
+_CHECKED = 'name="charge_deposit" value="on" checked'
+
+
+def test_parse_service_form_without_charge_deposit_stores_zero():
+    """Unchecked checkbox → no deposit (0); the amount input is ignored."""
+    form = _service_form("1000", "abc")
+    del form["charge_deposit"]
+    data, errors = _parse_service_form(form)
+    assert errors == {}
+    assert data["deposit_amount"] == Decimal(0)
+
+
+async def _make_bare_tenant(slug: str) -> Tenant:
+    async with TestingSessionLocal() as session:
+        tenant = Tenant(
+            name="Biz Optional",
+            slug=slug,
+            owner_email=f"{slug}@test.com",
+            password_hash="x",
+            session_version=1,
+        )
+        session.add(tenant)
+        await session.commit()
+        await session.refresh(tenant)
+    return tenant
+
+
+@pytest.mark.asyncio
+async def test_create_service_without_charge_deposit_stores_zero():
+    tenant = await _make_bare_tenant("biz-no-charge")
+    csrf = generate_csrf_token()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        client.cookies.set("juturno_session", make_session_cookie(tenant))
+        client.cookies.set("csrf_token", csrf)
+        resp = await client.post(
+            "/panel/services/new",
+            data={
+                "name": "Consulta",
+                "duration_minutes": "30",
+                "price": "1000",
+                "deposit_amount": "300",
+                "csrf_token": csrf,
+            },
+            follow_redirects=False,
+        )
+    assert resp.status_code == 303
+
+    async with TestingSessionLocal() as session:
+        svc = (
+            await session.execute(select(Service).where(Service.tenant_id == tenant.id))
+        ).scalar_one()
+    assert svc.deposit_amount == Decimal(0)
+
+
+@pytest.mark.asyncio
+async def test_new_service_form_checks_charge_deposit_by_default():
+    tenant = await _make_bare_tenant("biz-new-form")
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        client.cookies.set("juturno_session", make_session_cookie(tenant))
+        resp = await client.get("/panel/services/new")
+    assert resp.status_code == 200
+    assert _CHECKED in resp.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("deposit", "checked"),
+    [(Decimal(0), False), (None, True), (Decimal("200.00"), True)],
+)
+async def test_edit_service_form_reflects_charge_deposit(deposit, checked):
+    async with TestingSessionLocal() as session:
+        tenant, service = await make_tenant_with_service(session)
+        service.deposit_amount = deposit
+        session.add(service)
+        await session.commit()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        client.cookies.set("juturno_session", make_session_cookie(tenant))
+        resp = await client.get(f"/panel/services/{service.id}/edit")
+    assert resp.status_code == 200
+    assert 'name="charge_deposit"' in resp.text
+    assert (_CHECKED in resp.text) is checked
+
+
+@pytest.mark.asyncio
+async def test_invalid_form_rerender_keeps_charge_deposit_unchecked():
+    tenant = await _make_bare_tenant("biz-rerender")
+    csrf = generate_csrf_token()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        client.cookies.set("juturno_session", make_session_cookie(tenant))
+        client.cookies.set("csrf_token", csrf)
+        resp = await client.post(
+            "/panel/services/new",
+            data={
+                "name": "Consulta",
+                "duration_minutes": "30",
+                "price": "",
+                "deposit_amount": "",
+                "csrf_token": csrf,
+            },
+        )
+    assert resp.status_code == 200
+    assert 'name="charge_deposit"' in resp.text
+    assert _CHECKED not in resp.text

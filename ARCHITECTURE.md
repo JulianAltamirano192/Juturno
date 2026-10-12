@@ -44,6 +44,7 @@
 1. Cliente accede a `/t/{slug}` → ve servicios → elige slot → `POST /public/bookings`
 2. Se crea `Booking` (status `pending`, con `deposit_at_booking` snapshoteado) + `Payment` (status `pending`, con `mp_checkout_url`) en **misma transacción**
 3. Se crea preferencia MP con token del tenant (OAuth) → devuelve `payment_url`. Si el tenant no tiene MP conectado en producción: 422 `ERR_PAGO_NO_CONFIGURADO` y no se crea nada
+   - **Rama sin seña (D-035)**: si la seña efectiva es 0 (`Service.deposit_amount == 0`), después del `flush` el booking pasa a `confirmed` con `transition_booking_status(..., actor="client")` (encola la confirmación) y se hace commit. No hay `Payment`, ni token MP, ni preferencia; `payment_url` es `""` y los pasos 4-6 no aplican. Antes de crear, se cuenta el tope de 3 turnos futuros `confirmed` sin seña por teléfono y negocio (422 si se alcanza).
 4. Cliente paga en MP → MP envía webhook a `/webhooks/mercadopago`
 5. Webhook valida HMAC, replay protection, idempotencia → consulta MP con token del tenant → `apply_payment_details` (guards de `collector_id`, moneda y monto)
 6. Si `approved` → `transition_booking_status(booking, "confirmed")` + crea `NotificationOutbox` (tipo `confirmation`) en **misma transacción**
@@ -59,7 +60,7 @@
 ```
 Tenant (1) ──────< Service
      │                │
-     │                ├── duration_minutes, price, deposit_amount (nullable, default 30% del precio)
+     │                ├── duration_minutes, price, deposit_amount (nullable = 30% del precio; 0 = sin seña)
      │                ├── is_active
      │                └── CHECK ck_service_deposit_amount_non_negative (deposit_amount IS NULL OR >= 0)
      │
@@ -278,7 +279,7 @@ REQUIRE_STARTED = {"no_show", "completed"}  # solo si start_time <= now
 - `retry_count`, `error_message`, `created_at`
 
 **Flujo:**
-1. Al crear booking (`POST /bookings` o `/public/bookings`) → inserta `Booking` (y en flujo público también `Payment`). **No** se crea `NotificationOutbox` acá.
+1. Al crear booking (`POST /bookings` o `/public/bookings`) → inserta `Booking` (y en flujo público con seña también `Payment`). **No** se crea `NotificationOutbox` acá, salvo en el flujo público sin seña, que confirma en el momento y encola la confirmación (paso 2).
 2. Al confirmar (webhook MP, reconciliación o panel) → marca `confirmed` + crea `NotificationOutbox(type="confirmation")` si no existe — **misma transacción** que la confirmación. Una confirmación manual desde el panel (`/panel/agenda/{id}/confirm`) también la encola (vía `transition_booking_status`).
 3. Job `process_reminders` (cada 5 min) → busca bookings `confirmed` que empiezan dentro de las próximas 24 h (`now < start_time <= now + 24 h`) y `reminder_sent=False` (cubre corridas salteadas y turnos confirmados con menos de 24 h; esos reciben confirmación y recordatorio casi juntos, aceptado). Lee con `FOR UPDATE SKIP LOCKED` para no duplicar si dos corridas se pisan → marca `reminder_sent=True` + crea `NotificationOutbox(type="reminder")` en **lote atómico** (un solo commit).
 4. Job `process_outbox` (cada 1 min) → lista los ids elegibles y procesa cada uno en su propia sesión/transacción con `SELECT ... FOR UPDATE SKIP LOCKED`:

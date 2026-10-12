@@ -71,6 +71,11 @@ Ya verifiqué contra el código los hallazgos 2, 3, 4, 5, 7, 8 y 9 (se confirman
 - Rechazar `CORS_ORIGINS="*"` en el validador de producción.
 - `GET /public/available-slots` sin rate limit (solo lo tiene `POST /public/bookings`).
 
+#### Pendientes del 11 (seña opcional; para más adelante)
+- Límite diario por negocio o verificación de teléfono para turnos sin seña: el tope por teléfono no frena a quien rota números.
+- `POST /bookings` (API) no auto-confirma servicios sin seña: sigue creando `pending`.
+- Antes de desplegar: revisar cuántos servicios ya tienen seña 0; van a empezar a confirmar sin pago.
+
 #### Pendientes de la 2.11 (revisión del 2026-10-12; para más adelante)
 - ~~Verificar después del deploy: más de 10 logins fallidos desde el celular (datos móviles) dan 429 ahí y otra red sigue entrando.~~ Verificado en prod el 2026-10-12.
 - Login limitado solo por IP: sumar un límite por cuenta (email) contra credential stuffing distribuido.
@@ -83,7 +88,7 @@ Ya verifiqué contra el código los hallazgos 2, 3, 4, 5, 7, 8 y 9 (se confirman
 - Después de restaurar un backup, la secuencia de bookings puede reusar ids: un reembolso tardío de `booking-N` podría pegarle a otro turno del mismo negocio (inferido, sin probar). Ver RUNBOOK.
 
 ### Fase 3 — Quick wins del panel (ideas)
-11. Seña opcional por servicio: un checkbox "cobrar seña". Sin seña, el turno se confirma directo sin MP y se encola la confirmación. MP solo es obligatorio si algún servicio cobra seña.
+11. ~~Seña opcional por servicio: un checkbox "cobrar seña". Sin seña, el turno se confirma directo sin MP y se encola la confirmación. MP solo es obligatorio si algún servicio cobra seña.~~ **Hecho (rama `feat/optional-deposit`, D-035)**: sin seña = `deposit_amount = 0`; la reserva pública nace `confirmed`, con tope de 3 turnos futuros sin seña por teléfono y negocio.
 12. Horarios: elegir varios días en un solo submit.
 13. Arreglar cómo se muestra el nombre de la cuenta MP.
 13b. Plazos configurables por el negocio en Ajustes: plazo de seña (`deposit_expiration_minutes`, hoy solo por API) y tope del link de pago (48 h fijo). Ver deuda en D-031.
@@ -146,4 +151,4 @@ Rama → test que falla → fix → `./scripts/test.sh` + `ruff check app/ tests
 
 Las fases 1-2 cierran los 12 hallazgos. Se chequea revisando que la sección "Hallazgos abiertos" de CLAUDE.md quede vacía.
 
-Siguiente tarea concreta: **Fase 3** (la Fase 2b está completa; quedan los pendientes listados arriba).
+Siguiente tarea concreta: **Fase 3, ítem 12** (Horarios: elegir varios días en un solo submit). El ítem 11 está hecho; quedan los pendientes listados arriba.
