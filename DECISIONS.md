@@ -886,7 +886,8 @@ Commit: `92a24d9`.
 - **Riesgo** — Si el webhook de un pago aprobado justo antes del vencimiento llega más de 2 h tarde, ese pago queda sin verificar.
 - **Riesgo** — Con `start_time` en el pasado (no se valida todavía, hallazgo #2) el link nace vencido y MP puede rechazar la preferencia (502).
 - **Riesgo** — Los `Payment` anteriores a la migración `7f0ee645a6dd` no tienen `mp_expires_at` y el guard los ignora (al 2026-10-09 solo hay datos de prueba).
-- **Deuda** — Los plazos son fijos o solo por API: que el negocio configure desde el panel el plazo de la seña (`deposit_expiration_minutes`, hoy solo `PATCH /tenants/me` con API key) y el tope del link (48 h, hoy constante `_MAX_PAYMENT_LINK_LIFETIME` en `app/routers/public.py`). La gracia de 2 h es técnica (reintentos de MP) y no se expone.
+- **Deuda** — ~~Plazos fijos o solo por API~~: resuelto en el ítem 13b. El plazo de la seña se elige en `/panel/settings` (15 min a 24 h, sin `NULL`). El tope de 48 h (`_MAX_PAYMENT_LINK_LIFETIME`) no se expone porque con esos plazos nunca se activa; solo pesa con valores puestos por API. La gracia de 2 h es técnica (reintentos de MP) y no se expone.
+- **Corrección (13b)** — El job de expiración usaba el plazo actual del tenant: acortarlo vencía pendientes cuyo link seguía vivo en MP (el cliente podía pagar y quedarse sin turno si otro tomaba el horario) y alargarlo retenía el horario con el link ya vencido. Ahora vence cada reserva con su `Payment.mp_expires_at`; sin link, con `created_at` + plazo del tenant. Efecto lateral: una reserva cuyo turno empieza antes del plazo vence a la hora del turno (antes esperaba el plazo completo).
 
 **Implementación**: `app/mp_webhooks.py` (`create_mp_preference`), `app/routers/public.py`, `app/mp_connect.py` (`has_payable_mp_payment`, `clear_mp_connection`), `app/routers/panel.py`. Tests en `tests/test_panel_mp_connect.py`, `tests/test_mp_connect.py`, `tests/test_mp_webhooks.py`, `tests/test_mp_tenant_payment.py`.
 

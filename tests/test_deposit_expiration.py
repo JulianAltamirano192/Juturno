@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 
 import pytest
 import redis.asyncio as redis_async
@@ -6,7 +7,7 @@ import redis.asyncio as redis_async
 from app import scheduler
 from app.auth import hash_api_key
 from app.config import settings
-from app.models import ApiKey, Booking, Service, Tenant
+from app.models import ApiKey, Booking, Payment, Service, Tenant
 from app.scheduler import process_deposit_expiration
 from tests.conftest import TestingSessionLocal
 
@@ -71,6 +72,21 @@ async def _tenant_with_pending_booking(db_session, *, expiration_minutes, create
     db_session.add(booking)
     await db_session.commit()
     return tenant, booking
+
+
+async def _add_payment_link(db_session, booking, expires_at):
+    """Preferencia de MP de la reserva con su vencimiento (D-031)."""
+    db_session.add(
+        Payment(
+            booking_id=booking.id,
+            amount=Decimal("300.00"),
+            mp_preference_id=f"pref-{booking.id}",
+            mp_expires_at=expires_at,
+            method="mercadopago",
+            status="pending",
+        )
+    )
+    await db_session.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -340,6 +356,44 @@ async def test_payment_of_another_booking_is_ignored(db_session, mp_search):
     other = _approved(booking)
     other["external_reference"] = f"booking-{booking.id + 1000}"
     mp_search["approved"]["pay_other_booking"] = other
+
+    await process_deposit_expiration(TestingSessionLocal)
+
+    await db_session.refresh(booking)
+    assert booking.status == "expired"
+
+
+@pytest.mark.asyncio
+async def test_shorter_deadline_keeps_booking_while_link_is_payable(
+    db_session, mp_search
+):
+    """El negocio bajó el plazo de 24 h a 15 min: la reserva creada con el
+    plazo viejo sigue pendiente mientras su link de MP se pueda pagar (si no,
+    el horario se libera y un pago tardío queda sin turno)."""
+    _, booking = await _tenant_with_pending_booking(
+        db_session, expiration_minutes=15, created_ago=timedelta(minutes=30)
+    )
+    await _add_payment_link(
+        db_session, booking, datetime.now(timezone.utc) + timedelta(hours=23)
+    )
+
+    await process_deposit_expiration(TestingSessionLocal)
+
+    await db_session.refresh(booking)
+    assert booking.status == "pending"
+    assert mp_search["searched"] == []
+
+
+@pytest.mark.asyncio
+async def test_longer_deadline_expires_booking_once_link_is_dead(db_session):
+    """El negocio subió el plazo de 15 min a 24 h: la reserva cuyo link ya
+    venció en MP no puede pagarse y no retiene el horario 24 h."""
+    _, booking = await _tenant_with_pending_booking(
+        db_session, expiration_minutes=1440, created_ago=timedelta(minutes=30)
+    )
+    await _add_payment_link(
+        db_session, booking, datetime.now(timezone.utc) - timedelta(minutes=15)
+    )
 
     await process_deposit_expiration(TestingSessionLocal)
 

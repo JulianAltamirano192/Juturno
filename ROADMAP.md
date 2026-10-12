@@ -91,7 +91,7 @@ Ya verifiqué contra el código los hallazgos 2, 3, 4, 5, 7, 8 y 9 (se confirman
 11. ~~Seña opcional por servicio: un checkbox "cobrar seña". Sin seña, el turno se confirma directo sin MP y se encola la confirmación. MP solo es obligatorio si algún servicio cobra seña.~~ **Hecho (rama `feat/optional-deposit`, D-035)**: sin seña = `deposit_amount = 0`; la reserva pública nace `confirmed`, con tope de 3 turnos futuros sin seña por teléfono y negocio.
 12. ~~Horarios: elegir varios días en un solo submit.~~ **Hecho (rama `feat/multi-day-hours`)**: casillas de días en "Nuevo horario"; una fila por día, todo o nada si algún día se solapa. Editar sigue siendo de a un día.
 13. ~~Arreglar cómo se muestra el nombre de la cuenta MP.~~ **Hecho (rama `fix/mp-account-display-name`)**: al conectar se guarda `first_name last_name` de `/users/me` (si faltan, el nickname autogenerado de MP) y el nombre largo hace salto de línea en celular. Las cuentas ya conectadas muestran el nickname hasta que reconecten.
-13b. Plazos configurables por el negocio en Ajustes: plazo de seña (`deposit_expiration_minutes`, hoy solo por API) y tope del link de pago (48 h fijo). Ver deuda en D-031.
+13b. ~~Plazos configurables por el negocio en Ajustes.~~ **Hecho (rama `feat/deposit-expiration-setting`)**: desplegable "Plazo para pagar la seña" (15 min a 24 h, sin "sin vencimiento"). El tope de 48 h del link queda como constante técnica: con plazos de hasta 24 h nunca se activa.
 26. Turno manual desde el panel (cliente sin turno o reserva por teléfono): nace `confirmed` sin seña, vía `transition_booking_status` + `enqueue_confirmation`; captura `IntegrityError` → 409.
 27. Aviso al dueño cuando entra un turno confirmado (WhatsApp o email), reusando la outbox.
 28. Notas internas por turno + exportar turnos a CSV.
@@ -151,4 +151,4 @@ Rama → test que falla → fix → `./scripts/test.sh` + `ruff check app/ tests
 
 Las fases 1-2 cierran los 12 hallazgos. Se chequea revisando que la sección "Hallazgos abiertos" de CLAUDE.md quede vacía.
 
-Siguiente tarea concreta: **Fase 3, ítem 13b** (plazos configurables en Ajustes). Los ítems 11, 12 y 13 están hechos; quedan los pendientes listados arriba.
+Siguiente tarea concreta: **Fase 3, ítem 26** (turno manual desde el panel). Los ítems 11, 12, 13 y 13b están hechos; quedan los pendientes listados arriba.

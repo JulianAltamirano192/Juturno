@@ -4,11 +4,11 @@ from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import redis.asyncio as redis
-from sqlalchemy import and_, select
+from sqlalchemy import and_, func, select
 
 from app.booking_actions import transition_booking_status
 from app.config import settings
-from app.models import Booking, NotificationOutbox, Tenant
+from app.models import Booking, NotificationOutbox, Payment, Tenant
 from app.mp_connect import (
     REFRESH_AHEAD_DAYS,
     refresh_tenant_mp_token,
@@ -115,8 +115,13 @@ RECONCILE_GRACE = timedelta(hours=1)
 async def process_deposit_expiration(async_session_maker):
     """
     Job periódico que expira reservas 'pending' cuyo límite de pago de seña
-    (deposit_expiration_minutes del tenant) venció. Al marcarlas 'expired'
-    liberan el horario (el ExcludeConstraint solo bloquea pending/confirmed).
+    venció. Al marcarlas 'expired' liberan el horario (el ExcludeConstraint
+    solo bloquea pending/confirmed).
+
+    El límite es el vencimiento del link de MP de la reserva
+    (Payment.mp_expires_at, D-031) y no el plazo actual del tenant: si el
+    negocio lo cambia, las pendientes ya creadas siguen con el suyo. Sin
+    link (reservas previas a D-031) se usa created_at + plazo del tenant.
 
     Antes de expirar consulta a MP por si el pago se aprobó y el webhook
     nunca llegó (D-023). Las llamadas a MP van antes de bloquear la fila, y
@@ -140,6 +145,11 @@ async def process_deposit_expiration(async_session_maker):
         now = datetime.now(timezone.utc)
 
         # 2. Pendientes de tenants con límite configurado que ya lo superaron
+        link_expires_at = (
+            select(func.max(Payment.mp_expires_at))
+            .where(Payment.booking_id == Booking.id)
+            .scalar_subquery()
+        )
         async with async_session_maker() as session:
             rows = (
                 await session.execute(
@@ -147,6 +157,7 @@ async def process_deposit_expiration(async_session_maker):
                         Booking.id,
                         Booking.created_at,
                         Tenant.deposit_expiration_minutes,
+                        link_expires_at,
                     )
                     .join(Tenant, Booking.tenant_id == Tenant.id)
                     .where(
@@ -157,11 +168,11 @@ async def process_deposit_expiration(async_session_maker):
                     )
                 )
             ).all()
-        overdue = [
-            (booking_id, created_at + timedelta(minutes=minutes))
-            for booking_id, created_at, minutes in rows
-            if now > created_at + timedelta(minutes=minutes)
+        deadlines = [
+            (booking_id, link_expiry or created_at + timedelta(minutes=minutes))
+            for booking_id, created_at, minutes, link_expiry in rows
         ]
+        overdue = [(b, deadline) for b, deadline in deadlines if now > deadline]
 
         # 3. Por reserva: consultar MP, después bloquear y confirmar o vencer
         expired_count = 0
