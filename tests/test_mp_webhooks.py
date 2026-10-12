@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 
 import pytest
 from fastapi import HTTPException
@@ -802,7 +803,7 @@ async def test_webhook_updates_existing_pending_payment(
     # Payment preexistente en pending, como queda tras la reserva pública
     payment = Payment(
         booking_id=booking.id,
-        amount=30.0,
+        amount=Decimal("30.00"),
         mp_payment_id="pay_update_1",
         method="mercado_pago",
         status="pending",
@@ -930,7 +931,7 @@ async def test_create_mp_preference_selects_checkout_url_by_mode(
     with patch("app.mp_webhooks.httpx.AsyncClient", return_value=client_mock):
         result = await mp_webhooks.create_mp_preference(
             booking_id=1,
-            amount=30.0,
+            amount=Decimal("30.00"),
             client_name="Test",
             expires_at=datetime.now(timezone.utc) + timedelta(minutes=15),
         )
@@ -966,7 +967,7 @@ async def test_create_mp_preference_uses_configured_notification_url(
     with patch("app.mp_webhooks.httpx.AsyncClient", return_value=client_mock):
         await mp_webhooks.create_mp_preference(
             booking_id=1,
-            amount=30.0,
+            amount=Decimal("30.00"),
             client_name="Test",
             expires_at=datetime.now(timezone.utc) + timedelta(minutes=15),
         )
@@ -1636,7 +1637,7 @@ async def test_webhook_production_collector_matches_confirms(
         return _make_payment_details(
             "approved",
             f"booking-{booking.id}",
-            amount=30.0,
+            amount=Decimal("30.00"),
             collector_id="correct-account-789",
         )
 
@@ -1959,11 +1960,231 @@ async def test_create_mp_preference_expires_with_the_booking():
     expires_at = datetime(2026, 10, 15, 12, 30, tzinfo=timezone.utc)
     with patch("app.mp_webhooks.httpx.AsyncClient", return_value=client_mock):
         await mp_webhooks.create_mp_preference(
-            booking_id=1, amount=30.0, client_name="Test", expires_at=expires_at
+            booking_id=1,
+            amount=Decimal("30.50"),
+            client_name="Test",
+            expires_at=expires_at,
         )
 
     body = client_mock.post.call_args.kwargs["json"]
+    # httpx no serializa Decimal: el monto se convierte recién al armar el JSON.
+    assert body["items"][0]["unit_price"] == 30.5
+    assert isinstance(body["items"][0]["unit_price"], float)
     assert body["expires"] is True
     assert body["expiration_date_to"] == "2026-10-15T12:30:00.000+00:00"
     assert {"id": "ticket"} in body["payment_methods"]["excluded_payment_types"]
     assert {"id": "atm"} in body["payment_methods"]["excluded_payment_types"]
+
+
+async def _post_signed_webhook(client, monkeypatch, data_id: str, request_id: str):
+    secret = "test-webhook-secret"
+    monkeypatch.setattr(mp_webhooks.settings, "MP_SECRET_KEY", secret)
+    ts = int(datetime.now(timezone.utc).timestamp())
+    payload = {"action": "payment.updated", "data": {"id": data_id}}
+    headers = {
+        "x-signature": _sign_webhook(data_id, request_id, ts, secret),
+        "x-request-id": request_id,
+    }
+    return await client.post(_webhook_url(payload), json=payload, headers=headers)
+
+
+SELLER = "seller-1"
+
+
+async def _confirmed_booking(db_session, key: str, starts_in: timedelta) -> Booking:
+    booking = await _create_booking(db_session, key)
+    start = datetime.now(timezone.utc) + starts_in
+    booking.start_time = start
+    booking.end_time = start + timedelta(minutes=30)
+    booking.status = "confirmed"
+    db_session.add(booking)
+    tenant = await db_session.get(Tenant, booking.tenant_id)
+    tenant.mp_user_id = SELLER
+    db_session.add(tenant)
+    await db_session.commit()
+    return booking
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mp_status", ["refunded", "charged_back"])
+async def test_webhook_refund_cancels_upcoming_booking(
+    client, db_session, monkeypatch, mp_status
+):
+    """Reembolso total o contracargo de la seña: el turno que no empezó se
+    cancela y libera el horario. Flujo real: el Payment ya estaba aprobado."""
+    booking = await _confirmed_booking(
+        db_session, f"refund_{mp_status}", timedelta(days=1)
+    )
+    db_session.add(
+        Payment(
+            booking_id=booking.id,
+            amount=Decimal("100.00"),
+            mp_payment_id=f"pay_{mp_status}",
+            method="visa",
+            status="approved",
+        )
+    )
+    await db_session.commit()
+
+    async def details(data_id: str, access_token: str | None = None):
+        return _make_payment_details(
+            mp_status, f"booking-{booking.id}", collector_id=SELLER
+        )
+
+    monkeypatch.setattr(mp_webhooks, "get_payment_details", details)
+
+    res = await _post_signed_webhook(client, monkeypatch, f"pay_{mp_status}", "req_r1")
+
+    assert res.status_code == 200
+    assert res.text == "EVENT_PROCESSED"
+    await db_session.refresh(booking)
+    assert booking.status == "cancelled"
+    assert booking.status_changed_by == "webhook_mp"
+    assert booking.cancellation_reason == f"mp_payment_{mp_status}"
+
+
+@pytest.mark.asyncio
+async def test_webhook_refund_keeps_started_booking(client, db_session, monkeypatch):
+    """Un turno que ya empezó no se cancela: solo se registra el reembolso."""
+    booking = await _confirmed_booking(db_session, "refund_past", timedelta(hours=-2))
+
+    async def details(data_id: str, access_token: str | None = None):
+        return _make_payment_details(
+            "refunded", f"booking-{booking.id}", collector_id=SELLER
+        )
+
+    monkeypatch.setattr(mp_webhooks, "get_payment_details", details)
+
+    res = await _post_signed_webhook(client, monkeypatch, "pay_refund_past", "req_r2")
+
+    assert res.status_code == 200
+    await db_session.refresh(booking)
+    assert booking.status == "confirmed"
+    pay = await db_session.execute(
+        text("SELECT status FROM payment WHERE mp_payment_id='pay_refund_past'")
+    )
+    assert pay.scalar_one() == "refunded"
+
+
+@pytest.mark.asyncio
+async def test_webhook_refund_of_duplicate_payment_keeps_booking(
+    client, db_session, monkeypatch
+):
+    """Si el cliente pagó dos veces y el negocio reembolsa uno, el turno
+    sigue confirmado por el otro pago aprobado."""
+    booking = await _confirmed_booking(db_session, "refund_dup", timedelta(days=1))
+    db_session.add(
+        Payment(
+            booking_id=booking.id,
+            amount=Decimal("100.00"),
+            mp_payment_id="pay_kept",
+            method="visa",
+            status="approved",
+        )
+    )
+    await db_session.commit()
+
+    async def details(data_id: str, access_token: str | None = None):
+        return _make_payment_details(
+            "refunded", f"booking-{booking.id}", collector_id=SELLER
+        )
+
+    monkeypatch.setattr(mp_webhooks, "get_payment_details", details)
+
+    res = await _post_signed_webhook(client, monkeypatch, "pay_refund_dup", "req_r3")
+
+    assert res.status_code == 200
+    await db_session.refresh(booking)
+    assert booking.status == "confirmed"
+
+
+@pytest.mark.asyncio
+async def test_webhook_booking_not_found(client, db_session, monkeypatch):
+    """external_reference apunta a un booking que no existe: no se crea el
+    Payment y el resultado lo dice (antes la FK fallaba y se reportaba como
+    duplicado ya procesado)."""
+
+    async def details(data_id: str, access_token: str | None = None):
+        return _make_payment_details("approved", "booking-987654321")
+
+    monkeypatch.setattr(mp_webhooks, "get_payment_details", details)
+
+    res = await _post_signed_webhook(client, monkeypatch, "pay_orphan", "req_o1")
+
+    assert res.status_code == 200
+    assert res.text == "BOOKING_NOT_FOUND"
+    pay = await db_session.execute(
+        text("SELECT count(*) FROM payment WHERE mp_payment_id='pay_orphan'")
+    )
+    assert pay.scalar_one() == 0
+    ev = await db_session.execute(
+        text("SELECT status FROM payment_events WHERE event_id='pay_orphan:req_o1'")
+    )
+    assert ev.scalar_one() == "processed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tenant_mp_user_id", [None, "other-account"])
+async def test_webhook_refund_without_tenant_guard_keeps_booking(
+    client, db_session, monkeypatch, tenant_mp_user_id
+):
+    """Un reembolso de otra cuenta de MP no cancela el turno: ni con
+    collector_id distinto (TENANT_MISMATCH) ni con el guard salteado fuera
+    de producción (tenant sin mp_user_id)."""
+    booking = await _confirmed_booking(
+        db_session, f"refund_guard_{tenant_mp_user_id}", timedelta(days=1)
+    )
+    tenant = await db_session.get(Tenant, booking.tenant_id)
+    tenant.mp_user_id = tenant_mp_user_id
+    db_session.add(tenant)
+    await db_session.commit()
+
+    async def details(data_id: str, access_token: str | None = None):
+        return _make_payment_details(
+            "refunded", f"booking-{booking.id}", collector_id=SELLER
+        )
+
+    monkeypatch.setattr(mp_webhooks, "get_payment_details", details)
+
+    res = await _post_signed_webhook(
+        client, monkeypatch, f"pay_guard_{tenant_mp_user_id}", "req_g1"
+    )
+
+    assert res.status_code == 200
+    await db_session.refresh(booking)
+    assert booking.status == "confirmed"
+
+
+@pytest.mark.asyncio
+async def test_webhook_stale_approved_does_not_overwrite_refund(
+    client, db_session, monkeypatch
+):
+    """Un webhook que leyó "approved" antes del reembolso y llega después no
+    devuelve el Payment a approved."""
+    booking = await _confirmed_booking(db_session, "refund_stale", timedelta(days=1))
+    db_session.add(
+        Payment(
+            booking_id=booking.id,
+            amount=Decimal("100.00"),
+            mp_payment_id="pay_stale",
+            method="visa",
+            status="refunded",
+        )
+    )
+    await db_session.commit()
+
+    async def details(data_id: str, access_token: str | None = None):
+        return _make_payment_details(
+            "approved", f"booking-{booking.id}", collector_id=SELLER
+        )
+
+    monkeypatch.setattr(mp_webhooks, "get_payment_details", details)
+
+    res = await _post_signed_webhook(client, monkeypatch, "pay_stale", "req_s1")
+
+    assert res.status_code == 200
+    assert res.text == "STALE_STATUS_IGNORED"
+    pay = await db_session.execute(
+        text("SELECT status FROM payment WHERE mp_payment_id='pay_stale'")
+    )
+    assert pay.scalar_one() == "refunded"

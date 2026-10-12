@@ -340,7 +340,7 @@ async def create_public_booking(
     try:
         mp_result = await create_mp_preference(
             booking_id=new_booking.id,
-            amount=float(deposit_decimal),
+            amount=deposit_decimal,
             client_name=payload.client_name,
             expires_at=link_expires_at,
             back_url=(
