@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+
+{% block title %}Nuevo turno - {{ tenant.name }}{% endblock %}
+
+{% block head %}
+<style>
+  .booking-form{max-width:560px}
+  .when-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:0 14px}
+  @media (max-width:900px){.form-actions .btn-p{width:100%;min-height:54px}}
+</style>
+{% endblock %}
+
+{% block dash_content %}
+<a href="/panel/agenda{% if form.get('date') %}?day={{ form.get('date') }}{% endif %}" class="back-link">{{ ui.icon('izq') }}Volver a la agenda</a>
+<div class="ph">
+  <div>
+    <h1>Nuevo turno</h1>
+    <p>Para reservas por teléfono o clientes sin turno. Queda confirmado, sin seña, y le avisamos por WhatsApp.</p>
+  </div>
+</div>
+
+<form method="POST" action="/panel/agenda/new" class="form-card booking-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+  {% if form_errors %}
+  <div class="banner banner-danger" role="alert">{{ ui.icon('alerta') }}
+    <span>{% for err in form_errors %}{{ err }}{% if not loop.last %}<br>{% endif %}{% endfor %}</span>
+  </div>
+  {% endif %}
+
+  <div class="field">
+    <label for="service_id">Servicio</label>
+    <select id="service_id" name="service_id" class="{% if errors.service_id %}has-error{% endif %}">
+      {% set service_ids = services | map(attribute='id') | map('string') | list %}
+      <option value="" disabled{% if form.get('service_id') not in service_ids %} selected{% endif %}>Elegí un servicio</option>
+      {% for s in services %}
+      <option value="{{ s.id }}"{% if form.get('service_id') == s.id|string %} selected{% endif %}>{{ s.name }} · {{ s.duration_minutes }} min</option>
+      {% endfor %}
+    </select>
+    {% if errors.service_id %}<div class="field-error">{{ errors.service_id }}</div>{% endif %}
+  </div>
+
+  {% if staff_members %}
+  <div class="field">
+    <label for="staff_id">Personal <span class="opt">(opcional)</span></label>
+    <select id="staff_id" name="staff_id" class="{% if errors.staff_id %}has-error{% endif %}">
+      <option value="">Sin asignar</option>
+      {% for m in staff_members %}
+      <option value="{{ m.id }}"{% if form.get('staff_id') == m.id|string %} selected{% endif %}>{{ m.name }}</option>
+      {% endfor %}
+    </select>
+    {% if errors.staff_id %}<div class="field-error">{{ errors.staff_id }}</div>{% endif %}
+  </div>
+  {% endif %}
+
+  <div class="when-row">
+    <div class="field">
+      <label for="date">Fecha</label>
+      <input type="date" id="date" name="date" value="{{ form.get('date', '') }}" class="{% if errors.date %}has-error{% endif %}">
+      {% if errors.date %}<div class="field-error">{{ errors.date }}</div>{% endif %}
+    </div>
+    <div class="field">
+      <label for="time">Hora</label>
+      <input type="time" id="time" name="time" value="{{ form.get('time', '') }}" class="{% if errors.time %}has-error{% endif %}">
+      {% if errors.time %}<div class="field-error">{{ errors.time }}</div>{% endif %}
+    </div>
+  </div>
+
+  <div class="field">
+    <label for="client_name">Nombre del cliente</label>
+    <input type="text" id="client_name" name="client_name" autocomplete="off" maxlength="60" value="{{ form.get('client_name', '') }}" placeholder="Ej: María Gómez" class="{% if errors.client_name %}has-error{% endif %}">
+    {% if errors.client_name %}<div class="field-error">{{ errors.client_name }}</div>{% endif %}
+  </div>
+
+  <div class="field">
+    <label for="client_phone">WhatsApp del cliente</label>
+    <input type="tel" id="client_phone" name="client_phone" inputmode="tel" autocomplete="off" value="{{ form.get('client_phone', '') }}" placeholder="Ej: 11 5555 5555" class="{% if errors.client_phone %}has-error{% endif %}">
+    {% if errors.client_phone %}<div class="field-error">{{ errors.client_phone }}</div>{% endif %}
+  </div>
+
+  <div class="form-actions">
+    <button type="submit" class="btn-p">Crear turno</button>
+  </div>
+</form>
+{% endblock %}

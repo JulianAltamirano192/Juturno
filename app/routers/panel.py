@@ -1,11 +1,12 @@
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Annotated
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
-from sqlalchemy import and_, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -32,6 +33,8 @@ from app.mp_connect import (
     has_payable_mp_payment,
     mp_authorization_redirect,
 )
+from app.phone import InvalidPhoneError, normalize_whatsapp_phone
+from app.schemas import clean_client_name
 from app.services import effective_deposit
 from app.templates import templates
 
@@ -51,6 +54,8 @@ _AGENDA_ACTION_REDIRECT = "/panel/agenda"
 
 # Máximo de Numeric(10,2); un valor mayor hace fallar el INSERT con 500.
 _MAX_AMOUNT = Decimal("99999999.99")
+# Turnos manuales por tenant en 24 h móviles (cada uno manda un WhatsApp).
+MANUAL_BOOKINGS_PER_DAY = 50
 
 
 def _parse_amount(raw: str) -> Decimal:
@@ -1262,6 +1267,250 @@ async def panel_agenda(
     )
     set_csrf_cookie(response, csrf_token)
     return response
+
+
+# ---------------------------------------------------------------------------
+# Panel Agenda: alta manual de turno (reserva telefónica o sin turno previo)
+# ---------------------------------------------------------------------------
+
+
+async def _render_manual_booking_form(
+    request: Request,
+    session: AsyncSession,
+    tenant: Tenant,
+    form: dict[str, str],
+    errors: dict[str, str] | None = None,
+    form_errors: list[str] | None = None,
+    status_code: int = 200,
+) -> HTMLResponse:
+    services = (
+        (
+            await session.execute(
+                select(Service)
+                .where(Service.tenant_id == tenant.id, Service.is_active)
+                .order_by(Service.name)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    staff_members = (
+        (
+            await session.execute(
+                select(Staff)
+                .where(Staff.tenant_id == tenant.id, Staff.is_active)
+                .order_by(Staff.name)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    csrf_token = generate_csrf_token(request)
+    response = templates.TemplateResponse(
+        request,
+        "manual_booking_form.html",
+        {
+            "tenant": tenant,
+            "csrf_token": csrf_token,
+            "services": services,
+            "staff_members": staff_members,
+            "form": form,
+            "errors": errors or {},
+            "form_errors": form_errors or [],
+        },
+        status_code=status_code,
+    )
+    set_csrf_cookie(response, csrf_token)
+    return response
+
+
+@router.get("/panel/agenda/new", response_class=HTMLResponse)
+async def panel_agenda_new_form(
+    request: Request,
+    day: Annotated[str | None, Query()] = None,
+    tenant: Tenant = Depends(get_current_tenant_from_session),
+    session: AsyncSession = Depends(get_db),
+):
+    target_day = datetime.now(_tenant_tz(tenant)).date()
+    if day:
+        try:
+            target_day = date.fromisoformat(day)
+        except ValueError:
+            pass
+    return await _render_manual_booking_form(
+        request, session, tenant, {"date": target_day.isoformat()}
+    )
+
+
+@router.post("/panel/agenda/new", response_class=HTMLResponse)
+async def panel_agenda_new_submit(
+    request: Request,
+    tenant: Tenant = Depends(get_current_tenant_from_session),
+    session: AsyncSession = Depends(get_db),
+):
+    """
+    El dueño carga un turno a mano: nace confirmado, sin seña ni MP, y encola
+    la confirmación por WhatsApp. Horario libre (sin grilla, horario de
+    atención ni horizonte); solo el EXCLUDE evita superposiciones.
+    """
+    await validate_csrf(request)
+    form = {k: v for k, v in (await request.form()).items() if isinstance(v, str)}
+    errors: dict[str, str] = {}
+
+    # Cada turno manual manda un WhatsApp desde el número de la plataforma y el
+    # registro no verifica email: tope por tenant (no por IP).
+    # ponytail: contar y después insertar; envíos concurrentes pueden pasar el
+    # tope por pocos. Lock por tenant si hiciera falta exactitud.
+    manual_last_day = (
+        await session.execute(
+            select(func.count())
+            .select_from(Booking)
+            .where(
+                Booking.tenant_id == tenant.id,
+                Booking.idempotency_key.startswith("panel-"),
+                # La clave la elige también la reserva pública; el actor no.
+                Booking.status_changed_by == "owner",
+                Booking.created_at > datetime.now(timezone.utc) - timedelta(days=1),
+            )
+        )
+    ).scalar_one()
+    if manual_last_day >= MANUAL_BOOKINGS_PER_DAY:
+        return await _render_manual_booking_form(
+            request,
+            session,
+            tenant,
+            form,
+            form_errors=[
+                (
+                    f"Llegaste al límite de {MANUAL_BOOKINGS_PER_DAY} turnos "
+                    "manuales en 24 horas. Probá más tarde."
+                )
+            ],
+            status_code=400,
+        )
+
+    service = (
+        await session.execute(
+            select(Service).where(
+                Service.tenant_id == tenant.id,
+                Service.is_active,
+                Service.id == _form_int(form.get("service_id")),
+            )
+        )
+    ).scalar_one_or_none()
+    if service is None:
+        errors["service_id"] = "Elegí un servicio."
+
+    staff_id: int | None = None
+    if form.get("staff_id"):
+        staff = (
+            await session.execute(
+                select(Staff).where(
+                    Staff.tenant_id == tenant.id,
+                    Staff.is_active,
+                    Staff.id == _form_int(form.get("staff_id")),
+                )
+            )
+        ).scalar_one_or_none()
+        if staff is None:
+            errors["staff_id"] = "Elegí un miembro del personal válido."
+        else:
+            staff_id = staff.id
+
+    start_time: datetime | None = None
+    end_time: datetime | None = None
+    local_day: date | None = None
+    try:
+        local_day = date.fromisoformat(form.get("date", ""))
+    except ValueError:
+        errors["date"] = "Ingresá una fecha válida."
+    try:
+        # Algunos navegadores mandan HH:MM:SS; el turno empieza en el minuto.
+        local_time = time.fromisoformat(form.get("time", "")).replace(
+            second=0, microsecond=0
+        )
+    except ValueError:
+        errors["time"] = "Ingresá una hora válida (HH:MM)."
+    if local_day is not None and "time" not in errors:
+        try:
+            start_time = datetime.combine(
+                local_day, local_time, tzinfo=_tenant_tz(tenant)
+            ).astimezone(timezone.utc)
+            if service is not None:
+                end_time = start_time + timedelta(minutes=service.duration_minutes)
+        except OverflowError:
+            start_time = None
+            errors["date"] = "Ingresá una fecha válida."
+        if start_time is not None and start_time <= datetime.now(timezone.utc):
+            errors["time"] = "El turno tiene que ser en el futuro."
+
+    try:
+        client_name = clean_client_name(form.get("client_name", ""))
+    except ValueError:
+        errors["client_name"] = (
+            "Ingresá un nombre (entre 2 y 60 caracteres, sin links)."
+        )
+
+    try:
+        client_phone = normalize_whatsapp_phone(form.get("client_phone", ""))
+    except InvalidPhoneError:
+        errors["client_phone"] = (
+            "Ingresá un WhatsApp válido con característica (ej: 11 5555 5555)."
+        )
+
+    if (
+        errors
+        or service is None
+        or start_time is None
+        or end_time is None
+        or local_day is None
+    ):
+        return await _render_manual_booking_form(
+            request, session, tenant, form, errors=errors, status_code=400
+        )
+
+    booking = Booking(
+        tenant_id=tenant.id,
+        service_id=service.id,
+        staff_id=staff_id,
+        client_name=client_name,
+        client_phone=client_phone,
+        start_time=start_time,
+        end_time=end_time,
+        price_at_booking=service.price,
+        deposit_at_booking=Decimal(0),
+        idempotency_key=f"panel-{uuid4().hex}",
+        status="pending",
+    )
+    try:
+        session.add(booking)
+        await session.flush()
+        await transition_booking_status(session, booking, "confirmed", actor="owner")
+        await session.commit()
+    except IntegrityError:
+        # EXCLUDE excl_overlapping_bookings: el horario choca con otro turno.
+        await session.rollback()
+        await session.refresh(tenant)
+        return await _render_manual_booking_form(
+            request,
+            session,
+            tenant,
+            form,
+            form_errors=["Ese horario se superpone con otro turno."],
+            status_code=409,
+        )
+
+    return _redirect_to_agenda(local_day.isoformat())
+
+
+def _form_int(raw: str | None) -> int:
+    """Id numérico del form; -1 (no matchea ningún id) si es inválido o no
+    entra en un INTEGER de Postgres."""
+    try:
+        value = int(raw or "")
+    except ValueError:
+        return -1
+    return value if 0 < value < 2**31 else -1
 
 
 # ---------------------------------------------------------------------------
