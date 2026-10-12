@@ -46,6 +46,26 @@
   {% endif %}
 </section>
 
+<section class="form-card" aria-labelledby="h-deposit">
+  <h2 id="h-deposit" style="font-size:18px">Plazo para pagar la seña</h2>
+  <form method="POST" action="/panel/settings/deposit-expiration" class="mp-row">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="field">
+      <label for="deposit_expiration_minutes">Si el cliente no paga en este tiempo, el turno vence y el horario se libera</label>
+      <select id="deposit_expiration_minutes" name="deposit_expiration_minutes">
+        {% set current = tenant.deposit_expiration_minutes %}
+        {% if current not in deposit_choices %}
+        <option value="" selected disabled>{% if current is none %}Sin vencimiento{% else %}{{ current }} minutos{% endif %}</option>
+        {% endif %}
+        {% for minutes in deposit_choices %}
+        <option value="{{ minutes }}"{% if minutes == current %} selected{% endif %}>{% if minutes < 60 %}{{ minutes }} minutos{% elif minutes == 60 %}1 hora{% else %}{{ minutes // 60 }} horas{% endif %}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <button type="submit" class="btn-p">Guardar</button>
+  </form>
+</section>
+
 <section class="form-card" aria-labelledby="h-horizon">
   <h2 id="h-horizon" style="font-size:18px">Reservas anticipadas</h2>
   <form method="POST" action="/panel/settings/booking-horizon" class="mp-row">

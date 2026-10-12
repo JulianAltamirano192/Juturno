@@ -20,6 +20,7 @@ from app.csrf import generate_csrf_token, set_csrf_cookie, validate_csrf
 from app.database import get_db
 from app.models import (
     BOOKING_HORIZON_CHOICES,
+    DEPOSIT_EXPIRATION_CHOICES,
     Booking,
     BusinessHours,
     Service,
@@ -413,22 +414,32 @@ _HORIZON_FLASH = {
     "invalid": "Elegí una de las opciones de la lista.",
 }
 
+_DEPOSIT_FLASH = {
+    "saved": "Guardamos el plazo para pagar la seña.",
+    "invalid": "Elegí una de las opciones de la lista.",
+}
+
 
 @router.get("/panel/settings", response_class=HTMLResponse)
 async def panel_settings(
     request: Request,
     mp: str | None = None,
     horizon: str | None = None,
+    deposit: str | None = None,
     tenant: Tenant = Depends(get_current_tenant_from_session),
 ):
     csrf_token = generate_csrf_token(request)
     # Solo mensajes fijos: nunca se refleja el query param.
-    flash = _MP_FLASH.get(mp or "")
-    if flash:
-        flash_error = mp in _MP_FLASH_ERRORS
-    else:
-        flash = _HORIZON_FLASH.get(horizon or "")
-        flash_error = horizon == "invalid"
+    flash, flash_error = None, False
+    for value, messages in (
+        (mp, _MP_FLASH),
+        (horizon, _HORIZON_FLASH),
+        (deposit, _DEPOSIT_FLASH),
+    ):
+        flash = messages.get(value or "")
+        if flash:
+            flash_error = value in _MP_FLASH_ERRORS or value == "invalid"
+            break
     response = templates.TemplateResponse(
         request,
         "settings.html",
@@ -439,6 +450,7 @@ async def panel_settings(
             "flash": flash,
             "flash_error": flash_error,
             "horizon_choices": BOOKING_HORIZON_CHOICES,
+            "deposit_choices": DEPOSIT_EXPIRATION_CHOICES,
         },
     )
     set_csrf_cookie(response, csrf_token)
@@ -497,6 +509,31 @@ async def panel_booking_horizon(
     await session.commit()
     return RedirectResponse(
         url="/panel/settings?horizon=saved", status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
+@router.post("/panel/settings/deposit-expiration")
+async def panel_deposit_expiration(
+    request: Request,
+    tenant: Tenant = Depends(get_current_tenant_from_session),
+    session: AsyncSession = Depends(get_db),
+):
+    await validate_csrf(request)
+    form = await request.form()
+    value = str(form.get("deposit_expiration_minutes", ""))
+    choices = {str(minutes): minutes for minutes in DEPOSIT_EXPIRATION_CHOICES}
+    if value not in choices:
+        return RedirectResponse(
+            url="/panel/settings?deposit=invalid",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    # Aplica a las reservas nuevas: las pendientes ya creadas vencen con su
+    # link de MP (Payment.mp_expires_at, D-031).
+    tenant.deposit_expiration_minutes = choices[value]
+    session.add(tenant)
+    await session.commit()
+    return RedirectResponse(
+        url="/panel/settings?deposit=saved", status_code=status.HTTP_303_SEE_OTHER
     )
 
 

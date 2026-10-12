@@ -21,6 +21,10 @@ from sqlmodel import JSON, Column, Field, Relationship, SQLModel
 # Días hacia adelante en que un cliente puede reservar (roadmap 2b.5).
 BOOKING_HORIZON_CHOICES = (15, 30, 60, 90)
 
+# Minutos para pagar la seña que el negocio puede elegir en el panel (13b).
+# Sin "sin vencimiento": el link de pago vence a las 48 h igual (D-031).
+DEPOSIT_EXPIRATION_CHOICES = (15, 30, 60, 120, 360, 1440)
+
 
 class Tenant(SQLModel, table=True):
     """
