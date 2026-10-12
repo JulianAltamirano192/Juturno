@@ -168,7 +168,8 @@ async def _exchange_code_for_tokens(code: str) -> dict[str, Any]:
 async def _fetch_mp_profile(
     access_token: str,
 ) -> tuple[str | None, str | None]:
-    """user_id y alias (nickname) de la cuenta recién autorizada.
+    """user_id y nombre visible de la cuenta recién autorizada: el del
+    titular, o el nickname (autogenerado por MP) si no lo trae.
     No es crítico: si falla, el tenant queda conectado igual."""
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -179,8 +180,19 @@ async def _fetch_mp_profile(
         if not resp.is_success:
             return None, None
         data = resp.json()
+        if not isinstance(data, dict):
+            return None, None
         user_id = data.get("id")
-        return (str(user_id) if user_id is not None else None, data.get("nickname"))
+        names = (data.get("first_name"), data.get("last_name"))
+        full_name = " ".join(
+            n.strip() for n in names if isinstance(n, str) and n.strip()
+        )
+        nickname = data.get("nickname")
+        nickname = nickname.strip() if isinstance(nickname, str) else None
+        return (
+            str(user_id) if user_id is not None else None,
+            full_name or nickname or None,
+        )
     except (httpx.HTTPError, ValueError):
         return None, None
 
