@@ -90,7 +90,7 @@ class Tenant(SQLModel, table=True):
     )
     mp_alias: str | None = Field(
         default=None,
-        description="Alias de la cuenta de MP, informativo (de /users/me).",
+        description="Nombre visible de la cuenta de MP (titular o nickname de /users/me).",
     )
     mp_access_token_enc: str | None = Field(
         default=None,

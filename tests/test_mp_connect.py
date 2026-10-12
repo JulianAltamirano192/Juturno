@@ -7,6 +7,7 @@ el stack local) — el state se guarda y se consume de verdad.
 
 from datetime import datetime, timedelta, timezone
 
+import httpx
 import pytest
 from cryptography.fernet import Fernet
 from sqlalchemy import text
@@ -295,3 +296,50 @@ async def test_delete_mp_blocked_while_payment_link_is_valid(client, db_session)
 
     await db_session.refresh(tenant)
     assert tenant.mp_access_token_enc is not None
+
+
+def _mock_users_me(monkeypatch, payload: object) -> None:
+    real_client = httpx.AsyncClient
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, json=payload))
+    monkeypatch.setattr(
+        mp_connect.httpx,
+        "AsyncClient",
+        lambda **kwargs: real_client(transport=transport, **kwargs),
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("payload", "expected_name"),
+    [
+        # El nickname de MP es autogenerado y no es lo que el dueño reconoce.
+        (
+            {
+                "nickname": "JUANPEREZ20230512",
+                "first_name": " Juan ",
+                "last_name": "Pérez",
+            },
+            "Juan Pérez",
+        ),
+        ({"nickname": "x", "first_name": None, "last_name": "Pérez"}, "Pérez"),
+        (
+            {"nickname": "negocio.demo", "first_name": "", "last_name": 7},
+            "negocio.demo",
+        ),
+        ({"nickname": "   "}, None),
+        ({"nickname": 123}, None),
+        ({}, None),
+    ],
+)
+async def test_fetch_mp_profile_display_name(monkeypatch, payload, expected_name):
+    _mock_users_me(monkeypatch, {"id": 1234567890, **payload})
+    assert await mp_connect._fetch_mp_profile("token") == (
+        "1234567890",
+        expected_name,
+    )
+
+
+@pytest.mark.asyncio
+async def test_fetch_mp_profile_ignores_non_object_json(monkeypatch):
+    _mock_users_me(monkeypatch, [])
+    assert await mp_connect._fetch_mp_profile("token") == (None, None)
