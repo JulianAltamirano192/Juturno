@@ -12,6 +12,8 @@
   .dur-row{display:flex;align-items:center;gap:10px}
   .dur-row input{width:110px}
   .dur-row span{color:var(--muted)}
+  .check-row{display:flex;align-items:center;gap:10px;min-height:44px;cursor:pointer}
+  .check-row input{width:20px;height:20px;accent-color:var(--cyan);flex-shrink:0}
   .dep-note{margin-top:8px;padding:10px 12px;border-radius:10px;background:rgba(34,211,238,.08);font-size:13px;line-height:1.5;color:var(--cyan-xl)}
   .preview{position:sticky;top:24px;display:flex;flex-direction:column;gap:12px}
   .preview .pv-label{font-size:13px;font-weight:600;color:var(--muted)}
@@ -63,6 +65,10 @@
     </div>
 
     <div class="field">
+      <label class="check-row"><input type="checkbox" id="charge_deposit" name="charge_deposit" value="on"{% if form.get('charge_deposit') %} checked{% endif %}>Cobrar seña al reservar</label>
+    </div>
+
+    <div class="field" id="deposit-field"{% if not form.get('charge_deposit') %} hidden{% endif %}>
       <label for="deposit_amount">Seña <span class="opt">(opcional)</span></label>
       <div class="input-prefix"><span>$</span><input type="text" id="deposit_amount" name="deposit_amount" inputmode="decimal" value="{{ form.get('deposit_amount', '') }}" placeholder="Vacío = 30% del precio" class="{% if errors.deposit_amount %}has-error{% endif %}"></div>
       <div class="dep-note" id="dep-note">{% if deposit_preview %}Si lo dejás vacío, la seña será {{ deposit_preview|money }} (30% del precio).{% else %}Si lo dejás vacío, la seña es el 30% del precio.{% endif %}</div>
@@ -82,7 +88,7 @@
         <span class="pv-dep" id="pv-dep">Seña —</span>
       </div>
     </div>
-    <p>El cliente paga la seña al reservar y el resto en tu local.</p>
+    <p id="pv-note">{% if form.get('charge_deposit') %}El cliente paga la seña al reservar y el resto en tu local.{% else %}El cliente reserva sin pagar nada y abona todo en tu local.{% endif %}</p>
   </aside>
 </div>
 {% endblock %}
@@ -98,12 +104,17 @@
   const durTxt = (m) => (m >= 60 ? Math.floor(m / 60) + " h" + (m % 60 ? " " + (m % 60) + " min" : "") : m + " min");
   function update() {
     const price = num($("price").value);
+    const charge = $("charge_deposit").checked;
     const depRaw = $("deposit_amount").value.trim();
     const dep = depRaw === "" ? price * 0.3 : num(depRaw);
+    $("deposit-field").hidden = !charge;
     const dur = parseInt($("duration_minutes").value, 10) || 0;
     $("pv-name").textContent = $("name").value.trim() || "Nombre del servicio";
     $("pv-meta").textContent = (dur ? durTxt(dur) : "—") + " · " + money(price);
-    $("pv-dep").textContent = "Seña " + money(dep);
+    $("pv-dep").textContent = charge ? "Seña " + money(dep) : "Sin seña";
+    $("pv-note").textContent = charge
+      ? "El cliente paga la seña al reservar y el resto en tu local."
+      : "El cliente reserva sin pagar nada y abona todo en tu local.";
     $("dep-note").textContent = depRaw === ""
       ? "Si lo dejás vacío, la seña será " + money(dep) + " (30% del precio)."
       : "El cliente paga " + money(dep) + " al reservar y " + money(Math.max(price - dep, 0)) + " en el local.";
@@ -114,6 +125,7 @@
     update();
   }));
   ["name", "duration_minutes", "price", "deposit_amount"].forEach((id) => $(id).addEventListener("input", update));
+  $("charge_deposit").addEventListener("change", update);
   update();
 </script>
 {% endblock %}

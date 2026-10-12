@@ -8,10 +8,11 @@ import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field, field_serializer
-from sqlalchemy import and_, select, text
+from sqlalchemy import and_, func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.booking_actions import transition_booking_status
 from app.config import settings
 from app.database import get_db
 from app.limiter import limiter
@@ -30,6 +31,8 @@ from app.templates import templates
 logger = logging.getLogger(__name__)
 
 _MAX_PAYMENT_LINK_LIFETIME = timedelta(hours=48)
+# Upcoming confirmed no-deposit bookings a phone can hold per business.
+_MAX_UPCOMING_FREE_BOOKINGS_PER_PHONE = 3
 
 router = APIRouter()
 
@@ -60,6 +63,7 @@ class PublicBookingResponse(BaseModel):
     message: str
     booking_id: int
     payment_url: str
+    status: str
 
 
 @router.get("/", response_class=HTMLResponse, include_in_schema=False)
@@ -195,6 +199,8 @@ async def create_public_booking(
     """
     Crea una reserva en estado 'pending' desde el flujo público (sin API Key),
     genera una preferencia de pago en Mercado Pago y devuelve la URL de checkout.
+    Si el servicio no cobra seña (seña efectiva 0), la reserva queda
+    'confirmed' sin pasar por MP y payment_url es "".
 
     Si la creación de la preferencia de MP falla, el booking se revierte.
     Es totalmente idempotente por idempotency_key.
@@ -248,6 +254,7 @@ async def create_public_booking(
                 "message": "Reserva recuperada (idempotente)",
                 "booking_id": existing_booking.id,
                 "payment_url": checkout_url,
+                "status": existing_booking.status,
             },
         )
 
@@ -284,6 +291,33 @@ async def create_public_booking(
     end_time = start_time + timedelta(minutes=service.duration_minutes)
 
     deposit_decimal = effective_deposit(service.price, service.deposit_amount)
+
+    if deposit_decimal == 0:
+        # No-deposit bookings are free confirmed slots that also send a
+        # WhatsApp: cap them per phone so one number cannot fill the agenda
+        # or be spammed.
+        # ponytail: count-then-insert, two concurrent requests can reach
+        # cap+1; lock per (tenant, phone) if that ever matters.
+        upcoming_free = (
+            await session.execute(
+                select(func.count()).where(
+                    Booking.tenant_id == payload.tenant_id,
+                    Booking.client_phone == client_phone,
+                    Booking.status == "confirmed",
+                    Booking.deposit_at_booking == 0,
+                    Booking.start_time > datetime.now(timezone.utc),
+                )
+            )
+        ).scalar_one()
+        if upcoming_free >= _MAX_UPCOMING_FREE_BOOKINGS_PER_PHONE:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Ya tenés {_MAX_UPCOMING_FREE_BOOKINGS_PER_PHONE} turnos "
+                    "reservados en este negocio. Para sacar otro, comunicate "
+                    "directamente con el negocio."
+                ),
+            )
 
     new_booking = Booking(
         tenant_id=payload.tenant_id,
@@ -323,9 +357,24 @@ async def create_public_booking(
                     "message": "Reserva recuperada (idempotente)",
                     "booking_id": existing_booking.id,
                     "payment_url": checkout_url,
+                    "status": existing_booking.status,
                 },
             )
         raise HTTPException(status_code=409, detail="Slot ya reservado o superpuesto")
+
+    if deposit_decimal == 0:
+        # Service without deposit: confirmed right away (the transition
+        # enqueues the WhatsApp confirmation). No MP, no Payment.
+        await transition_booking_status(
+            session, new_booking, "confirmed", actor="client"
+        )
+        await session.commit()
+        return PublicBookingResponse(
+            message="Reserva confirmada",
+            booking_id=new_booking.id,
+            payment_url="",
+            status=new_booking.status,
+        )
 
     try:
         mp_access_token = resolve_mp_access_token(tenant)
@@ -386,6 +435,7 @@ async def create_public_booking(
         message="Reserva creada",
         booking_id=new_booking.id,
         payment_url=mp_result["checkout_url"],
+        status=new_booking.status,
     )
 
 

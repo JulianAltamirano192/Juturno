@@ -96,7 +96,10 @@ def _parse_service_form(form: dict) -> tuple[dict, dict]:
         )
 
     deposit_raw = form.get("deposit_amount", "").strip()
-    if deposit_raw == "":
+    if not form.get("charge_deposit"):
+        # "Cobrar seña al reservar" unchecked: no deposit, amount ignored.
+        data["deposit_amount"] = Decimal(0)
+    elif deposit_raw == "":
         data["deposit_amount"] = None
     else:
         try:
@@ -112,6 +115,20 @@ def _parse_service_form(form: dict) -> tuple[dict, dict]:
                 errors["deposit_amount"] = "La seña no puede ser mayor que el precio."
             else:
                 data["deposit_amount"] = deposit
+
+    if (
+        form.get("charge_deposit")
+        and "price" in data
+        and "deposit_amount" in data
+        and effective_deposit(data["price"], data["deposit_amount"]) == 0
+    ):
+        # Checked with an effective deposit of 0 (typed 0, or 30% rounds to 0)
+        # would silently mean "no deposit": that is chosen by unchecking.
+        del data["deposit_amount"]
+        errors["deposit_amount"] = (
+            "La seña tiene que ser mayor a 0. Para no cobrar seña, "
+            "desmarcá «Cobrar seña al reservar»."
+        )
 
     return data, errors
 
@@ -496,7 +513,7 @@ async def panel_services_new_form(
             "tenant": tenant,
             "csrf_token": csrf_token,
             "service": None,
-            "form": {},
+            "form": {"charge_deposit": "on"},
             "errors": {},
             "deposit_preview": None,
         },
@@ -569,9 +586,11 @@ async def panel_services_edit_form(
         "duration_minutes": str(service.duration_minutes),
         "price": str(service.price),
         "deposit_amount": (
-            str(service.deposit_amount) if service.deposit_amount is not None else ""
+            str(service.deposit_amount) if service.deposit_amount else ""
         ),
     }
+    if service.deposit_amount != 0:
+        form["charge_deposit"] = "on"
     response = templates.TemplateResponse(
         request,
         "service_form.html",

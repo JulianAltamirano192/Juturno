@@ -157,6 +157,7 @@ async def test_create_public_booking_returns_payment_url(client, db_session):
     data = res.json()
     assert "booking_id" in data
     assert data["payment_url"] == FAKE_MP_RESULT["checkout_url"]
+    assert data["status"] == "pending"
 
     booking_id = data["booking_id"]
     booking = await db_session.get(Booking, booking_id)
@@ -251,6 +252,7 @@ async def test_create_public_booking_idempotent_returns_same_url(client, db_sess
     data2 = res2.json()
     assert data2["booking_id"] == data1["booking_id"]
     assert data2["payment_url"] == FAKE_MP_RESULT["checkout_url"]
+    assert data2["status"] == "pending"
     mock_mp2.assert_not_awaited()
 
 

@@ -150,9 +150,11 @@ function uuid() {
 }
 function showBanner(msg) { banner.textContent = msg; banner.hidden = false; }
 function hideBanner() { banner.hidden = true; }
+function noDeposit(svc) { return Number(svc.deposit_amount) === 0; }
+function depLabel(svc) { return noDeposit(svc) ? "Sin seña" : "Seña " + fmtMoney(svc.deposit_amount); }
 function setBusy(on, label) {
   cta.disabled = on;
-  cta.textContent = label || "Reservar y pagar seña";
+  cta.textContent = label || (state.service && noDeposit(state.service) ? "Reservar" : "Reservar y pagar seña");
 }
 
 // ---------- render ----------
@@ -183,7 +185,7 @@ function renderService() {
   APP.services.forEach((s, i) => {
     html += '<button type="button" class="service-row" onclick="selectService(' + i + ')">'
       + '<span><span class="service-name">' + esc(s.name) + '</span>'
-      + '<span class="service-dep">Seña ' + fmtMoney(s.deposit_amount) + "</span></span>"
+      + '<span class="service-dep">' + depLabel(s) + "</span></span>"
       + '<span class="service-price"><span class="price">' + fmtMoney(s.price) + "</span>"
       + '<span class="dur">' + s.duration_minutes + " min</span></span></button>";
   });
@@ -230,16 +232,20 @@ function renderForm() {
     '<div class="card summary">'
     + '<div class="row"><span>' + esc(state.service.name) + "</span><span>" + fmtMoney(state.service.price) + "</span></div>"
     + '<div class="row"><span>' + fmtDateLong(state.day) + "</span><span>" + state.slot + " hs</span></div>"
-    + '<div class="row"><span>Seña online</span><span>' + fmtMoney(state.service.deposit_amount) + "</span></div>"
+    + (noDeposit(state.service) ? ""
+      : '<div class="row"><span>Seña online</span><span>' + fmtMoney(state.service.deposit_amount) + "</span></div>")
     + "</div>"
     + '<div class="card">'
     + '<label for="f-name">Tu nombre</label>'
     + '<input id="f-name" type="text" maxlength="60" autocomplete="name" placeholder="Ej.: María González">'
     + '<label for="f-phone">Tu WhatsApp</label>'
     + '<input id="f-phone" type="tel" inputmode="numeric" autocomplete="tel" placeholder="Ej.: 5491123456789">'
-    + '<p class="hint">Se abona una seña de ' + fmtMoney(state.service.deposit_amount)
-    + " para reservar el turno. Te confirmamos por WhatsApp.</p>"
+    + '<p class="hint">' + (noDeposit(state.service)
+      ? "Reservás sin seña. Te confirmamos por WhatsApp."
+      : "Se abona una seña de " + fmtMoney(state.service.deposit_amount)
+        + " para reservar el turno. Te confirmamos por WhatsApp.") + "</p>"
     + "</div>";
+  setBusy(true);
   validateForm();
 }
 
@@ -325,6 +331,10 @@ async function submitBooking() {
       location.href = data.payment_url;
       return;
     }
+    if ((res.status === 201 || res.status === 200) && data.status === "confirmed") {
+      showResult("confirmed", data.booking_id);
+      return;
+    }
     setBusy();
     if (res.status === 409) {
       showBanner("Ese horario se acaba de ocupar. Elegí otro, por favor.");
@@ -355,7 +365,7 @@ function goBack() {
 }
 
 // ---------- pantallas post-pago (estáticas, sin consultar la API) ----------
-function showResult(kind) {
+function showResult(kind, bookingId) {
   backBtn.hidden = true;
   ctaWrap.hidden = true;
   setProgress(null);
@@ -373,12 +383,16 @@ function showResult(kind) {
     icon = "wait"; title = "El pago está en proceso";
     text = "En cuanto se acredite la seña, el negocio te confirma por WhatsApp.";
     btn = "Entendido";
+  } else if (kind === "confirmed") {
+    icon = "ok"; title = "Turno confirmado";
+    text = "Te enviamos la confirmación por WhatsApp.";
+    btn = "Hacer otra reserva";
   } else {
     icon = "ok"; title = "Reserva registrada";
     text = "Recibimos tu pago. En breve te confirmamos por WhatsApp.";
     btn = "Hacer otra reserva";
   }
-  subtitle.textContent = "Reserva #" + (new URLSearchParams(location.search).get("booking") || "");
+  subtitle.textContent = "Reserva #" + (bookingId || new URLSearchParams(location.search).get("booking") || "");
   app.innerHTML = '<div class="card result">'
     + '<div class="icon ' + icon + '">' + icons[icon] + "</div>"
     + "<h2>" + title + "</h2><p>" + text + "</p>"
