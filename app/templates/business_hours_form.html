@@ -46,7 +46,8 @@
 
 {% block dash_content %}
 {% set day_labels = [('Lunes', 'Lun'), ('Martes', 'Mar'), ('Miércoles', 'Mié'), ('Jueves', 'Jue'), ('Viernes', 'Vie'), ('Sábado', 'Sáb'), ('Domingo', 'Dom')] %}
-{% set selected_day = form.get('day_of_week', '0')|string %}
+{# Create: several days (checkboxes, selected_days); edit: one day (radio). #}
+{% set selected_days = selected_days if selected_days is defined else [form.get('day_of_week', '0')|string] %}
 <a href="/panel/horarios" class="back-link">{{ ui.icon('izq') }}Volver a horarios</a>
 <div class="ph"><h1>{% if bh %}Editar horario{% else %}Nuevo horario{% endif %}</h1></div>
 
@@ -60,9 +61,9 @@
   {% endif %}
 
   <fieldset class="field days">
-    <legend>Día de la semana</legend>
+    <legend>{% if bh %}Día de la semana{% else %}Días de la semana{% endif %}</legend>
     {% for full, short in day_labels %}
-    <input type="radio" id="day-{{ loop.index0 }}" name="day_of_week" value="{{ loop.index0 }}"{% if selected_day == loop.index0|string %} checked{% endif %}>
+    <input type="{% if bh %}radio{% else %}checkbox{% endif %}" id="day-{{ loop.index0 }}" name="day_of_week" value="{{ loop.index0 }}"{% if loop.index0|string in selected_days %} checked{% endif %}>
     <label for="day-{{ loop.index0 }}" title="{{ full }}"><span aria-hidden="true">{{ short }}</span><span class="sr-only">{{ full }}</span></label>
     {% endfor %}
   </fieldset>
