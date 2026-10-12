@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+
+{% block title %}{% if rate_limited %}Demasiados intentos{% elif logout %}Cerrar sesión{% else %}Página desactualizada{% endif %} - Juturno{% endblock %}
+
+{% block auth_title %}{% if rate_limited %}Demasiados intentos{% elif logout %}Cerrar sesión{% else %}Página desactualizada{% endif %}{% endblock %}
+{% block auth_sub %}{% if rate_limited %}Esperá un minuto y volvé a intentar.{% elif logout %}La página llevaba un rato abierta. Confirmá para salir.{% else %}La página llevaba un rato abierta y no se guardó el cambio. Recargá y volvé a intentar.{% endif %}{% endblock %}
+
+{% block auth_content %}
+{% if rate_limited %}
+<a class="btn-p block" href="{{ back_url }}">Volver</a>
+{% elif logout %}
+<form method="POST" action="/logout">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <button type="submit" class="btn-p block">Cerrar sesión</button>
+</form>
+<div class="footer-links"><a href="/dashboard">Volver al panel</a></div>
+{% else %}
+<a class="btn-p block" href="/dashboard">Volver al panel</a>
+{% endif %}
+{% endblock %}
