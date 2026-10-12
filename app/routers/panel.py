@@ -133,21 +133,51 @@ def _parse_service_form(form: dict) -> tuple[dict, dict]:
     return data, errors
 
 
-def _parse_business_hours_form(form: dict) -> tuple[dict, dict]:
+_DAY_NAMES = [
+    "Lunes",
+    "Martes",
+    "Miércoles",
+    "Jueves",
+    "Viernes",
+    "Sábado",
+    "Domingo",
+]
+
+
+def _parse_business_hours_form(
+    form: dict, days: list[str] | None = None
+) -> tuple[dict, dict]:
     """Parsea y valida el formulario de horarios de atención.
+
+    Sin `days` (edición) valida un único `day_of_week` → data["day_of_week"].
+    Con `days` (alta, checkboxes repetidos) → data["days"], ordenados y sin
+    duplicados; exige al menos uno.
 
     Returns (data, errors). Si errors está vacío, data es usable para DB.
     """
     errors: dict = {}
     data: dict = {}
 
-    try:
-        dow = int(form.get("day_of_week", ""))
-        if not 0 <= dow <= 6:
-            raise ValueError
-        data["day_of_week"] = dow
-    except (ValueError, TypeError):
-        errors["day_of_week"] = "Seleccioná un día de la semana válido."
+    if days is None:
+        try:
+            dow = int(form.get("day_of_week", ""))
+            if not 0 <= dow <= 6:
+                raise ValueError
+            data["day_of_week"] = dow
+        except (ValueError, TypeError):
+            errors["day_of_week"] = "Seleccioná un día de la semana válido."
+    else:
+        try:
+            parsed = sorted({int(d) for d in days if d.strip()})
+            if not all(0 <= d <= 6 for d in parsed):
+                raise ValueError
+        except ValueError:
+            errors["day_of_week"] = "Seleccioná un día de la semana válido."
+        else:
+            if parsed:
+                data["days"] = parsed
+            else:
+                errors["day_of_week"] = "Seleccioná al menos un día."
 
     start_raw = form.get("start_time", "").strip()
     if not start_raw:
@@ -879,16 +909,6 @@ async def panel_business_hours_list(
     )
     business_hours = (await session.execute(stmt)).scalars().all()
 
-    day_names = [
-        "Lunes",
-        "Martes",
-        "Miércoles",
-        "Jueves",
-        "Viernes",
-        "Sábado",
-        "Domingo",
-    ]
-
     response = templates.TemplateResponse(
         request,
         "business_hours_list.html",
@@ -896,7 +916,7 @@ async def panel_business_hours_list(
             "tenant": tenant,
             "csrf_token": csrf_token,
             "business_hours": business_hours,
-            "day_names": day_names,
+            "day_names": _DAY_NAMES,
         },
     )
     set_csrf_cookie(response, csrf_token)
@@ -917,6 +937,7 @@ async def panel_business_hours_new_form(
             "csrf_token": csrf_token,
             "bh": None,
             "form": {},
+            "selected_days": ["0"],
             "errors": {},
             "form_errors": [],
         },
@@ -932,33 +953,42 @@ async def panel_business_hours_new_submit(
     session: AsyncSession = Depends(get_db),
 ):
     await validate_csrf(request)
-    form = dict(await request.form())
-    data, errors = _parse_business_hours_form(form)
+    form_data = await request.form()
+    form = dict(form_data)
+    # dict() keeps only the last value of repeated keys: read the days apart.
+    selected_days = [str(d) for d in form_data.getlist("day_of_week")]
+    data, errors = _parse_business_hours_form(form, days=selected_days)
 
-    if "day_of_week" in data:
-        stmt = select(BusinessHours).where(
-            and_(
-                BusinessHours.tenant_id == tenant.id,
-                BusinessHours.staff_id.is_(None),
-                BusinessHours.day_of_week == data["day_of_week"],
+    if "days" in data and "start_time" in data and "end_time" in data:
+        stmt = (
+            select(BusinessHours)
+            .where(
+                and_(
+                    BusinessHours.tenant_id == tenant.id,
+                    BusinessHours.staff_id.is_(None),
+                    BusinessHours.day_of_week.in_(data["days"]),
+                )
             )
+            .order_by(BusinessHours.day_of_week, BusinessHours.start_time)
         )
         existing = (await session.execute(stmt)).scalars().all()
-        if data.get("start_time") and data.get("end_time"):
-            for existing_bh in existing:
-                if not (
-                    data["end_time"] <= existing_bh.start_time
-                    or data["start_time"] >= existing_bh.end_time
-                ):
-                    errors["overlap"] = (
-                        f"Este horario se solapa con uno existente "
-                        f"({existing_bh.start_time.strftime('%H:%M')}–{existing_bh.end_time.strftime('%H:%M')})."
-                    )
-                    break
+        conflicts = [
+            f"{_DAY_NAMES[existing_bh.day_of_week]} "
+            f"({existing_bh.start_time.strftime('%H:%M')}–{existing_bh.end_time.strftime('%H:%M')})"
+            for existing_bh in existing
+            if not (
+                data["end_time"] <= existing_bh.start_time
+                or data["start_time"] >= existing_bh.end_time
+            )
+        ]
+        if conflicts:
+            errors["overlap"] = (
+                f"Se solapa con un horario existente: {', '.join(conflicts)}."
+            )
 
     csrf_token = generate_csrf_token(request)
 
-    if errors:
+    def render_with_errors() -> HTMLResponse:
         response = templates.TemplateResponse(
             request,
             "business_hours_form.html",
@@ -967,6 +997,7 @@ async def panel_business_hours_new_submit(
                 "csrf_token": csrf_token,
                 "bh": None,
                 "form": form,
+                "selected_days": selected_days,
                 "errors": errors,
                 "form_errors": list(errors.values()),
             },
@@ -974,33 +1005,25 @@ async def panel_business_hours_new_submit(
         set_csrf_cookie(response, csrf_token)
         return response
 
-    new_bh = BusinessHours(
-        tenant_id=tenant.id,
-        staff_id=None,
-        day_of_week=data["day_of_week"],
-        start_time=data["start_time"],
-        end_time=data["end_time"],
-    )
-    session.add(new_bh)
+    if errors:
+        return render_with_errors()
+
+    for dow in data["days"]:
+        session.add(
+            BusinessHours(
+                tenant_id=tenant.id,
+                staff_id=None,
+                day_of_week=dow,
+                start_time=data["start_time"],
+                end_time=data["end_time"],
+            )
+        )
     try:
         await session.commit()
     except IntegrityError:
         await session.rollback()
-        errors["overlap"] = "Ya existe un horario para este día."
-        response = templates.TemplateResponse(
-            request,
-            "business_hours_form.html",
-            {
-                "tenant": tenant,
-                "csrf_token": csrf_token,
-                "bh": None,
-                "form": form,
-                "errors": errors,
-                "form_errors": list(errors.values()),
-            },
-        )
-        set_csrf_cookie(response, csrf_token)
-        return response
+        errors["overlap"] = "Ya existe un horario en alguno de los días elegidos."
+        return render_with_errors()
 
     return RedirectResponse(
         url="/panel/horarios", status_code=status.HTTP_303_SEE_OTHER
