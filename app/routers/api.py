@@ -13,7 +13,7 @@ from app.auth import get_current_tenant
 from app.database import get_db
 from app.models import Booking, Service, Staff, Tenant
 from app.phone import InvalidPhoneError, normalize_whatsapp_phone
-from app.schemas import AvailableSlotsResponse, BookingCreate
+from app.schemas import AvailableSlotsResponse, BookingCreate, clean_client_name
 from app.services import (
     compute_available_slots,
     effective_deposit,
@@ -97,6 +97,15 @@ async def create_booking(
                 "argentino con característica, ej: +54 9 11 5555 5555."
             ),
         )
+    try:
+        client_name = clean_client_name(payload.client_name)
+    except ValueError:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "El nombre del cliente debe tener entre 2 y 60 caracteres y no incluir links."
+            ),
+        )
 
     if payload.tenant_id != current_tenant.id:
         raise HTTPException(status_code=404, detail="Tenant not found")
@@ -155,7 +164,7 @@ async def create_booking(
         tenant_id=payload.tenant_id,
         service_id=payload.service_id,
         staff_id=payload.staff_id,
-        client_name=payload.client_name,
+        client_name=client_name,
         client_phone=client_phone,
         start_time=start_time,
         end_time=end_time,
