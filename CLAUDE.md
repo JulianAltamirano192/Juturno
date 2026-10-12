@@ -117,8 +117,8 @@ Verificados a mano: 1, 6, 10 y 12. El resto viene del review y hay que confirmar
    bloquea la desconexión para siempre; con deadline vencido pero no expirado aún, la permite.~~ — **Resuelto** (rama `fix/mp-disconnect-guard`): guard compartido `has_payable_mp_payment`; el link de pago vence en MP junto con la reserva (`Payment.mp_expires_at`).
 9. ~~CSRF: cada GET del panel rota la cookie `csrf_token`; formularios de otras pestañas dan 403.~~ — **Resuelto** (rama `fix/csrf-reuse-token`): se reusa el token y la cookie dura como la sesión (antes 2 h: un panel abierto daba 403 JSON hasta en `/logout`).
 10. ~~`app/webhooks.py`: el verify token de Meta se compara con `==`, no con `hmac.compare_digest`.~~ — **Resuelto** (rama `fix/meta-verify-token-compare`).
-11. Menores: reembolso/contracargo no cambia el booking; booking inexistente en webhook se marca
-    procesado; `create_mp_preference` usa `float` (`Payment.amount` ya es `Decimal`); ~~el form de servicios
+11. Menores: ~~reembolso/contracargo no cambia el booking; booking inexistente en webhook se marca
+    procesado; `create_mp_preference` usa `float` (`Payment.amount` ya es `Decimal`)~~ — **Resuelto** (rama `fix/mp-webhook-refunds-and-orphans`; pendientes en ROADMAP "Pendientes de la 2.10"); ~~el form de servicios
     acepta `Infinity`/montos fuera de `Numeric(10,2)` (500)~~ — **Resuelto** (rama `fix/service-amount-validation`), junto con seña ≤ precio.
 12. Nada en `app/` incrementa `Tenant.session_version`: `/logout` solo borra la cookie, no hay
     forma de invalidar sesiones activas (verificado; ver D-013).

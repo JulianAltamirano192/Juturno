@@ -256,6 +256,7 @@ REQUIRE_STARTED = {"no_show", "completed"}  # solo si start_time <= now
 - Transición inválida → `InvalidTransitionError`; `no_show`/`completed` antes de `start_time` → `BookingNotStartedError`. Los endpoints del panel (`/panel/agenda/{id}/confirm|cancel|no-show|complete`) los traducen a 409.
 - Toda transición a `confirmed` encola la confirmación por WhatsApp (`enqueue_confirmation`, una sola por booking), venga del webhook, la reconciliación o el panel.
 - El panel carga el booking con `SELECT ... FOR UPDATE` (como el webhook y el job de expiración), así una acción concurrente decide sobre el estado actual y no lo pisa. Reconfirmar un `expired` cuyo horario ya tomó otro turno choca con el `EXCLUDE` → 409.
+- `confirmed`/`pending` → `cancelled` también la dispara el webhook/reconciliación MP ante reembolso total o contracargo de un turno futuro (D-032).
 - Quién la llama: panel (`actor="owner"`), webhook MP y reconciliación (`actor="webhook_mp"`), scheduler (`actor="system"`, solo `expired`).
 
 **Auditoría (Tarea 8):**
@@ -344,16 +345,20 @@ Registrados en el `lifespan` de `app/main.py` con `AsyncIOScheduler` (trigger `i
   - Busca `Tenant.mp_user_id == user_id` → usa su token descifrado (a lo sumo una fila, por `uq_tenant_mp_user_id`).
   - Fallback: `None` → usa `MP_ACCESS_TOKEN` de la plataforma.
   - El `user_id` no está firmado: si MP responde 404 (token equivocado, ID del simulador) el evento queda `failed` y responde 200 `PAYMENT_NOT_FOUND_ON_MP`; una entrega posterior con la misma clave se reprocesa.
-- **`apply_payment_details(session, mp_payment_id, details)`**: la comparten el webhook y la reconciliación del scheduler. No commitea. Devuelve `(outcome, booking_id)`; `outcome` es `EVENT_PROCESSED` o el guard que frenó (`NO_BOOKING_LINKED`, `TENANT_MISMATCH`, `CURRENCY_NOT_SUPPORTED`, `AMOUNT_INSUFFICIENT`). Orden estricto, **todo antes de crear/actualizar el `Payment`** (D-019):
+- **`apply_payment_details(session, mp_payment_id, details)`**: la comparten el webhook y la reconciliación del scheduler. No commitea. Devuelve `(outcome, booking_id)`; `outcome` es `EVENT_PROCESSED` o el guard que frenó (`NO_BOOKING_LINKED`, `BOOKING_NOT_FOUND`, `TENANT_MISMATCH`, `CURRENCY_NOT_SUPPORTED`, `AMOUNT_INSUFFICIENT`, `STALE_STATUS_IGNORED`). Orden estricto, **todo antes de crear/actualizar el `Payment`** (D-019):
   1. `SELECT ... FOR UPDATE` del `Payment` por `mp_payment_id` y del `Booking` (serializa webhooks concurrentes del mismo pago; el UNIQUE cubre el INSERT simultáneo → `DuplicatePaymentError`, tratado como idempotente).
+  1b. Si el `Booking` no existe → `BOOKING_NOT_FOUND`: warning, sin `Payment`, el evento se marca `processed` (antes la FK rota se confundía con `DuplicatePaymentError`).
   2. **Guard de tenant (todos los estados)**: `collector_id` de la respuesta autenticada de MP debe ser igual a `tenant.mp_user_id` del booking. Producción + tenant sin `mp_user_id` → `TENANT_MISMATCH` (fail-closed); sandbox/dev sin `mp_user_id` → se omite.
   3. **Guard de moneda (solo `approved`)**: `currency_id` debe ser `ARS`.
   4. **Guard de monto (solo `approved`)**: `transaction_amount` finito (`is_finite()`) y `>= booking.deposit_at_booking`; si es `NULL` (bookings anteriores a la migración `55526fb8c0f9`) cae al fallback `effective_deposit(service.price, service.deposit_amount)`; si el servicio no existe, fail-closed.
 - **Auto-creación Payment**: si no existe `Payment` con ese `mp_payment_id` → crea con datos de MP (`transaction_amount`, `payment_method_id`, `date_approved`). Si existe y cambió el estado, lo actualiza (y completa `paid_at` si pasó a `approved`).
+- **Estado viejo**: un `approved` sobre un `Payment` ya `refunded`/`charged_back` devuelve `STALE_STATUS_IGNORED` y no revierte el estado. Techo conocido: un contracargo que el vendedor gana en la disputa queda registrado como `charged_back`.
 - **Confirmación booking**: si `approved` y booking en `pending` (o `expired` y slot libre) → `transition_booking_status(booking, "confirmed", actor="webhook_mp")` + outbox confirmation (si no existe ya uno).
+- **Reembolso/contracargo (D-032)**: si el pago pasa a `refunded` o `charged_back`, `transition_booking_status(booking, "cancelled", actor="webhook_mp", reason="mp_payment_refunded"|"mp_payment_charged_back")` solo si: el turno está `pending`/`confirmed`, `start_time` es futuro, el guard de `collector_id` realmente corrió (el tenant tiene `mp_user_id`) y no hay otro `Payment` `approved` del mismo booking en la DB. La transición cancela el outbox `pending`/`failed` (D-030); el cliente no recibe aviso. Un turno que ya empezó solo registra el estado del `Payment`.
 - **Cierre**: el endpoint marca el evento `processed` y commitea todo junto; ante excepción hace `rollback` y deja el evento `failed` para que MP reintente.
 
 ### 10.3 Creación de preferencia (`create_mp_preference`)
+- Recibe `amount: Decimal`; se convierte a `float` recién al armar el JSON (`unit_price`).
 - Usa API `/checkout/preferences` (Checkout Pro, "legacy" pero estable).
 - `external_reference = "booking-{id}"`, `unit_price` = seña (`deposit_at_booking`), `currency_id = ARS`, `notification_url = MP_NOTIFICATION_URL` (omitida si está vacía; obligatoria en prod y debe ser `https://.../webhooks/mercadopago`, D-029), `back_urls` con `PUBLIC_BASE_URL/t/{slug}?booking={id}` (más `result=failure|pending`) y `auto_return=approved`.
 - **Vencimiento**: `expires=true` y `expiration_date_to` = plazo de la seña (`now + deposit_expiration_minutes`) o la hora del turno, lo que llegue primero, con tope de 48 h. Se guarda en `Payment.mp_expires_at`. Efectivo y cajero (`ticket`, `atm`) se excluyen porque sus cupones se pagan días después.

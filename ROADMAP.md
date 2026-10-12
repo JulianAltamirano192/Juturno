@@ -45,7 +45,7 @@ Ya verifiqué contra el código los hallazgos 2, 3, 4, 5, 7, 8 y 9 (se confirman
 8. ~~#3 + #4 acciones de agenda con `FOR UPDATE`, capturar `IntegrityError` → 409, y que confirmar desde el panel encole la confirmación.~~ **Hecho (PR #30)**: `enqueue_confirmation` en toda transición a `confirmed` (confirmar desde el panel manda WhatsApp aunque no haya seña paga: decisión de Julián).
 9. ~~#6 recordatorios: ventana "pendientes y no enviados" en lugar de la ventana fija de 5 min.~~ **Hecho (PR #31)**: todo `confirmed` sin recordatorio que empiece dentro de 24 h, con `SKIP LOCKED`.
    (Fuera de serie: **PR #29** fijó `ruff==0.16.10`; ruff 0.17 rompía el CI.)
-10. #11 resto: reembolso/contracargo, booking inexistente en el webhook, `Decimal` en `create_mp_preference`.
+10. ~~#11 resto: reembolso/contracargo, booking inexistente en el webhook, `Decimal` en `create_mp_preference`.~~ **Hecho (rama `fix/mp-webhook-refunds-and-orphans`)**: reembolso total o contracargo cancela el turno que no empezó (decisión de Julián); `BOOKING_NOT_FOUND` sin insertar el pago; un `approved` viejo no pisa un reembolso.
 11. Rate limit por IP real del cliente detrás del proxy (Cloudflare + Traefik). Paso 1: observar en prod qué headers llegan (`X-Forwarded-For`, `CF-Connecting-IP`) y la config de Traefik en Coolify. Paso 2: `key_func` con la IP real (Cloudflare) solo si el request vino por el proxy confiable.
 
 #### Hallazgos nuevos de las revisiones del 2026-10-10 (anteriores al código revisado; sin fase asignada)
@@ -54,6 +54,12 @@ Ya verifiqué contra el código los hallazgos 2, 3, 4, 5, 7, 8 y 9 (se confirman
 - `process_outbox` mantiene el lock de la fila mientras llama a Meta (hasta ~33 s): un cancelar concurrente espera con el booking bloqueado y después pisa `sent` con `cancelled`.
 - Orden de locks invertido: reconciliación Booking→Payment vs webhook Payment→Booking (deadlock posible; ambos reintentan).
 - Validar `client_name` en reservas públicas (largo, sin URLs): llega al template de WhatsApp.
+
+#### Pendientes de la 2.10 (revisión del 2026-10-12; para más adelante)
+- Avisar al dueño (ayuda o panel) que devolver la seña desde MP cancela el turno solo; si quiere mantenerlo (ej. pagó en efectivo), lo tiene que volver a cargar.
+- El chequeo de "otro pago aprobado cubre el turno" mira solo la DB, no MP: si se perdió el webhook del pago duplicado, el reembolso del otro cancela el turno igual. Arreglo posible: consultar `search_approved_payment_ids` antes de cancelar.
+- Un contracargo que el vendedor gana en disputa queda registrado como `charged_back` (se ignora el `approved` posterior). El turno ya estaba cancelado; solo afecta el registro.
+- Después de restaurar un backup, la secuencia de bookings puede reusar ids: un reembolso tardío de `booking-N` podría pegarle a otro turno del mismo negocio (inferido, sin probar). Ver RUNBOOK.
 
 ### Fase 3 — Quick wins del panel (ideas)
 11. Seña opcional por servicio: un checkbox "cobrar seña". Sin seña, el turno se confirma directo sin MP y se encola la confirmación. MP solo es obligatorio si algún servicio cobra seña.
@@ -119,4 +125,4 @@ Rama → test que falla → fix → `./scripts/test.sh` + `ruff check app/ tests
 
 Las fases 1-2 cierran los 12 hallazgos. Se chequea revisando que la sección "Hallazgos abiertos" de CLAUDE.md quede vacía.
 
-Siguiente tarea concreta: **Fase 2.10 (#11 resto)**.
+Siguiente tarea concreta: **Fase 2.11 (rate limit por IP real)**.
