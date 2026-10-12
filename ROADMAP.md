@@ -50,7 +50,7 @@ Ya verifiqué contra el código los hallazgos 2, 3, 4, 5, 7, 8 y 9 (se confirman
 
 ### Fase 2b — Hallazgos sin fase (aprobada 2026-10-12; una rama por ítem, en este orden)
 0. Errores de formularios del navegador como página HTML (CSRF vencido → confirmar logout / recargar; 429 → "Demasiados intentos") en vez de JSON que el celular descarga. Rama `fix/html-form-errors`.
-1. `GET /public/available-slots` con servicio/staff inactivo → 404 (igual que la reserva).
+1. ~~`GET /public/available-slots` con servicio/staff inactivo → 404 (igual que la reserva).~~ **Hecho (rama `fix/slots-inactive-service-staff`)**: también `GET /bookings/available-slots` y staff de otro tenant.
 2. Validar `client_name` en reservas públicas.
 3. `process_outbox`: no mantener el lock de la fila durante la llamada a Meta.
 4. Orden de locks Booking→Payment en webhook y reconciliación.
@@ -58,7 +58,7 @@ Ya verifiqué contra el código los hallazgos 2, 3, 4, 5, 7, 8 y 9 (se confirman
 
 #### Hallazgos nuevos de las revisiones del 2026-10-10 (anteriores al código revisado; detalle; ver Fase 2b)
 - Tope de anticipación al reservar: hoy se puede crear un `pending` para el año 9999 (decisión de producto: ¿90 días? ¿configurable?).
-- `GET /public/available-slots` ofrece horarios de servicios/staff inactivos (la reserva después da 404).
+- ~~`GET /public/available-slots` ofrece horarios de servicios/staff inactivos (la reserva después da 404).~~ Ver 2b.1.
 - `process_outbox` mantiene el lock de la fila mientras llama a Meta (hasta ~33 s): un cancelar concurrente espera con el booking bloqueado y después pisa `sent` con `cancelled`.
 - Orden de locks invertido: reconciliación Booking→Payment vs webhook Payment→Booking (deadlock posible; ambos reintentan).
 - Validar `client_name` en reservas públicas (largo, sin URLs): llega al template de WhatsApp.
@@ -66,6 +66,7 @@ Ya verifiqué contra el código los hallazgos 2, 3, 4, 5, 7, 8 y 9 (se confirman
 #### Pendientes de la 2b.0 (revisión del 2026-10-12; endurecimiento, para más adelante)
 - Panel sin `X-Frame-Options: DENY` / `Content-Security-Policy: frame-ancestors 'none'`.
 - Rechazar `CORS_ORIGINS="*"` en el validador de producción.
+- `GET /public/available-slots` sin rate limit (solo lo tiene `POST /public/bookings`).
 
 #### Pendientes de la 2.11 (revisión del 2026-10-12; para más adelante)
 - Verificar después del deploy: más de 10 logins fallidos desde el celular (datos móviles) dan 429 ahí y otra red sigue entrando.
