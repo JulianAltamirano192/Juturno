@@ -53,15 +53,18 @@ Ya verifiqué contra el código los hallazgos 2, 3, 4, 5, 7, 8 y 9 (se confirman
 1. ~~`GET /public/available-slots` con servicio/staff inactivo → 404 (igual que la reserva).~~ **Hecho (rama `fix/slots-inactive-service-staff`)**: también `GET /bookings/available-slots` y staff de otro tenant.
 2. ~~Validar `client_name` en reservas públicas.~~ **Hecho (rama `fix/validate-client-name`)**: 2-60 caracteres, sin links, espacios/saltos colapsados; también por API.
 3. ~~`process_outbox`: no mantener el lock de la fila durante la llamada a Meta.~~ **Hecho (rama `fix/outbox-cancel-lock`)**: cancelar saltea con `SKIP LOCKED` el evento en vuelo (no espera ni pisa `sent`) y el worker no manda si el turno ya no está `confirmed`.
-4. Orden de locks Booking→Payment en webhook y reconciliación.
+4. ~~Orden de locks Booking→Payment en webhook y reconciliación.~~ **Hecho (rama `fix/mp-lock-order`)**: el webhook bloquea el booking antes que el Payment, igual que la reconciliación.
 5. Tope de anticipación al reservar (requiere decisión de producto).
 
 #### Hallazgos nuevos de las revisiones del 2026-10-10 (anteriores al código revisado; detalle; ver Fase 2b)
 - Tope de anticipación al reservar: hoy se puede crear un `pending` para el año 9999 (decisión de producto: ¿90 días? ¿configurable?).
 - ~~`GET /public/available-slots` ofrece horarios de servicios/staff inactivos (la reserva después da 404).~~ Ver 2b.1.
 - `process_outbox` mantiene el lock de la fila mientras llama a Meta (hasta ~33 s): un cancelar concurrente espera con el booking bloqueado y después pisa `sent` con `cancelled`.
-- Orden de locks invertido: reconciliación Booking→Payment vs webhook Payment→Booking (deadlock posible; ambos reintentan).
+- ~~Orden de locks invertido: reconciliación Booking→Payment vs webhook Payment→Booking (deadlock posible; ambos reintentan).~~ Ver 2b.4.
 - Validar `client_name` en reservas públicas (largo, sin URLs): llega al template de WhatsApp.
+
+#### Pendientes de la 2b.4 (revisión del 2026-10-12; para más adelante)
+- La rama de actualización del webhook no compara `payment.booking_id` con el booking del `external_reference` (hoy no puede diferir desde el código, solo editando la base a mano).
 
 #### Pendientes de la 2b.0 (revisión del 2026-10-12; endurecimiento, para más adelante)
 - Panel sin `X-Frame-Options: DENY` / `Content-Security-Policy: frame-ancestors 'none'`.
@@ -69,7 +72,7 @@ Ya verifiqué contra el código los hallazgos 2, 3, 4, 5, 7, 8 y 9 (se confirman
 - `GET /public/available-slots` sin rate limit (solo lo tiene `POST /public/bookings`).
 
 #### Pendientes de la 2.11 (revisión del 2026-10-12; para más adelante)
-- Verificar después del deploy: más de 10 logins fallidos desde el celular (datos móviles) dan 429 ahí y otra red sigue entrando.
+- ~~Verificar después del deploy: más de 10 logins fallidos desde el celular (datos móviles) dan 429 ahí y otra red sigue entrando.~~ Verificado en prod el 2026-10-12.
 - Login limitado solo por IP: sumar un límite por cuenta (email) contra credential stuffing distribuido.
 - `client_ip` confía en cualquier peer privado: acotarlo a la red de Traefik si algún día se publica el puerto o se suman contenedores a la red.
 

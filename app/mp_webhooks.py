@@ -384,13 +384,6 @@ async def apply_payment_details(
         # El pago no está vinculado a un booking de Juturno
         return "NO_BOOKING_LINKED", linked_booking_id
 
-    # SELECT FOR UPDATE before the guards to serialize concurrent updates
-    # on the same mp_payment_id. The UNIQUE constraint handles concurrent INSERTs.
-    stmt_pay = (
-        select(Payment).where(Payment.mp_payment_id == mp_payment_id).with_for_update()
-    )
-    payment = (await session.execute(stmt_pay)).scalar_one_or_none()
-
     # A missing booking exits early. Guards run BEFORE creating the Payment
     # record so a rejected webhook never commits a Payment row for a
     # fraudulent/invalid payment.
@@ -408,6 +401,14 @@ async def apply_payment_details(
         )
         return "BOOKING_NOT_FOUND", linked_booking_id
     linked_booking_id = booking.id
+
+    # Lock order Booking -> Payment, the same as the reconciliation (which
+    # holds the booking and then calls this function): the reverse deadlocks.
+    # The UNIQUE constraint handles concurrent INSERTs.
+    stmt_pay = (
+        select(Payment).where(Payment.mp_payment_id == mp_payment_id).with_for_update()
+    )
+    payment = (await session.execute(stmt_pay)).scalar_one_or_none()
 
     # Guard 1: collector_id from the authenticated MP response must match
     # the tenant that owns this booking. Applies to every payment status.
