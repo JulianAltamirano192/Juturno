@@ -8,7 +8,7 @@ import sentry_sdk
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.httpx import HttpxIntegration
@@ -19,6 +19,7 @@ from slowapi.errors import RateLimitExceeded
 
 from app.auth import RedirectToLoginException
 from app.config import settings
+from app.csrf import CSRFError, generate_csrf_token, set_csrf_cookie
 from app.database import async_session_maker
 from app.limiter import limiter
 from app.mp_connect import router as mp_connect_router
@@ -34,6 +35,7 @@ from app.scheduler import (
     process_reminders,
 )
 from app.session import delete_session_cookie, sanitize_next_url
+from app.templates import templates
 from app.webhooks import router as whatsapp_router
 
 
@@ -154,7 +156,6 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
@@ -178,6 +179,43 @@ app.include_router(panel_router)
 app.include_router(mp_router)
 app.include_router(mp_connect_router)
 app.include_router(whatsapp_router)
+
+
+def _wants_html(request: Request) -> bool:
+    """Un formulario del navegador pide HTML; fetch y clientes de API, no."""
+    return "text/html" in request.headers.get("accept", "")
+
+
+@app.exception_handler(CSRFError)
+async def csrf_error_handler(request: Request, exc: CSRFError):
+    """
+    Formulario con token CSRF vencido (pestaña vieja, login en otra pestaña):
+    página con el token vigente en vez de JSON, que el celular descarga.
+    Para /logout ofrece confirmar el cierre de sesión.
+    """
+    if not _wants_html(request):
+        return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+    token = generate_csrf_token(request)
+    response = templates.TemplateResponse(
+        request,
+        "form_error.html",
+        {"csrf_token": token, "logout": request.url.path == "/logout"},
+        status_code=exc.status_code,
+    )
+    set_csrf_cookie(response, token)
+    return response
+
+
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
+    if not _wants_html(request):
+        return _rate_limit_exceeded_handler(request, exc)
+    return templates.TemplateResponse(
+        request,
+        "form_error.html",
+        {"rate_limited": True, "back_url": request.url.path},
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+    )
 
 
 @app.exception_handler(RedirectToLoginException)

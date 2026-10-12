@@ -14,7 +14,7 @@ import hmac
 import re
 import secrets
 
-from fastapi import Request, Response
+from fastapi import HTTPException, Request, Response, status
 
 from app.config import settings
 from app.session import SESSION_MAX_AGE_SECONDS
@@ -54,6 +54,13 @@ def set_csrf_cookie(response: Response, token: str) -> None:
     )
 
 
+class CSRFError(HTTPException):
+    """403 de CSRF; main.py lo muestra como página si lo pidió un navegador."""
+
+    def __init__(self, detail: str):
+        super().__init__(status_code=status.HTTP_403_FORBIDDEN, detail=detail)
+
+
 def validate_csrf_double_submit(
     form_token: str | None, cookie_token: str | None
 ) -> bool:
@@ -72,20 +79,14 @@ async def validate_csrf(request) -> None:
     """
     Valida CSRF para peticiones del panel usando el patrón double-submit cookie.
     Lee el campo 'csrf_token' del form body y lo compara contra la cookie.
-    Lanza HTTPException 403 si falta o no coincide.
+    Lanza CSRFError (403) si falta o no coincide.
     """
-    from fastapi import HTTPException, status
-
     cookie_token = request.cookies.get(CSRF_COOKIE_NAME)
     if not cookie_token:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail="CSRF cookie missing"
-        )
+        raise CSRFError("CSRF cookie missing")
 
     form_data = await request.form()
     form_token = form_data.get(CSRF_COOKIE_NAME)
 
     if not validate_csrf_double_submit(form_token, cookie_token):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail="CSRF token invalid"
-        )
+        raise CSRFError("CSRF token invalid")
