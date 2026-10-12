@@ -109,7 +109,7 @@ Tenant (1) ──────< Service
              └── received_at, processed_at
 ```
 
-El tenant guarda además: `slug` (único), `timezone` (default `America/Argentina/Buenos_Aires`; no se puede cambiar desde el panel), `booking_horizon_days` (15/30/60/90, default 90, CHECK `ck_tenant_booking_horizon_days`; se edita en `/panel/settings`, no por `PATCH /tenants/me`; D-034), `deposit_expiration_minutes` (default 15, `NULL` = sin expiración), `owner_email` (único) + `password_hash` (PBKDF2), `session_version` y las credenciales MP (`mp_user_id`, `mp_alias`, `mp_public_key`, `mp_access_token_enc`, `mp_refresh_token_enc`, `mp_token_expires_at`; los tokens van cifrados con Fernet).
+El tenant guarda además: `slug` (único), `timezone` (default `America/Argentina/Buenos_Aires`; no se puede cambiar desde el panel), `booking_horizon_days` (15/30/60/90, default 90, CHECK `ck_tenant_booking_horizon_days`; se edita en `/panel/settings`, no por `PATCH /tenants/me`; D-034), `deposit_expiration_minutes` (default 15, `NULL` = sin expiración; en `/panel/settings` se elige entre 15 min y 24 h sin opción `NULL`, por `PATCH /tenants/me` acepta cualquier valor ≥ 1 o `NULL`), `owner_email` (único) + `password_hash` (PBKDF2), `session_version` y las credenciales MP (`mp_user_id`, `mp_alias`, `mp_public_key`, `mp_access_token_enc`, `mp_refresh_token_enc`, `mp_token_expires_at`; los tokens van cifrados con Fernet).
 
 **Constraints críticas:**
 - `ExcludeConstraint excl_overlapping_bookings` en `booking`:
@@ -306,7 +306,7 @@ Registrados en el `lifespan` de `app/main.py` con `AsyncIOScheduler` (trigger `i
 
 - **Locks Redis**: `uuid4().hex` como valor, TTL de seguridad anti-deadlock; se libera en `finally` solo si el valor sigue siendo el propio. El TTL de expiración es 300 s (no 30 s) porque cubre las llamadas a MP del lote.
 - **Outbox**: usa `FOR UPDATE SKIP LOCKED` a nivel DB (no Redis lock) — evita doble procesamiento sin lock externo.
-- **Expiración**: solo considera tenants con `deposit_expiration_minutes` no nulo; el deadline es `Booking.created_at + deposit_expiration_minutes`. Las llamadas a MP van antes de bloquear la fila; después se re-chequea `pending` y se aplica o expira. Si MP/token fallan, la reserva espera hasta `RECONCILE_GRACE` (1 h) tras el deadline; después expira igual. Sin token (tenant sin MP en producción) expira sin consultar.
+- **Expiración**: solo considera tenants con `deposit_expiration_minutes` no nulo; el deadline es el vencimiento del link de MP de la reserva (`max(Payment.mp_expires_at)`); si no tiene (reservas previas a D-031), `Booking.created_at + deposit_expiration_minutes` del tenant. Así, cambiar el plazo solo afecta a las reservas nuevas. Las llamadas a MP van antes de bloquear la fila; después se re-chequea `pending` y se aplica o expira. Si MP/token fallan, la reserva espera hasta `RECONCILE_GRACE` (1 h) tras el deadline; después expira igual. Sin token (tenant sin MP en producción) expira sin consultar.
 - **NO arranca** si `TEST_DATABASE_URL` está seteada (evita colisiones en tests — ver lifespan en `app/main.py`).
 - Comparte `async_session_maker` con la app (sin IPC).
 - ⚠️ Con más de 1 réplica los locks evitan el doble procesamiento, pero el scheduler corre en cada una. Escalar horizontalmente requiere un worker separado (D-005).
