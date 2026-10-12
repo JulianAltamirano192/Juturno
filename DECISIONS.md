@@ -940,6 +940,28 @@ Commit: `92a24d9`.
 
 ---
 
+## D-034: Horizonte de reservas por negocio (`booking_horizon_days`)
+
+**Fecha**: 2026-10-12
+
+**Contexto**: Un cliente podía crear un turno `pending` para cualquier fecha futura (año 9999 incluido). Ese turno bloquea el slot, puede tener link de pago y ensucia la agenda. Hacía falta un tope de anticipación; el valor es una decisión de producto, tomada por Julián el 2026-10-12.
+
+**Decisión**: `Tenant.booking_horizon_days` (NOT NULL, default 90, CHECK `ck_tenant_booking_horizon_days` en 15/30/60/90; migración `a1c2e3f4b5d6`, que deja a los tenants existentes en 90). Las opciones viven en `BOOKING_HORIZON_CHOICES` (`app/models.py`). `compute_available_slots` devuelve `[]` para días posteriores a hoy + horizonte (TZ del tenant; el día hoy + horizonte sí se ofrece) y `is_bookable_start` rechaza esos `start_time` con el mismo 422 que cualquier horario no disponible, en `POST /public/bookings` y `POST /bookings`. El negocio lo elige en `/panel/settings` ("Reservas anticipadas"); `POST /panel/settings/booking-horizon` (cookie + CSRF) solo guarda valores de la lista y redirige con mensajes fijos (`?horizon=saved|invalid`). Tests en `tests/test_booking_horizon.py`.
+
+**Alternativas**:
+- **90 días fijo para todos**: más simple (sin columna ni UI), pero un negocio de pocos turnos no puede acotar su agenda y uno con agenda corta tampoco.
+- **Número libre**: máxima flexibilidad, pero exige validar rangos, abre valores absurdos (0, 100000) y complica la UI y los tests; las cuatro opciones cubren los usos esperados.
+
+**Consecuencias**:
+- **Ventaja** — Cierra el hueco de reservas a fecha arbitraria; el default 90 es lo menos restrictivo frente a la situación anterior (sin tope), así que no cambia el comportamiento de nadie sin que lo pida.
+- **Riesgo** — Bajar el horizonte no toca turnos ya creados más allá del nuevo tope: siguen vigentes (solo se bloquean reservas nuevas).
+- **Riesgo** — La migración repite el set 15/30/60/90 como literal (las migraciones no importan constantes de `app/`): si se agregan opciones hay que migrar el CHECK a mano.
+- **Deuda** — No se expone en `PATCH /tenants/me` (API key); se agrega cuando un cliente de la API lo necesite. La página pública de reserva muestra solo 14 días, así que el horizonte solo se nota a través de la API o de enlaces directos.
+
+**Implementación**: `app/models.py`, `app/services.py` (`compute_available_slots`, `is_bookable_start`), `app/routers/{public,api,panel}.py`, `app/templates/settings.html`.
+
+---
+
 ## Roadmap de deuda técnica
 
 Ordenado por impacto/urgencia estimada:

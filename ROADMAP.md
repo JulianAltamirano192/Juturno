@@ -49,15 +49,15 @@ Ya verifiqué contra el código los hallazgos 2, 3, 4, 5, 7, 8 y 9 (se confirman
 11. ~~Rate limit por IP real del cliente detrás del proxy (Cloudflare + Traefik).~~ **Hecho (rama `fix/rate-limit-real-ip`, D-033)**: `client_ip` toma `CF-Connecting-IP` solo si el último salto de `X-Forwarded-For` (lo agrega Traefik) es de Cloudflare; IPv6 por /64. No hizo falta observar prod antes: se verifica después del deploy (ver RUNBOOK).
 
 ### Fase 2b — Hallazgos sin fase (aprobada 2026-10-12; una rama por ítem, en este orden)
-0. Errores de formularios del navegador como página HTML (CSRF vencido → confirmar logout / recargar; 429 → "Demasiados intentos") en vez de JSON que el celular descarga. Rama `fix/html-form-errors`.
+0. ~~Errores de formularios del navegador como página HTML (CSRF vencido → confirmar logout / recargar; 429 → "Demasiados intentos") en vez de JSON que el celular descarga.~~ **Hecho (rama `fix/html-form-errors`)**.
 1. ~~`GET /public/available-slots` con servicio/staff inactivo → 404 (igual que la reserva).~~ **Hecho (rama `fix/slots-inactive-service-staff`)**: también `GET /bookings/available-slots` y staff de otro tenant.
 2. ~~Validar `client_name` en reservas públicas.~~ **Hecho (rama `fix/validate-client-name`)**: 2-60 caracteres, sin links, espacios/saltos colapsados; también por API.
 3. ~~`process_outbox`: no mantener el lock de la fila durante la llamada a Meta.~~ **Hecho (rama `fix/outbox-cancel-lock`)**: cancelar saltea con `SKIP LOCKED` el evento en vuelo (no espera ni pisa `sent`) y el worker no manda si el turno ya no está `confirmed`.
 4. ~~Orden de locks Booking→Payment en webhook y reconciliación.~~ **Hecho (rama `fix/mp-lock-order`)**: el webhook bloquea el booking antes que el Payment, igual que la reconciliación.
-5. Tope de anticipación al reservar (requiere decisión de producto).
+5. ~~Tope de anticipación al reservar.~~ **Hecho (rama `feat/booking-horizon`, D-034)**: cada negocio elige 15/30/60/90 días (default 90) desde `/panel/settings`; más allá no se ofrecen slots y la reserva da 422.
 
 #### Hallazgos nuevos de las revisiones del 2026-10-10 (anteriores al código revisado; detalle; ver Fase 2b)
-- Tope de anticipación al reservar: hoy se puede crear un `pending` para el año 9999 (decisión de producto: ¿90 días? ¿configurable?).
+- ~~Tope de anticipación al reservar: hoy se puede crear un `pending` para el año 9999 (decisión de producto: ¿90 días? ¿configurable?).~~ Ver 2b.5.
 - ~~`GET /public/available-slots` ofrece horarios de servicios/staff inactivos (la reserva después da 404).~~ Ver 2b.1.
 - `process_outbox` mantiene el lock de la fila mientras llama a Meta (hasta ~33 s): un cancelar concurrente espera con el booking bloqueado y después pisa `sent` con `cancelled`.
 - ~~Orden de locks invertido: reconciliación Booking→Payment vs webhook Payment→Booking (deadlock posible; ambos reintentan).~~ Ver 2b.4.
@@ -146,4 +146,4 @@ Rama → test que falla → fix → `./scripts/test.sh` + `ruff check app/ tests
 
 Las fases 1-2 cierran los 12 hallazgos. Se chequea revisando que la sección "Hallazgos abiertos" de CLAUDE.md quede vacía.
 
-Siguiente tarea concreta: **Fase 2b** (hallazgos sin fase), después Fase 3.
+Siguiente tarea concreta: **Fase 3** (la Fase 2b está completa; quedan los pendientes listados arriba).
