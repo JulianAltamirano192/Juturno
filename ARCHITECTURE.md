@@ -108,7 +108,7 @@ Tenant (1) ──────< Service
              └── received_at, processed_at
 ```
 
-El tenant guarda además: `slug` (único), `timezone` (default `America/Argentina/Buenos_Aires`; no se puede cambiar desde el panel), `deposit_expiration_minutes` (default 15, `NULL` = sin expiración), `owner_email` (único) + `password_hash` (PBKDF2), `session_version` y las credenciales MP (`mp_user_id`, `mp_alias`, `mp_public_key`, `mp_access_token_enc`, `mp_refresh_token_enc`, `mp_token_expires_at`; los tokens van cifrados con Fernet).
+El tenant guarda además: `slug` (único), `timezone` (default `America/Argentina/Buenos_Aires`; no se puede cambiar desde el panel), `booking_horizon_days` (15/30/60/90, default 90, CHECK `ck_tenant_booking_horizon_days`; se edita en `/panel/settings`, no por `PATCH /tenants/me`; D-034), `deposit_expiration_minutes` (default 15, `NULL` = sin expiración), `owner_email` (único) + `password_hash` (PBKDF2), `session_version` y las credenciales MP (`mp_user_id`, `mp_alias`, `mp_public_key`, `mp_access_token_enc`, `mp_refresh_token_enc`, `mp_token_expires_at`; los tokens van cifrados con Fernet).
 
 **Constraints críticas:**
 - `ExcludeConstraint excl_overlapping_bookings` en `booking`:
@@ -198,8 +198,9 @@ Lógica de prioridad:
      - Sí → día cerrado (`[]`).
      - No → fallback `09:00-18:00`.
 
-### 5.3 `compute_available_slots(*, session, tenant_id, service, day, staff_id, tenant_timezone)`
+### 5.3 `compute_available_slots(*, session, tenant_id, service, day, staff_id, tenant_timezone, horizon_days)`
 Lógica única compartida (D-017) por `GET /bookings/available-slots` (API key) y `GET /public/available-slots` (público); cada endpoint valida auth y tenant antes de llamarla.
+0. Si `day` es posterior a `today_local + horizon_days` (`Tenant.booking_horizon_days`, TZ del tenant) devuelve `[]`. `is_bookable_start` aplica el mismo tope a `start_time` (422 en las dos creaciones de booking).
 1. Resuelve las ventanas del día con `resolve_day_windows`; si no hay, devuelve `[]`.
 2. Trae los bookings `pending`/`confirmed` del tenant que pisan el rango `[min(inicio), max(fin)]` de las ventanas (filtra por `staff_id` si viene).
 3. Pasa todo a `calculate_available_slots` con grilla de 30 min.

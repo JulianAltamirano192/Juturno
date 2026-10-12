@@ -18,6 +18,9 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import ExcludeConstraint
 from sqlmodel import JSON, Column, Field, Relationship, SQLModel
 
+# Días hacia adelante en que un cliente puede reservar (roadmap 2b.5).
+BOOKING_HORIZON_CHOICES = (15, 30, 60, 90)
+
 
 class Tenant(SQLModel, table=True):
     """
@@ -35,6 +38,10 @@ class Tenant(SQLModel, table=True):
             unique=True,
             postgresql_where=text("mp_user_id IS NOT NULL"),
         ),
+        CheckConstraint(
+            f"booking_horizon_days IN {BOOKING_HORIZON_CHOICES}",
+            name="ck_tenant_booking_horizon_days",
+        ),
     )
 
     id: int | None = Field(default=None, primary_key=True)
@@ -42,6 +49,11 @@ class Tenant(SQLModel, table=True):
     slug: str | None = Field(default=None, index=True, unique=True)
     whatsapp_number: str | None = None
     timezone: str = Field(default="America/Argentina/Buenos_Aires")
+    booking_horizon_days: int = Field(
+        default=90,
+        sa_column_kwargs={"server_default": text("90")},
+        description="Hasta cuántos días hacia adelante se puede reservar.",
+    )
     deposit_expiration_minutes: int | None = Field(
         default=15,
         sa_column=Column(Integer(), nullable=True),

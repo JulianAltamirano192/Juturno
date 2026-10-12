@@ -18,7 +18,14 @@ from app.booking_actions import (
 from app.config import settings
 from app.csrf import generate_csrf_token, set_csrf_cookie, validate_csrf
 from app.database import get_db
-from app.models import Booking, BusinessHours, Service, Staff, Tenant
+from app.models import (
+    BOOKING_HORIZON_CHOICES,
+    Booking,
+    BusinessHours,
+    Service,
+    Staff,
+    Tenant,
+)
 from app.mp_connect import (
     clear_mp_connection,
     has_payable_mp_payment,
@@ -354,14 +361,27 @@ _MP_FLASH = {
 # Mensajes de error: se muestran con banner de error, no de éxito.
 _MP_FLASH_ERRORS = {"pending", "error", "other_browser", "account_in_use"}
 
+_HORIZON_FLASH = {
+    "saved": "Guardamos hasta cuándo pueden reservar tus clientes.",
+    "invalid": "Elegí una de las opciones de la lista.",
+}
+
 
 @router.get("/panel/settings", response_class=HTMLResponse)
 async def panel_settings(
     request: Request,
     mp: str | None = None,
+    horizon: str | None = None,
     tenant: Tenant = Depends(get_current_tenant_from_session),
 ):
     csrf_token = generate_csrf_token(request)
+    # Solo mensajes fijos: nunca se refleja el query param.
+    flash = _MP_FLASH.get(mp or "")
+    if flash:
+        flash_error = mp in _MP_FLASH_ERRORS
+    else:
+        flash = _HORIZON_FLASH.get(horizon or "")
+        flash_error = horizon == "invalid"
     response = templates.TemplateResponse(
         request,
         "settings.html",
@@ -369,9 +389,9 @@ async def panel_settings(
             "tenant": tenant,
             "csrf_token": csrf_token,
             "mp_connected": tenant.mp_access_token_enc is not None,
-            # Solo mensajes fijos: nunca se refleja el query param.
-            "flash": _MP_FLASH.get(mp or ""),
-            "flash_error": mp in _MP_FLASH_ERRORS,
+            "flash": flash,
+            "flash_error": flash_error,
+            "horizon_choices": BOOKING_HORIZON_CHOICES,
         },
     )
     set_csrf_cookie(response, csrf_token)
@@ -407,6 +427,29 @@ async def panel_mp_disconnect(
     await session.commit()
     return RedirectResponse(
         url="/panel/settings?mp=disconnected", status_code=status.HTTP_302_FOUND
+    )
+
+
+@router.post("/panel/settings/booking-horizon")
+async def panel_booking_horizon(
+    request: Request,
+    tenant: Tenant = Depends(get_current_tenant_from_session),
+    session: AsyncSession = Depends(get_db),
+):
+    await validate_csrf(request)
+    form = await request.form()
+    value = str(form.get("booking_horizon_days", ""))
+    choices = {str(days): days for days in BOOKING_HORIZON_CHOICES}
+    if value not in choices:
+        return RedirectResponse(
+            url="/panel/settings?horizon=invalid",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    tenant.booking_horizon_days = choices[value]
+    session.add(tenant)
+    await session.commit()
+    return RedirectResponse(
+        url="/panel/settings?horizon=saved", status_code=status.HTTP_303_SEE_OTHER
     )
 
 

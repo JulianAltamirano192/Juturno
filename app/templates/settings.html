@@ -15,7 +15,7 @@
 <div class="ph">
   <div>
     <h1>Ajustes</h1>
-    <p>Configurá cómo cobrás las señas.</p>
+    <p>Configurá cómo cobrás las señas y hasta cuándo se puede reservar.</p>
   </div>
 </div>
 
@@ -44,5 +44,21 @@
     </form>
   </div>
   {% endif %}
+</section>
+
+<section class="form-card" aria-labelledby="h-horizon">
+  <h2 id="h-horizon" style="font-size:18px">Reservas anticipadas</h2>
+  <form method="POST" action="/panel/settings/booking-horizon" class="mp-row">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="field">
+      <label for="booking_horizon_days">Hasta cuántos días antes pueden reservar tus clientes</label>
+      <select id="booking_horizon_days" name="booking_horizon_days">
+        {% for days in horizon_choices %}
+        <option value="{{ days }}"{% if days == tenant.booking_horizon_days %} selected{% endif %}>{{ days }} días</option>
+        {% endfor %}
+      </select>
+    </div>
+    <button type="submit" class="btn-p">Guardar</button>
+  </form>
 </section>
 {% endblock %}

@@ -68,7 +68,8 @@
 | GET | `/login` | Formulario login (303 a `next` saneado si ya hay sesión válida). Query: `registered?`, `next?` | — |
 | POST | `/login` | Form: `owner_email`, `password`, `next?`, `csrf_token`. Setea cookie `juturno_session` y 303 a `next` (saneado, default `/dashboard`). Credenciales malas o CSRF inválido: **400** con form re-renderizado (mensaje genérico). Límite 10/minute | CSRF (400) |
 | POST | `/logout` | Borra la cookie de sesión → 303 `/login` | CSRF (403) |
-| GET | `/panel/settings` | Ajustes: estado de la conexión con Mercado Pago. `?mp=connected\|disconnected\|pending\|error\|other_browser\|account_in_use` muestra un mensaje fijo (nunca se refleja el valor del query) | Cookie |
+| GET | `/panel/settings` | Ajustes: conexión con Mercado Pago y "Reservas anticipadas" (select 15/30/60/90 días). `?horizon=saved\|invalid` muestra un mensaje fijo. `?mp=connected\|disconnected\|pending\|error\|other_browser\|account_in_use` muestra un mensaje fijo (nunca se refleja el valor del query) | Cookie |
+| POST | `/panel/settings/booking-horizon` | Guarda `Tenant.booking_horizon_days`. Form: `booking_horizon_days` (solo 15, 30, 60 o 90), `csrf_token`. 303 a `/panel/settings?horizon=saved` o `?horizon=invalid` (valor fuera de la lista: no guarda) | Cookie + CSRF |
 | POST | `/panel/mp/connect/start` | Guarda el state en Redis, setea la cookie `mp_oauth_state` (HttpOnly) y responde 302 a MP. 503 si falta `MP_MARKETPLACE_CLIENT_ID` | Cookie + CSRF |
 | POST | `/panel/mp/disconnect` | Borra localmente tokens y metadata MP → 302 `/panel/settings?mp=disconnected`. Bloqueado con 302 `?mp=pending` si hay un turno `pending` con `Payment.mp_preference_id` y plazo de seña vigente (`created_at + deposit_expiration_minutes`; minutos `NULL` = siempre bloquea). No revoca la autorización en MP | Cookie + CSRF |
 | GET | `/dashboard` | Vista principal: resumen del día, próximos turnos, checklist de configuración y link público de reserva (oculto si el tenant no tiene slug). Todo filtrado por `tenant_id` | Cookie |
@@ -140,7 +141,7 @@
 **Query params:**
 - `tenant_id` (int, >0)
 - `service_id` (int, >0)
-- `day` (date, `YYYY-MM-DD`; no puede ser anterior a hoy en la TZ del tenant)
+- `day` (date, `YYYY-MM-DD`; no puede ser anterior a hoy en la TZ del tenant). Si es posterior a hoy + `booking_horizon_days` (TZ del tenant) responde 200 con `slots: []`; el día hoy + horizonte todavía se ofrece
 - `staff_id` (int, opcional)
 
 **Response 200:**
@@ -173,7 +174,7 @@
 - El precio y la seña se toman del servicio (`price_at_booking = service.price`, `deposit_at_booking = effective_deposit(...)`, snapshot al crear); no hay campos de monto en el request.
 - Teléfono normalizado a `549XXXXXXXXXX` (`phone.py`). Se valida primero (422 antes que cualquier 404).
 - `client_name` (`clean_client_name`): normalizado NFKC, espacios y saltos de línea colapsados; 2 a 60 caracteres, al menos una letra, sin caracteres invisibles/de control y sin links ni dominios (`://`, `www.`, `algo.com` con TLDs comunes), si no 422 con `detail` de texto (más de 200 caracteres: 422 de validación del schema). Llega al WhatsApp del negocio y al pagador de MP. Lo mismo en `POST /bookings` (API key).
-- `start_time` sin zona se interpreta en la del tenant. Tiene que ser un turno que ofrecería `GET /public/available-slots`: futuro, dentro del horario de atención (del profesional si tiene uno propio), alineado a la grilla de 30 min, sin segundos, y con lugar para la duración del servicio (`is_bookable_start`). No mira las reservas existentes: un slot ocupado sigue siendo 409.
+- `start_time` sin zona se interpreta en la del tenant. Tiene que ser un turno que ofrecería `GET /public/available-slots`: futuro, dentro del horario de atención (del profesional si tiene uno propio), alineado a la grilla de 30 min, sin segundos, con lugar para la duración del servicio y no más allá de hoy + `booking_horizon_days` (`is_bookable_start`). No mira las reservas existentes: un slot ocupado sigue siendo 409.
 - Servicio y profesional tienen que estar activos (inactivo = 404, igual que inexistente).
 
 **Response 201 (`PublicBookingResponse`):**
@@ -190,7 +191,7 @@
 - 404 "Tenant not found" / "Service not found for tenant" / "Staff not found for tenant"
 - 409 "Slot ya reservado o superpuesto" (ExcludeConstraint `IntegrityError` sin booking previo con esa `idempotency_key`)
 - 422 "El WhatsApp no parece completo..." (teléfono inválido)
-- 422 "Ese horario no está disponible. Elegí uno de los turnos ofrecidos." (`start_time` fuera de la grilla, pasado o fuera de horario)
+- 422 "Ese horario no está disponible. Elegí uno de los turnos ofrecidos." (`start_time` fuera de la grilla, pasado, fuera de horario o más allá del horizonte de reservas)
 - 422 `ERR_PAGO_NO_CONFIGURADO` (producción + tenant sin MP conectado; se hace rollback, no queda reserva). Texto: "Este negocio todavía no configuró su cuenta de Mercado Pago. Avisale al local para que conecte su cuenta y vuelvas a reservar."
 - 429 rate limit (20/minute por IP)
 - 502 "Error al procesar el cobro del negocio; contactá al administrador de la plataforma." (`MPTokenCryptoError` al descifrar el token del tenant)
@@ -220,7 +221,7 @@ Además, con API key: `GET /tenants/me/mp` y `DELETE /tenants/me/mp` (sección 7
 
 ### 5.1 `GET /bookings/available-slots`
 
-Igual que el público pero **requiere API Key** y valida que `tenant_id` coincida con el de la key. 404 "Service not found" si no coincide (no revela existencia). 400 si la fecha es pasada, 404 si el servicio o el profesional no son del tenant o están inactivos.
+Igual que el público (incluido el horizonte: días posteriores a hoy + `booking_horizon_days` devuelven `slots: []`) pero **requiere API Key** y valida que `tenant_id` coincida con el de la key. 404 "Service not found" si no coincide (no revela existencia). 400 si la fecha es pasada, 404 si el servicio o el profesional no son del tenant o están inactivos.
 
 ### 5.2 `POST /bookings`
 
@@ -464,7 +465,7 @@ deposit_expiration_minutes: int | None = None  # ge=1
 | 409 | `POST /bookings`, `POST /public/bookings` | ExcludeConstraint violation (slot ocupado). Una colisión de `idempotency_key` del mismo tenant devuelve 200, no 409 |
 | 409 | `POST /panel/agenda/{id}/*` | Transición de estado inválida / turno no empezado |
 | 422 | `POST /public/bookings`, `POST /bookings` | Teléfono inválido (`InvalidPhoneError`) |
-| 422 | `POST /public/bookings`, `POST /bookings` | `start_time` no es un turno disponible (`is_bookable_start`) |
+| 422 | `POST /public/bookings`, `POST /bookings` | `start_time` no es un turno disponible (`is_bookable_start`), incluido más allá del horizonte de reservas |
 | 422 | `POST /public/bookings` (prod) | `ERR_PAGO_NO_CONFIGURADO` (tenant sin MP conectado) |
 | 422 | Cualquiera con body/query | Validación Pydantic (tipos, `gt=0`, `ge=1`) |
 | 429 | `POST /login`, `POST /register`, `POST /public/bookings` | Rate limit (10 / 5 / 20 por minuto por IP) |
