@@ -167,11 +167,12 @@ El tenant guarda además: `slug` (único), `timezone` (default `America/Argentin
 - Solo aplica a formularios del panel. Los endpoints con API key y los webhooks no usan CSRF (se autentican por header/firma).
 
 ### 4.4 Rate limiting (slowapi)
-- Singleton `limiter` en `app/limiter.py`, clave = IP del cliente (`get_remote_address`), handler `RateLimitExceeded` → 429.
+- Singleton `limiter` en `app/limiter.py`, clave = IP del cliente (`client_ip`, D-033), handler `RateLimitExceeded` → 429.
 - Límites: `POST /login` 10/min, `POST /register` 5/min, `POST /public/bookings` 20/min.
 - Se desactiva cuando `TEST_DATABASE_URL` está seteada (los tests de `test_rate_limiting.py` lo reactivan a propósito).
 - ⚠️ Storage en memoria del proceso (sin `storage_uri`): el contador no se comparte entre réplicas ni sobrevive a un restart.
-- ⚠️ Detrás de Traefik, `get_remote_address` solo ve la IP real si uvicorn confía en el proxy. El comando de prod usa `--proxy-headers`, pero sin `--forwarded-allow-ips=<IP_Traefik>` (pendiente de configurar en Coolify) puede ver la IP del proxy y limitar a todos juntos.
+- IP real (D-033), cadena Cliente → Cloudflare → Traefik → uvicorn: uvicorn ignora los headers de proxy (`FORWARDED_ALLOW_IPS` queda en `127.0.0.1`) y el peer es la IP privada de Traefik. `client_ip`: peer público → el peer; peer privado → último `X-Forwarded-For` (lo agrega Traefik, no falsificable); si ese salto es de Cloudflare (`CLOUDFLARE_NETWORKS`, lista fija) → `CF-Connecting-IP`; si no, el salto. Las IPv6 se agrupan por /64.
+- ⚠️ Requiere no setear `--forwarded-allow-ips` y no publicar el puerto 8000 (se confía en headers de cualquier peer privado). Límites conocidos: usuarios tras NAT de operadora comparten IP; el login se limita solo por IP, sin límite por cuenta.
 
 ---
 
