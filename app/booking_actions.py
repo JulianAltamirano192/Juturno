@@ -119,11 +119,18 @@ async def transition_booking_status(
 
     # Al cancelar, cancelar los outbox sin enviar del booking (pending y los
     # failed que process_outbox reintenta) para no mandar un WhatsApp de
-    # confirmación/recordatorio después de cancelar.
+    # confirmación/recordatorio después de cancelar. SKIP LOCKED: el que
+    # process_outbox tiene tomado se está enviando a Meta (hasta ~33 s); no se
+    # lo espera ni se pisa su resultado, y si falla el worker no lo reintenta
+    # porque el turno ya no está confirmado.
     if new_status == "cancelled":
-        outbox_stmt = select(NotificationOutbox).where(
-            NotificationOutbox.booking_id == booking.id,
-            NotificationOutbox.status.in_(("pending", "failed")),
+        outbox_stmt = (
+            select(NotificationOutbox)
+            .where(
+                NotificationOutbox.booking_id == booking.id,
+                NotificationOutbox.status.in_(("pending", "failed")),
+            )
+            .with_for_update(skip_locked=True)
         )
         pending_outbox = (await session.execute(outbox_stmt)).scalars().all()
         for evt in pending_outbox:
