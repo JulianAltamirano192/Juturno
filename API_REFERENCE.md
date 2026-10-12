@@ -75,7 +75,7 @@
 | GET | `/dashboard` | Vista principal: resumen del día, próximos turnos, checklist de configuración y link público de reserva (oculto si el tenant no tiene slug). Todo filtrado por `tenant_id` | Cookie |
 | GET | `/panel/services` | Listar servicios (activos/inactivos) con seña efectiva | Cookie |
 | GET | `/panel/services/new` | Formulario nuevo servicio | Cookie |
-| POST | `/panel/services/new` | Crear servicio. Form: `name` (obligatorio), `duration_minutes` (entero ≥ 1), `price` (`Decimal` entre 0.01 y 99999999.99), `deposit_amount?` (`Decimal` entre 0 y el precio; vacío = 30% del precio). Ambos se redondean a 2 decimales antes de validar; `Infinity`/`NaN` se rechazan. Error de validación: 200 con form re-renderizado. Éxito: 303 `/panel/services` | Cookie + CSRF |
+| POST | `/panel/services/new` | Crear servicio. Form: `name` (obligatorio), `duration_minutes` (entero ≥ 1), `price` (`Decimal` entre 0.01 y 99999999.99), `charge_deposit?` (checkbox "Cobrar seña al reservar"; el form nuevo lo trae tildado), `deposit_amount?` (`Decimal` entre 0 y el precio; vacío = 30% del precio). Sin `charge_deposit` se guarda `deposit_amount = 0` (sin seña) y el monto se ignora; con `charge_deposit` y seña efectiva 0 (0 tipeado, redondeo a 0 o 30% de 0.01) es error de form. Ambos se redondean a 2 decimales antes de validar; `Infinity`/`NaN` se rechazan. Error de validación: 200 con form re-renderizado. Éxito: 303 `/panel/services` | Cookie + CSRF |
 | GET | `/panel/services/{service_id}/edit` | Formulario editar servicio (404 "Servicio no encontrado" si no es del tenant) | Cookie |
 | POST | `/panel/services/{service_id}/edit` | Actualizar servicio (mismas validaciones; 404 si no es del tenant, se chequea antes que el CSRF) | Cookie + CSRF |
 | POST | `/panel/services/{service_id}/toggle` | Activar/desactivar servicio (404 si no es del tenant) | Cookie + CSRF |
@@ -107,7 +107,7 @@
 |--------|------|-------------|---------|----------|
 | GET | `/public/tenants/{identifier}` | Info pública tenant + servicios activos (`identifier` = ID numérico o slug) | — | `PublicTenantDetailResponse` |
 | GET | `/public/available-slots` | Slots libres para servicio/día | Query: `tenant_id`, `service_id`, `day`, `staff_id?` | `AvailableSlotsResponse` |
-| POST | `/public/bookings` | Crear booking `pending` + preferencia MP → `payment_url`. Límite 20/minute | `BookingCreate` | `PublicBookingResponse` (201) |
+| POST | `/public/bookings` | Crear booking `pending` + preferencia MP → `payment_url`; si la seña efectiva es 0, queda `confirmed` sin MP (`payment_url` `""`). Límite 20/minute | `BookingCreate` | `PublicBookingResponse` (201) |
 | GET | `/t/{slug}` | Página HTML reserva (mobile-first) | — | `HTMLResponse` |
 | GET | `/` | Landing de marketing (`landing.html`, standalone; la demo corre solo en el cliente, sin llamadas al backend). No aparece en OpenAPI | — | `HTMLResponse` |
 | GET | `/static/*` | Assets estáticos de `app/static/` (fuentes Sora/DM Sans self-hosted en `fonts/`, imágenes `.webp` del landing). ⚠️ **Públicos sin auth: solo poner assets acá, nunca datos ni secrets** | — | archivo |
@@ -176,16 +176,19 @@
 - `client_name` (`clean_client_name`): normalizado NFKC, espacios y saltos de línea colapsados; 2 a 60 caracteres, al menos una letra, sin caracteres invisibles/de control y sin links ni dominios (`://`, `www.`, `algo.com` con TLDs comunes), si no 422 con `detail` de texto (más de 200 caracteres: 422 de validación del schema). Llega al WhatsApp del negocio y al pagador de MP. Lo mismo en `POST /bookings` (API key).
 - `start_time` sin zona se interpreta en la del tenant. Tiene que ser un turno que ofrecería `GET /public/available-slots`: futuro, dentro del horario de atención (del profesional si tiene uno propio), alineado a la grilla de 30 min, sin segundos, con lugar para la duración del servicio y no más allá de hoy + `booking_horizon_days` (`is_bookable_start`). No mira las reservas existentes: un slot ocupado sigue siendo 409.
 - Servicio y profesional tienen que estar activos (inactivo = 404, igual que inexistente).
+- **Servicio sin seña** (seña efectiva 0, es decir `deposit_amount = 0`): la reserva se crea y pasa a `confirmed` (actor `client`) en la misma transacción, se encola la confirmación por WhatsApp, no se crea `Payment` ni preferencia MP y no hace falta MP conectado (tampoco en producción). `payment_url` es `""`.
+- Tope por teléfono: con 3 turnos futuros `confirmed` sin seña del mismo teléfono en ese negocio, un cuarto sin seña da 422. El conteo y el insert no son atómicos: dos pedidos simultáneos pueden llegar a 4.
 
 **Response 201 (`PublicBookingResponse`):**
 ```json
 {
   "message": "Reserva creada",
   "booking_id": 42,
-  "payment_url": "https://sandbox.mercadopago.com/checkout/preference/..."
+  "payment_url": "https://sandbox.mercadopago.com/checkout/preference/...",
+  "status": "pending"
 }
 ```
-`payment_url` es el `sandbox_init_point` si `MP_SANDBOX` y el `init_point` en producción.
+`payment_url` es el `sandbox_init_point` si `MP_SANDBOX` y el `init_point` en producción. `status` es el estado del booking (`pending` con seña; `confirmed` sin seña, con `message: "Reserva confirmada"` y `payment_url: ""`). La recuperación idempotente (200) también lo incluye.
 
 **Errores:**
 - 404 "Tenant not found" / "Service not found for tenant" / "Staff not found for tenant"
@@ -193,6 +196,7 @@
 - 422 "El WhatsApp no parece completo..." (teléfono inválido)
 - 422 "Ese horario no está disponible. Elegí uno de los turnos ofrecidos." (`start_time` fuera de la grilla, pasado, fuera de horario o más allá del horizonte de reservas)
 - 422 `ERR_PAGO_NO_CONFIGURADO` (producción + tenant sin MP conectado; se hace rollback, no queda reserva). Texto: "Este negocio todavía no configuró su cuenta de Mercado Pago. Avisale al local para que conecte su cuenta y vuelvas a reservar."
+- 422 "Ya tenés 3 turnos reservados en este negocio. Para sacar otro, comunicate directamente con el negocio." (tope por teléfono, solo servicios sin seña)
 - 429 rate limit (20/minute por IP)
 - 502 "Error al procesar el cobro del negocio; contactá al administrador de la plataforma." (`MPTokenCryptoError` al descifrar el token del tenant)
 - 502 "Timeout creando preferencia en Mercado Pago" (timeout en `create_mp_preference`)
@@ -434,7 +438,8 @@ deposit_amount: Decimal  # seña efectiva; serializado como número JSON (float)
 ```python
 message: str
 booking_id: int
-payment_url: str
+payment_url: str  # "" si el servicio no cobra seña
+status: str  # estado del booking: pending | confirmed
 ```
 
 ### `TenantSettingsUpdate` (`app/routers/api.py`)
@@ -466,7 +471,8 @@ deposit_expiration_minutes: int | None = None  # ge=1
 | 409 | `POST /panel/agenda/{id}/*` | Transición de estado inválida / turno no empezado |
 | 422 | `POST /public/bookings`, `POST /bookings` | Teléfono inválido (`InvalidPhoneError`) |
 | 422 | `POST /public/bookings`, `POST /bookings` | `start_time` no es un turno disponible (`is_bookable_start`), incluido más allá del horizonte de reservas |
-| 422 | `POST /public/bookings` (prod) | `ERR_PAGO_NO_CONFIGURADO` (tenant sin MP conectado) |
+| 422 | `POST /public/bookings` (prod) | `ERR_PAGO_NO_CONFIGURADO` (tenant sin MP conectado; no aplica a servicios sin seña) |
+| 422 | `POST /public/bookings` | Tope de 3 turnos futuros sin seña por teléfono en el negocio |
 | 422 | Cualquiera con body/query | Validación Pydantic (tipos, `gt=0`, `ge=1`) |
 | 429 | `POST /login`, `POST /register`, `POST /public/bookings` | Rate limit (10 / 5 / 20 por minuto por IP) |
 | 500 | Webhook MP | Error inesperado (MP API rechazo no-404, `MPTokenCryptoError`): evento queda `failed`, MP reintenta |

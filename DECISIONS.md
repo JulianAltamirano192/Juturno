@@ -962,6 +962,30 @@ Commit: `92a24d9`.
 
 ---
 
+## D-035: Seña opcional por servicio
+
+**Fecha**: 2026-10-12
+
+**Contexto**: Todo turno público creaba una preferencia de MP, aun con seña 0 (el panel ya aceptaba 0): fallaba o cobraba $0, y un negocio sin MP conectado no podía tomar reservas. Hacía falta que el negocio elija, por servicio, si cobra seña (ROADMAP Fase 3, ítem 11).
+
+**Decisión**: "Sin seña" es `Service.deposit_amount == 0`; `None` sigue siendo 30% del precio. No hay migración (la columna y el CHECK `>= 0` ya existían). El form de servicios tiene el checkbox "Cobrar seña al reservar" (`charge_deposit`, tildado por defecto): destildado guarda 0; tildado con seña efectiva 0 es error de form. En `POST /public/bookings`, con seña efectiva 0 el booking se crea, se pasa a `confirmed` (actor `client`) en la misma transacción y se encola la confirmación; no hay `Payment`, token MP ni preferencia, `payment_url` es `""` y funciona sin MP conectado. La respuesta (también la recuperación idempotente) suma `status`, y la página pública muestra "Turno confirmado" solo si `status == "confirmed"`. Tope de 3 turnos futuros `confirmed` sin seña por teléfono y negocio (422 el cuarto). `POST /bookings` (API key) no cambia: sigue creando `pending`. Tests en `tests/test_optional_deposit.py` y `tests/test_services_panel.py`.
+
+**Alternativas**:
+- **Columna booleana `charge_deposit` en `Service`**: más explícita, pero exige migración y dos fuentes de verdad con `deposit_amount`.
+- **Sin tope por teléfono**: más simple, pero un turno sin seña es un slot gratis más un WhatsApp saliendo del número compartido de la plataforma; cualquiera podría llenar la agenda o spamear números ajenos limitado solo por el rate limit por IP.
+- **Verificación de teléfono (OTP)**: cierra el hueco de verdad, pero agrega costo de mensajes y fricción; se difiere.
+
+**Consecuencias**:
+- **Ventaja** — Sin migración ni cambio de modelo; MP deja de ser obligatorio para negocios que no cobran seña.
+- **Riesgo** — El tope cuenta y después inserta: dos pedidos simultáneos del mismo teléfono pueden llegar a 4.
+- **Riesgo** — Quien rote teléfonos no se frena (cada número nuevo tiene su cupo); solo lo acota el rate limit por IP (20/min).
+- **Riesgo** — Los servicios que ya tenían seña 0 pasan de fallar en MP a confirmar sin pago apenas se despliegue.
+- **Deuda** — Límite diario por negocio o verificación de teléfono para turnos sin seña; `POST /bookings` (API) no auto-confirma servicios sin seña. Ver "Pendientes del 11" en ROADMAP.
+
+**Implementación**: `app/routers/public.py` (`create_public_booking`), `app/routers/panel.py` (`_parse_service_form`), `app/templates/service_form.html`, `app/templates/public_booking.html`.
+
+---
+
 ## Roadmap de deuda técnica
 
 Ordenado por impacto/urgencia estimada:
