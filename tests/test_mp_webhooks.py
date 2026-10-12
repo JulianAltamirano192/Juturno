@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import hmac
 from datetime import datetime, timedelta, timezone
@@ -5,10 +6,11 @@ from decimal import Decimal
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import text
+from sqlalchemy import select, text
 
 from app import mp_webhooks
 from app.models import Booking, Payment, Service, Tenant
+from tests.conftest import TestingSessionLocal
 
 
 # Helper para firmar webhooks
@@ -2188,3 +2190,61 @@ async def test_webhook_stale_approved_does_not_overwrite_refund(
         text("SELECT status FROM payment WHERE mp_payment_id='pay_stale'")
     )
     assert pay.scalar_one() == "refunded"
+
+
+async def _wait_until_blocked_on_lock() -> None:
+    """Espera a que otra sesión de la base de tests quede esperando un lock."""
+    query = text(
+        "SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock' "
+        "AND datname = current_database()"
+    )
+    for _ in range(100):
+        async with TestingSessionLocal() as s:
+            if (await s.execute(query)).first():
+                return
+        await asyncio.sleep(0.05)
+    raise AssertionError("ninguna sesión quedó esperando un lock")
+
+
+@pytest.mark.asyncio
+async def test_webhook_and_reconciliation_lock_in_the_same_order(db_session):
+    """La reconciliación bloquea el booking y después aplica el pago; el webhook
+    del mismo pago no puede bloquear el Payment antes que el booking (deadlock)."""
+    booking = await _create_booking(db_session, "lock_order")
+    db_session.add(
+        Payment(
+            booking_id=booking.id,
+            amount=Decimal("100.00"),
+            mp_payment_id="pay_lock",
+            method="mercado_pago",
+            status="pending",
+        )
+    )
+    await db_session.commit()
+    details = _make_payment_details("approved", f"booking-{booking.id}")
+
+    async def webhook():
+        async with TestingSessionLocal() as s, s.begin():
+            await mp_webhooks.apply_payment_details(s, "pay_lock", details)
+
+    async def reconciliation():
+        async with TestingSessionLocal() as s, s.begin():
+            await s.execute(
+                select(Booking).where(Booking.id == booking.id).with_for_update()
+            )
+            hook = asyncio.create_task(webhook())
+            await _wait_until_blocked_on_lock()
+            await mp_webhooks.apply_payment_details(s, "pay_lock", details)
+        await hook
+
+    await asyncio.wait_for(reconciliation(), timeout=10)
+
+    await db_session.refresh(booking)
+    assert booking.status == "confirmed"
+    confirmations = await db_session.execute(
+        text(
+            "SELECT COUNT(*) FROM notification_outbox "
+            f"WHERE booking_id={booking.id} AND notification_type='confirmation'"
+        )
+    )
+    assert confirmations.scalar_one() == 1
