@@ -93,7 +93,11 @@ async def process_outbox(async_session_maker) -> None:
             try:
                 # Savepoint: si falla la base adentro, se puede igual marcar failed.
                 async with session.begin_nested():
-                    await _send_event(session, whatsapp, event)
+                    sent = await _send_event(session, whatsapp, event)
+                if not sent:
+                    event.status = "cancelled"
+                    event.error_message = "booking_not_confirmed"
+                    continue
                 event.status = "sent"
                 event.error_message = None
                 logger.info(
@@ -114,10 +118,13 @@ async def process_outbox(async_session_maker) -> None:
                 )
 
 
-async def _send_event(session, whatsapp: WhatsAppService, event) -> None:
+async def _send_event(session, whatsapp: WhatsAppService, event) -> bool:
+    """Envía el evento; False si el turno ya no está confirmado (no se manda)."""
     booking = await session.get(Booking, event.booking_id)
     if booking is None:
         raise RuntimeError("Booking not found")
+    if booking.status != "confirmed":
+        return False
 
     tenant = await session.get(Tenant, booking.tenant_id)
     tenant_tz = tenant.timezone if tenant else "America/Argentina/Buenos_Aires"
@@ -132,3 +139,4 @@ async def _send_event(session, whatsapp: WhatsAppService, event) -> None:
         booking.client_phone, booking.id, booking.client_name, fecha_legible
     )
     response.raise_for_status()
+    return True

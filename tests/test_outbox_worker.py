@@ -1,8 +1,11 @@
+import asyncio
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from sqlalchemy import select
 
 from app import outbox_worker
+from app.booking_actions import transition_booking_status
 from app.models import Booking, NotificationOutbox, Service, Tenant
 from app.outbox_worker import MAX_OUTBOX_ATTEMPTS, process_outbox
 from tests.conftest import TestingSessionLocal
@@ -35,6 +38,7 @@ async def _event(
     retry_count: int = 0,
     created_ago: timedelta = timedelta(0),
     tenant_tz: str = "UTC",
+    booking_status: str = "confirmed",
 ) -> NotificationOutbox:
     tenant = Tenant(name=f"Tenant {key}", timezone=tenant_tz)
     db_session.add(tenant)
@@ -52,7 +56,7 @@ async def _event(
         end_time=start + timedelta(minutes=30),
         price_at_booking=1,
         idempotency_key=f"outbox-{key}",
-        status="confirmed",
+        status=booking_status,
     )
     db_session.add(booking)
     await db_session.flush()
@@ -190,7 +194,7 @@ async def test_db_error_in_one_event_does_not_abort_the_batch(
     async def send_event(session, whatsapp, event):
         if event.id == broken.id:
             await session.execute(text("SELECT 1/0"))
-        await real_send_event(session, whatsapp, event)
+        return await real_send_event(session, whatsapp, event)
 
     monkeypatch.setattr(outbox_worker, "_send_event", send_event)
 
@@ -213,3 +217,63 @@ def test_format_booking_datetime_uses_tenant_timezone_literally():
         outbox_worker.format_booking_datetime(dt, "America/Argentina/Buenos_Aires")
         == "15/10/2026 a las 09:00"
     )
+
+
+@pytest.mark.asyncio
+async def test_event_of_not_confirmed_booking_is_cancelled_not_sent(db_session, sent):
+    """Un fallido de un turno que se canceló mientras se enviaba no se
+    reintenta: el worker mira el turno antes de mandar."""
+    event = await _event(
+        db_session,
+        "cancelled-booking",
+        status="failed",
+        retry_count=1,
+        created_ago=timedelta(minutes=2),
+        booking_status="cancelled",
+    )
+
+    await process_outbox(TestingSessionLocal)
+
+    await db_session.refresh(event)
+    assert event.status == "cancelled"
+    assert sent == []
+
+
+@pytest.mark.asyncio
+async def test_cancel_skips_event_locked_by_worker(db_session):
+    """Cancelar no espera al worker que tiene el evento tomado (llamando a
+    Meta) ni pisa su resultado después."""
+    event = await _event(db_session, "in-flight")
+    other = NotificationOutbox(
+        booking_id=event.booking_id,
+        notification_type="reminder",
+        status="failed",
+        retry_count=1,
+    )
+    db_session.add(other)
+    await db_session.commit()
+
+    async with TestingSessionLocal() as worker, worker.begin():
+        locked = (
+            await worker.execute(
+                select(NotificationOutbox)
+                .where(NotificationOutbox.id == event.id)
+                .with_for_update()
+            )
+        ).scalar_one()
+
+        async def cancel():
+            async with TestingSessionLocal() as owner, owner.begin():
+                booking = await owner.get(Booking, event.booking_id)
+                await transition_booking_status(owner, booking, "cancelled")
+
+        await asyncio.wait_for(cancel(), timeout=5)
+        locked.status = "sent"
+
+    await db_session.refresh(event)
+    await db_session.refresh(other)
+    booking = await db_session.get(Booking, event.booking_id)
+    await db_session.refresh(booking)
+    assert booking.status == "cancelled"
+    assert event.status == "sent"  # el tomado se saltea y no se pisa
+    assert other.status == "cancelled"  # el resto se cancela igual

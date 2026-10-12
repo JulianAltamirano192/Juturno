@@ -859,6 +859,8 @@ Commit: `92a24d9`.
 - **Riesgo** — Si `process_outbox` ya tomó el evento y está enviándolo cuando se cancela, el WhatsApp sale igual (la cancelación no lo detiene, solo evita reintentos y envíos futuros).
 - **Deuda** — Decidir si `expired` también debe cancelar las notificaciones pendientes.
 
+**Actualización (2026-10-12, Fase 2b.3)**: se adoptó la alternativa descartada. Cancelar usa `FOR UPDATE SKIP LOCKED` sobre el outbox: el evento que `process_outbox` tiene tomado mientras llama a Meta (hasta ~33 s) ya no traba la cancelación (que tiene el booking bloqueado) ni termina pisando `sent` con `cancelled`. Para que ese evento salteado no se reintente si su envío falla, `process_outbox` ahora no envía si el turno no está `confirmed` y lo marca `cancelled` (`error_message="booking_not_confirmed"`). Eso también resuelve la deuda de `expired`, `no_show` y `completed`. Sigue el riesgo de un envío ya en vuelo: si la cancelación llega después de que el worker leyó el turno, el WhatsApp sale igual.
+
 **Implementación**: `app/booking_actions.py`. Tests en `tests/test_booking_actions.py`.
 
 ---

@@ -52,7 +52,7 @@ Ya verifiqué contra el código los hallazgos 2, 3, 4, 5, 7, 8 y 9 (se confirman
 0. Errores de formularios del navegador como página HTML (CSRF vencido → confirmar logout / recargar; 429 → "Demasiados intentos") en vez de JSON que el celular descarga. Rama `fix/html-form-errors`.
 1. ~~`GET /public/available-slots` con servicio/staff inactivo → 404 (igual que la reserva).~~ **Hecho (rama `fix/slots-inactive-service-staff`)**: también `GET /bookings/available-slots` y staff de otro tenant.
 2. ~~Validar `client_name` en reservas públicas.~~ **Hecho (rama `fix/validate-client-name`)**: 2-60 caracteres, sin links, espacios/saltos colapsados; también por API.
-3. `process_outbox`: no mantener el lock de la fila durante la llamada a Meta.
+3. ~~`process_outbox`: no mantener el lock de la fila durante la llamada a Meta.~~ **Hecho (rama `fix/outbox-cancel-lock`)**: cancelar saltea con `SKIP LOCKED` el evento en vuelo (no espera ni pisa `sent`) y el worker no manda si el turno ya no está `confirmed`.
 4. Orden de locks Booking→Payment en webhook y reconciliación.
 5. Tope de anticipación al reservar (requiere decisión de producto).
 
