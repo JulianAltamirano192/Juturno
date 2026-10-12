@@ -163,7 +163,7 @@ El tenant guarda además: `slug` (único), `timezone` (default `America/Argentin
 - Token generado con `secrets.token_hex(32)` en GET que renderiza formulario.
 - Cookie `csrf_token` (no HttpOnly, `SameSite=Lax`, `Secure` en prod, 14 días como la sesión). Los GET reusan el token de la cookie si tiene el formato válido (64 hex), así abrir otra página no invalida formularios de otras pestañas. El login exitoso emite un token nuevo y `/logout` borra la cookie, para que no pase de un usuario a otro en un navegador compartido.
 - Campo oculto `csrf_token` en formulario con mismo token.
-- POST valida `hmac.compare_digest(form_token, cookie_token)`: `validate_csrf` (panel y `/logout`) lee el body del form y responde 403 si falta la cookie o no coincide; `/register` y `/login` usan `validate_csrf_double_submit` y re-renderizan el formulario con error.
+- POST valida `hmac.compare_digest(form_token, cookie_token)`: `validate_csrf` (panel y `/logout`) lee el body del form y responde 403 si falta la cookie o no coincide; `/register` y `/login` usan `validate_csrf_double_submit` y re-renderizan el formulario con error. `validate_csrf` lanza `CSRFError`: si el request pide HTML (formulario del navegador), `main.py` muestra `form_error.html` con el token vigente (en `/logout`, un botón para confirmar el cierre de sesión); si no, JSON `{"detail": ...}`. El 429 del rate limit sigue la misma regla ("Demasiados intentos" vs. JSON de slowapi).
 - Solo aplica a formularios del panel. Los endpoints con API key y los webhooks no usan CSRF (se autentican por header/firma).
 
 ### 4.4 Rate limiting (slowapi)

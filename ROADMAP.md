@@ -48,12 +48,24 @@ Ya verifiqué contra el código los hallazgos 2, 3, 4, 5, 7, 8 y 9 (se confirman
 10. ~~#11 resto: reembolso/contracargo, booking inexistente en el webhook, `Decimal` en `create_mp_preference`.~~ **Hecho (rama `fix/mp-webhook-refunds-and-orphans`)**: reembolso total o contracargo cancela el turno que no empezó (decisión de Julián); `BOOKING_NOT_FOUND` sin insertar el pago; un `approved` viejo no pisa un reembolso.
 11. ~~Rate limit por IP real del cliente detrás del proxy (Cloudflare + Traefik).~~ **Hecho (rama `fix/rate-limit-real-ip`, D-033)**: `client_ip` toma `CF-Connecting-IP` solo si el último salto de `X-Forwarded-For` (lo agrega Traefik) es de Cloudflare; IPv6 por /64. No hizo falta observar prod antes: se verifica después del deploy (ver RUNBOOK).
 
-#### Hallazgos nuevos de las revisiones del 2026-10-10 (anteriores al código revisado; sin fase asignada)
+### Fase 2b — Hallazgos sin fase (aprobada 2026-10-12; una rama por ítem, en este orden)
+0. Errores de formularios del navegador como página HTML (CSRF vencido → confirmar logout / recargar; 429 → "Demasiados intentos") en vez de JSON que el celular descarga. Rama `fix/html-form-errors`.
+1. `GET /public/available-slots` con servicio/staff inactivo → 404 (igual que la reserva).
+2. Validar `client_name` en reservas públicas.
+3. `process_outbox`: no mantener el lock de la fila durante la llamada a Meta.
+4. Orden de locks Booking→Payment en webhook y reconciliación.
+5. Tope de anticipación al reservar (requiere decisión de producto).
+
+#### Hallazgos nuevos de las revisiones del 2026-10-10 (anteriores al código revisado; detalle; ver Fase 2b)
 - Tope de anticipación al reservar: hoy se puede crear un `pending` para el año 9999 (decisión de producto: ¿90 días? ¿configurable?).
 - `GET /public/available-slots` ofrece horarios de servicios/staff inactivos (la reserva después da 404).
 - `process_outbox` mantiene el lock de la fila mientras llama a Meta (hasta ~33 s): un cancelar concurrente espera con el booking bloqueado y después pisa `sent` con `cancelled`.
 - Orden de locks invertido: reconciliación Booking→Payment vs webhook Payment→Booking (deadlock posible; ambos reintentan).
 - Validar `client_name` en reservas públicas (largo, sin URLs): llega al template de WhatsApp.
+
+#### Pendientes de la 2b.0 (revisión del 2026-10-12; endurecimiento, para más adelante)
+- Panel sin `X-Frame-Options: DENY` / `Content-Security-Policy: frame-ancestors 'none'`.
+- Rechazar `CORS_ORIGINS="*"` en el validador de producción.
 
 #### Pendientes de la 2.11 (revisión del 2026-10-12; para más adelante)
 - Verificar después del deploy: más de 10 logins fallidos desde el celular (datos móviles) dan 429 ahí y otra red sigue entrando.
@@ -130,4 +142,4 @@ Rama → test que falla → fix → `./scripts/test.sh` + `ruff check app/ tests
 
 Las fases 1-2 cierran los 12 hallazgos. Se chequea revisando que la sección "Hallazgos abiertos" de CLAUDE.md quede vacía.
 
-Siguiente tarea concreta: **Fase 3** (quick wins del panel; antes, decidir si se toma algún hallazgo sin fase).
+Siguiente tarea concreta: **Fase 2b** (hallazgos sin fase), después Fase 3.
