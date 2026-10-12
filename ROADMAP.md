@@ -13,7 +13,7 @@ Ya verifiqué contra el código los hallazgos 2, 3, 4, 5, 7, 8 y 9 (se confirman
 - **Seña > precio**: el form de servicios (`app/routers/panel.py:62-82`) no compara la seña con el precio. Va junto con el hallazgo 11 (Infinity y overflow de `Numeric(10,2)`).
 - **Servicio sin seña**: hoy `deposit_amount = None` significa 30% del precio (`app/services.py:5-9`). Con seña 0 igual se llama a MP con monto 0 (`app/routers/public.py:296-323`). No existe un camino "sin seña", y un negocio sin MP no puede tomar ningún turno.
 - **Logout a `#logout`**: no existe ese anchor en el repo. Las causas probables son el 403 JSON de CSRF cuando otra pestaña rotó la cookie (hallazgo 9) o un `GET /logout` que da 405. Puede que arreglando el 9 desaparezca; hay que reproducirlo primero.
-- **Nombre de cuenta MP roto**: es `tenant.mp_alias` (el nickname de MP) en `app/templates/settings.html:32`. Se arregla con CSS/truncado.
+- **Nombre de cuenta MP roto**: es `tenant.mp_alias` (el nickname de MP) en `app/templates/settings.html:32`. **Hecho (rama `fix/mp-account-display-name`)**: se guarda el nombre del titular y el texto largo se corta dentro de la tarjeta.
 
 ### Correcciones a ideas
 
@@ -90,7 +90,7 @@ Ya verifiqué contra el código los hallazgos 2, 3, 4, 5, 7, 8 y 9 (se confirman
 ### Fase 3 — Quick wins del panel (ideas)
 11. ~~Seña opcional por servicio: un checkbox "cobrar seña". Sin seña, el turno se confirma directo sin MP y se encola la confirmación. MP solo es obligatorio si algún servicio cobra seña.~~ **Hecho (rama `feat/optional-deposit`, D-035)**: sin seña = `deposit_amount = 0`; la reserva pública nace `confirmed`, con tope de 3 turnos futuros sin seña por teléfono y negocio.
 12. ~~Horarios: elegir varios días en un solo submit.~~ **Hecho (rama `feat/multi-day-hours`)**: casillas de días en "Nuevo horario"; una fila por día, todo o nada si algún día se solapa. Editar sigue siendo de a un día.
-13. Arreglar cómo se muestra el nombre de la cuenta MP.
+13. ~~Arreglar cómo se muestra el nombre de la cuenta MP.~~ **Hecho (rama `fix/mp-account-display-name`)**: al conectar se guarda `first_name last_name` de `/users/me` (si faltan, el nickname autogenerado de MP) y el nombre largo hace salto de línea en celular. Las cuentas ya conectadas muestran el nickname hasta que reconecten.
 13b. Plazos configurables por el negocio en Ajustes: plazo de seña (`deposit_expiration_minutes`, hoy solo por API) y tope del link de pago (48 h fijo). Ver deuda en D-031.
 26. Turno manual desde el panel (cliente sin turno o reserva por teléfono): nace `confirmed` sin seña, vía `transition_booking_status` + `enqueue_confirmation`; captura `IntegrityError` → 409.
 27. Aviso al dueño cuando entra un turno confirmado (WhatsApp o email), reusando la outbox.
@@ -151,4 +151,4 @@ Rama → test que falla → fix → `./scripts/test.sh` + `ruff check app/ tests
 
 Las fases 1-2 cierran los 12 hallazgos. Se chequea revisando que la sección "Hallazgos abiertos" de CLAUDE.md quede vacía.
 
-Siguiente tarea concreta: **Fase 3, ítem 13** (Arreglar cómo se muestra el nombre de la cuenta MP). Los ítems 11 y 12 están hechos; quedan los pendientes listados arriba.
+Siguiente tarea concreta: **Fase 3, ítem 13b** (plazos configurables en Ajustes). Los ítems 11, 12 y 13 están hechos; quedan los pendientes listados arriba.
