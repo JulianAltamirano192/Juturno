@@ -306,6 +306,9 @@ async def create_public_booking(
                     Booking.status == "confirmed",
                     Booking.deposit_at_booking == 0,
                     Booking.start_time > datetime.now(timezone.utc),
+                    # Los que carga el negocio desde el panel tienen su propio
+                    # tope. Se usa el actor, no la clave: la clave la elige el cliente.
+                    Booking.status_changed_by.is_distinct_from("owner"),
                 )
             )
         ).scalar_one()

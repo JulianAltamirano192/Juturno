@@ -147,7 +147,16 @@ async def test_deposit_service_still_requires_mp_in_production(
 
 
 async def _seed_booking(
-    db_session, tenant, service, *, days, status, deposit, phone=None
+    db_session,
+    tenant,
+    service,
+    *,
+    days,
+    status,
+    deposit,
+    phone=None,
+    key="seed",
+    actor=None,
 ):
     start = datetime.combine(
         datetime.now(timezone.utc).date() + timedelta(days=days),
@@ -164,8 +173,9 @@ async def _seed_booking(
             end_time=start + timedelta(minutes=30),
             price_at_booking=service.price,
             deposit_at_booking=deposit,
-            idempotency_key=f"seed-{days}-{status}",
+            idempotency_key=f"{key}-{days}-{status}",
             status=status,
+            status_changed_by=actor,
         )
     )
     await db_session.commit()
@@ -244,3 +254,52 @@ async def test_no_deposit_cap_ignores_past_cancelled_paid_and_other_phones(
 
     assert res.status_code == 201, res.text
     assert res.json()["status"] == "confirmed"
+
+
+@pytest.mark.asyncio
+async def test_no_deposit_cap_ignores_manual_panel_bookings(
+    client, db_session, fake_mp
+):
+    # Los turnos que carga el negocio desde el panel (actor `owner`) tienen su
+    # propio tope diario; no deben impedir que el cliente reserve online.
+    tenant, service = await _tenant_with_service(db_session, Decimal(0))
+    for days in (2, 3, 4):
+        await _seed_booking(
+            db_session,
+            tenant,
+            service,
+            days=days,
+            status="confirmed",
+            deposit=0,
+            key="panel",
+            actor="owner",
+        )
+
+    res = await client.post("/public/bookings", json=_payload(tenant.id, service.id))
+
+    assert res.status_code == 201, res.text
+    assert res.json()["status"] == "confirmed"
+
+
+@pytest.mark.asyncio
+async def test_no_deposit_cap_is_not_bypassed_by_panel_like_key(
+    client, db_session, fake_mp
+):
+    # El cliente elige su idempotency_key: una clave `panel-*` no lo saca del tope.
+    tenant, service = await _tenant_with_service(db_session, Decimal(0))
+    for days in (2, 3, 4):
+        await _seed_booking(
+            db_session,
+            tenant,
+            service,
+            days=days,
+            status="confirmed",
+            deposit=0,
+            key="panel",
+            actor="client",
+        )
+
+    payload = _payload(tenant.id, service.id, key="panel-cliente")
+    res = await client.post("/public/bookings", json=payload)
+
+    assert res.status_code == 422

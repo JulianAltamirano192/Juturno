@@ -61,6 +61,7 @@
     <a class="icon-btn" href="/panel/agenda?day={{ next_day }}" aria-label="Día siguiente">{{ ui.icon('der') }}</a>
     {% if not is_today %}<a class="btn-sm today" href="/panel/agenda">Hoy</a>{% endif %}
   </div>
+  <a class="btn-p" href="/panel/agenda/new?day={{ target_day.isoformat() }}">{{ ui.icon('mas') }}Nuevo turno</a>
 </div>
 
 {% if agenda_items %}

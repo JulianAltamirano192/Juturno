@@ -93,6 +93,8 @@
 | POST | `/panel/horarios/{bh_id}/edit` | Actualizar horario (mismas validaciones y chequeo de solapamiento) | Cookie + CSRF |
 | POST | `/panel/horarios/{bh_id}/delete` | **Borrar** horario (404 si no existe, no es del tenant o tiene `staff_id`) | Cookie + CSRF |
 | GET | `/panel/agenda` | Vista día: todos los turnos que solapan el día (cualquier status), ordenados por inicio; `?day=YYYY-MM-DD` opcional (default hoy en la TZ del tenant; un valor inválido cae a hoy) | Cookie |
+| GET | `/panel/agenda/new` | Formulario "Nuevo turno": servicios y personal activos del tenant; `?day=YYYY-MM-DD` precarga la fecha (inválido → hoy) | Cookie |
+| POST | `/panel/agenda/new` | Alta manual (reserva telefónica o sin turno previo). Form: `service_id`, `staff_id` opcional, `date`, `time` (`HH:MM`, TZ del tenant), `client_name`, `client_phone` (obligatorio). Hora libre: sin grilla, horario de atención ni horizonte; solo exige que sea futura. Nace `confirmed` (actor `owner`) sin seña ni MP (`deposit_at_booking=0`, `price_at_booking=service.price`) y encola la confirmación por WhatsApp. Tope: 50 altas manuales por negocio en 24 h móviles (cada una manda un WhatsApp desde el número de la plataforma; el registro no verifica email). 400 re-renderiza el form con errores (también al llegar al tope); 409 si se superpone con otro turno (EXCLUDE); 303 a `/panel/agenda?day=<fecha>` | Cookie + CSRF |
 | POST | `/panel/agenda/{booking_id}/confirm` | `pending`/`expired → confirmed` (actor `owner`) y encola la confirmación por WhatsApp; 404 "Turno no encontrado" si no es del tenant; 409 si transición inválida o si el horario de un `expired` ya lo tomó otro turno ("El horario ya está ocupado por otro turno."); 303 a `/panel/agenda` | Cookie + CSRF |
 | POST | `/panel/agenda/{booking_id}/cancel` | `→ cancelled`; form field opcional `reason`; cancela outbox sin enviar (`pending`/`failed`); 409 si inválida | Cookie + CSRF |
 | POST | `/panel/agenda/{booking_id}/no-show` | `confirmed → no_show`; 409 si el turno aún no empezó (`BookingNotStartedError`) o transición inválida | Cookie + CSRF |
@@ -178,7 +180,7 @@
 - `start_time` sin zona se interpreta en la del tenant. Tiene que ser un turno que ofrecería `GET /public/available-slots`: futuro, dentro del horario de atención (del profesional si tiene uno propio), alineado a la grilla de 30 min, sin segundos, con lugar para la duración del servicio y no más allá de hoy + `booking_horizon_days` (`is_bookable_start`). No mira las reservas existentes: un slot ocupado sigue siendo 409.
 - Servicio y profesional tienen que estar activos (inactivo = 404, igual que inexistente).
 - **Servicio sin seña** (seña efectiva 0, es decir `deposit_amount = 0`): la reserva se crea y pasa a `confirmed` (actor `client`) en la misma transacción, se encola la confirmación por WhatsApp, no se crea `Payment` ni preferencia MP y no hace falta MP conectado (tampoco en producción). `payment_url` es `""`.
-- Tope por teléfono: con 3 turnos futuros `confirmed` sin seña del mismo teléfono en ese negocio, un cuarto sin seña da 422. El conteo y el insert no son atómicos: dos pedidos simultáneos pueden llegar a 4.
+- Tope por teléfono: con 3 turnos futuros `confirmed` sin seña del mismo teléfono en ese negocio, un cuarto sin seña da 422. No cuentan los turnos que cargó el negocio desde el panel (`status_changed_by = "owner"`; se usa el actor y no la `idempotency_key`, que la elige el cliente). El conteo y el insert no son atómicos: dos pedidos simultáneos pueden llegar a 4.
 
 **Response 201 (`PublicBookingResponse`):**
 ```json
