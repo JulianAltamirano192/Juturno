@@ -19,7 +19,7 @@ from app.models import Booking, Payment, Service, Staff, Tenant
 from app.mp_connect import ERR_PAGO_NO_CONFIGURADO, resolve_mp_access_token
 from app.mp_crypto import MPTokenCryptoError
 from app.mp_webhooks import create_mp_preference
-from app.schemas import AvailableSlotsResponse, BookingCreate
+from app.schemas import AvailableSlotsResponse, BookingCreate, clean_client_name
 from app.services import (
     compute_available_slots,
     effective_deposit,
@@ -212,6 +212,14 @@ async def create_public_booking(
             ),
         )
 
+    try:
+        client_name = clean_client_name(payload.client_name)
+    except ValueError:
+        raise HTTPException(
+            status_code=422,
+            detail=("Ingresá tu nombre (entre 2 y 60 caracteres, sin links)."),
+        )
+
     tenant = await session.get(Tenant, payload.tenant_id)
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
@@ -279,7 +287,7 @@ async def create_public_booking(
         tenant_id=payload.tenant_id,
         service_id=payload.service_id,
         staff_id=payload.staff_id,
-        client_name=payload.client_name,
+        client_name=client_name,
         client_phone=client_phone,
         start_time=start_time,
         end_time=end_time,
@@ -347,7 +355,7 @@ async def create_public_booking(
         mp_result = await create_mp_preference(
             booking_id=new_booking.id,
             amount=deposit_decimal,
-            client_name=payload.client_name,
+            client_name=client_name,
             expires_at=link_expires_at,
             back_url=(
                 f"{settings.PUBLIC_BASE_URL}/t/{tenant.slug}"

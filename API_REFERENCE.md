@@ -172,6 +172,7 @@
 - `end_time` es opcional en el schema pero **se ignora**: siempre se calcula como `start_time + service.duration_minutes`.
 - El precio y la seña se toman del servicio (`price_at_booking = service.price`, `deposit_at_booking = effective_deposit(...)`, snapshot al crear); no hay campos de monto en el request.
 - Teléfono normalizado a `549XXXXXXXXXX` (`phone.py`). Se valida primero (422 antes que cualquier 404).
+- `client_name` (`clean_client_name`): normalizado NFKC, espacios y saltos de línea colapsados; 2 a 60 caracteres, al menos una letra, sin caracteres invisibles/de control y sin links ni dominios (`://`, `www.`, `algo.com` con TLDs comunes), si no 422 con `detail` de texto (más de 200 caracteres: 422 de validación del schema). Llega al WhatsApp del negocio y al pagador de MP. Lo mismo en `POST /bookings` (API key).
 - `start_time` sin zona se interpreta en la del tenant. Tiene que ser un turno que ofrecería `GET /public/available-slots`: futuro, dentro del horario de atención (del profesional si tiene uno propio), alineado a la grilla de 30 min, sin segundos, y con lugar para la duración del servicio (`is_bookable_start`). No mira las reservas existentes: un slot ocupado sigue siendo 409.
 - Servicio y profesional tienen que estar activos (inactivo = 404, igual que inexistente).
 
