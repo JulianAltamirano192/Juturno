@@ -719,6 +719,8 @@ Commit: `92a24d9`.
 - **Riesgo** — Detrás de Traefik, `get_remote_address` solo ve la IP real si uvicorn confía en el proxy. El comando de prod usa `--proxy-headers` pero sin `--forwarded-allow-ips`, así que puede limitar por la IP del proxy y bloquear a todos juntos.
 - **Deuda** — Configurar `--forwarded-allow-ips=<IP_Traefik>` en Coolify (pendiente operativo) y pasar a storage Redis antes de escalar a más de una réplica. Los endpoints con API key y los webhooks no tienen límite.
 
+**Nota (2026-10-12)**: la clave `get_remote_address` y la deuda de `--forwarded-allow-ips` quedaron superadas por D-033 (clave `client_ip`; el flag **no** debe setearse).
+
 **Implementación**: `app/limiter.py`, `app/main.py`, `app/routers/auth.py`, `app/routers/public.py`. Tests en `tests/test_rate_limiting.py`.
 
 ---
@@ -910,6 +912,30 @@ Commit: `92a24d9`.
 
 ---
 
+## D-033: Rate limit por IP real detrás de Cloudflare + Traefik
+
+**Fecha**: 2026-10-12
+
+**Contexto**: En prod la cadena es Cliente → Cloudflare → Traefik (Coolify) → uvicorn. uvicorn conserva `--proxy-headers` pero `FORWARDED_ALLOW_IPS` queda en el default (`127.0.0.1`), así que ignora los headers y el peer es la IP privada de Traefik en la red de Docker. Con `get_remote_address` (D-024) todos los requests tenían la misma clave y los límites (5/min register, 10/min login, 20/min reservas públicas) eran globales de la plataforma.
+
+**Decisión**: la `key_func` de slowapi pasa a `client_ip` (`app/limiter.py`). Peer público → el peer. Peer privado → último valor de `X-Forwarded-For` (lo agrega Traefik, no lo controla el cliente); si ese salto está en los rangos publicados de Cloudflare (`CLOUDFLARE_NETWORKS`, lista fija tomada de cloudflare.com/ips el 2026-10-12) → `CF-Connecting-IP`; si no, el salto. Las IPv6 se agrupan por /64. Tests en `tests/test_limiter.py`.
+
+**Alternativas**:
+- **`--forwarded-allow-ips=<IP_Traefik>`** (lo previsto en D-024): uvicorn vería como cliente al edge de Cloudflare, con buckets compartidos entre muchos usuarios.
+- **`--forwarded-allow-ips=*`**: confiaría en el extremo izquierdo de `X-Forwarded-For`, que controla el cliente: el límite se saltea rotando el header.
+- **Límite en Cloudflare/Traefik**: vive fuera del repo y no distingue rutas por semántica de negocio.
+
+**Consecuencias**:
+- **Ventaja** — Límite por cliente real sin tocar el comando de uvicorn; el header que se usa no es falsificable.
+- **Riesgo** — Se confía en los headers de cualquier peer privado: si el puerto 8000 se publica, un atacante en una red privada podría falsificarlos. Hay que dejar "Ports Mappings" vacío en Coolify.
+- **Riesgo** — Setear `--forwarded-allow-ips` / `FORWARDED_ALLOW_IPS` rompe el esquema (buckets compartidos por edge, o spoofing con `*`).
+- **Riesgo** — Usuarios tras NAT de operadora comparten IP y límite. El login se limita solo por IP, sin límite por cuenta.
+- **Deuda** — `CLOUDFLARE_NETWORKS` se actualiza a mano; si Cloudflare suma rangos, esos clientes caen en un bucket compartido por IP del edge (más estricto, no se saltea). El storage sigue en memoria (D-024). Falta el chequeo post-deploy: más de 10 logins fallidos desde un celular con datos móviles → 429 ahí, mientras otra red sigue logueando normal.
+
+**Implementación**: `app/limiter.py`. Tests en `tests/test_limiter.py`.
+
+---
+
 ## Roadmap de deuda técnica
 
 Ordenado por impacto/urgencia estimada:
@@ -925,7 +951,7 @@ Ordenado por impacto/urgencia estimada:
 7. ~~**`idempotency_key` UNIQUE global → UNIQUE compuesto `(tenant_id, idempotency_key)`**~~ — **Resuelto en `8cfa0d6`**. Migración `b0e5b8028ae7`; el constraint `uq_booking_idempotency_key` ahora abarca `(tenant_id, idempotency_key)`. Eliminado campo `price_at_booking: float | None` de `BookingCreate` (era ignorado; el endpoint siempre usa `service.price`).
 
 ### Q1 2027 (mes 1-3)
-4. ~~**Deploy a producción** (VPS + dominio + Cloudflare Named Tunnel).~~ — **Hecho con otro stack**: VPS Hetzner con Coolify + Traefik (`api.juturno.com`, panel en `juturno.com`), ver D-010 y `DEPLOYMENT.md`. Pendiente operativo: `--forwarded-allow-ips` (D-024) y branch protection en GitHub.
+4. ~~**Deploy a producción** (VPS + dominio + Cloudflare Named Tunnel).~~ — **Hecho con otro stack**: VPS Hetzner con Coolify + Traefik (`api.juturno.com`, panel en `juturno.com`), ver D-010 y `DEPLOYMENT.md`. Rate limit por IP real resuelto en código (D-033); branch protection en GitHub ya está activa.
 5. ~~**Frontend público + panel admin** (Next.js) para booking y gestión.~~ — **Resuelto de otra forma**: landing (`/`), página de reserva (`/t/{slug}`) y panel (`/dashboard`, `/panel/*`) se renderizan en el servidor con Jinja2 (`app/templates/`), sin Next.js.
 6. **Onboarding self-service** para nuevos tenants — **parcial**: existen `/register`, `/login`, y conectar/desconectar MP desde el panel. Faltan cambio/recupero de contraseña, verificación de email y que `PATCH /tenants/me` funcione con la cookie (hoy exige API key).
 

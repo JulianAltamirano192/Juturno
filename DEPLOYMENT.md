@@ -56,7 +56,11 @@ sh -c "python -m alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.
 ```
 - Migraciones corren **automáticamente** al iniciar el contenedor. El `CMD` del Dockerfile (sin migraciones) solo aplica si se usa la imagen sin ese compose.
 - `--proxy-headers` hace que uvicorn lea `X-Forwarded-For` / `X-Forwarded-Proto` detrás de Traefik, pero solo de IPs confiables: por defecto `--forwarded-allow-ips` es `127.0.0.1`.
-- **Pendiente de ops**: sin `--forwarded-allow-ips=<IP de Traefik>`, `get_remote_address` (slowapi) ve la IP de Traefik y no la del cliente, así que los límites de rate limiting (10/min login, 5/min registro, 20/min reservas públicas) se comparten entre todos los clientes. Hay que agregar el flag en el comando de Coolify y confirmarlo; hoy no está en el repo.
+- **Rate limiting (D-033)**: la app calcula la IP real con `client_ip` (`app/limiter.py`) a partir de `X-Forwarded-For` / `CF-Connecting-IP`; no depende de que uvicorn confíe en el proxy. Requisitos de ops:
+  - **No** setear `--forwarded-allow-ips` ni `FORWARDED_ALLOW_IPS`: el cliente pasaría a ser el edge de Cloudflare (buckets compartidos) y con `*` se confiaría en el extremo izquierdo de `X-Forwarded-For`, que controla el cliente.
+  - El puerto 8000 **no** debe publicarse (en Coolify, "Ports Mappings" vacío): `client_ip` confía en los headers de cualquier peer privado.
+  - Si Cloudflare agrega rangos de IP, actualizar `CLOUDFLARE_NETWORKS` en `app/limiter.py` (los clientes afectados caen en un bucket compartido por IP del edge: más estricto, no se saltea).
+  - Chequeo post-deploy: más de 10 logins fallidos desde un celular con datos móviles deben dar 429 ahí, mientras que desde otra red el login sigue andando normal.
 - En Coolify el auto-deploy está deshabilitado: mergear a `main` no despliega, hay que hacer "Redeploy" a mano (dato operativo, no verificable desde el repo).
 
 **Variables de entorno en Coolify.** `app/config.py` valida en el arranque (con `ENVIRONMENT=production`) las marcadas "Validada"; sin ellas el contenedor entra en crash loop (el `alembic upgrade head` del entrypoint también importa `Settings` y muere antes de uvicorn).
@@ -346,7 +350,7 @@ Un restore exitoso confirma que el backup no está corrupto.
 | Scheduler in-process | 4 jobs dentro del proceso de la API. Con más de 1 réplica, los duplicados se mitigan con lock Redis (`SET NX EX`: 30s en reminders y token refresh, 300s en expiración de señas) y `FOR UPDATE SKIP LOCKED` (outbox, expiración); aun así no se escala a >1 réplica sin worker separado. Si el proceso API cae, los jobs paran | Worker separado Celery/ARQ (D-005 deuda) |
 | API keys cache | TTL 60s → key revocada aceptada 60s | Reducir TTL o invalidar proactivamente |
 | Outbox worker | Commit por evento con reintentos (backoff 1, 3, 7, 15, 31, 63 min; máx. 7 intentos, ventana de 2 h). Un evento agotado queda `failed` hasta intervención manual | `next_attempt_at` propio si hace falta otro calendario (D-022) |
-| Rate limiting | slowapi con almacenamiento en memoria del proceso (`app/limiter.py` no configura Redis): los contadores se reinician con cada deploy y no se comparten entre réplicas; sin `--forwarded-allow-ips` cuenta por IP de Traefik | Configurar el flag (sección 2) |
+| Rate limiting | slowapi con almacenamiento en memoria del proceso (`app/limiter.py` no configura Redis): los contadores se reinician con cada deploy y no se comparten entre réplicas; la IP del cliente sale de `client_ip` (D-033); usuarios detrás de un NAT de operadora comparten IP, y el login se limita solo por IP (sin límite por cuenta) | Ver requisitos en la sección 2; no setear `--forwarded-allow-ips` |
 | ExcludeConstraint | Funciona hasta millones de filas/tenant | Sharding por tenant si crece mucho (D-001 deuda) |
 | VPS único | SPOF, sin HA | Kubernetes / Fly.io (D-010 deuda) |
 

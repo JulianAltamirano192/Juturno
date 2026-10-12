@@ -229,7 +229,7 @@ templates/           # Jinja2 (panel + página pública /t/{slug})
 
 ### Pendientes conocidos
 
-- Ops: `--forwarded-allow-ips` en Coolify (rate limiting ve la IP de Traefik); branch protection de `main` sin confirmar.
+- Ops: rate limit por IP real (D-033): no setear `--forwarded-allow-ips`, no publicar el puerto 8000; branch protection de `main` sin confirmar.
 - Alta autoservicio incompleta: sin cambio/recupero de contraseña ni verificación de email; `PATCH /tenants/me` y `/tenants/me/mp` siguen exigiendo API key.
 
 ---

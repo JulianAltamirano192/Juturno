@@ -46,7 +46,7 @@ Ya verifiqué contra el código los hallazgos 2, 3, 4, 5, 7, 8 y 9 (se confirman
 9. ~~#6 recordatorios: ventana "pendientes y no enviados" en lugar de la ventana fija de 5 min.~~ **Hecho (PR #31)**: todo `confirmed` sin recordatorio que empiece dentro de 24 h, con `SKIP LOCKED`.
    (Fuera de serie: **PR #29** fijó `ruff==0.16.10`; ruff 0.17 rompía el CI.)
 10. ~~#11 resto: reembolso/contracargo, booking inexistente en el webhook, `Decimal` en `create_mp_preference`.~~ **Hecho (rama `fix/mp-webhook-refunds-and-orphans`)**: reembolso total o contracargo cancela el turno que no empezó (decisión de Julián); `BOOKING_NOT_FOUND` sin insertar el pago; un `approved` viejo no pisa un reembolso.
-11. Rate limit por IP real del cliente detrás del proxy (Cloudflare + Traefik). Paso 1: observar en prod qué headers llegan (`X-Forwarded-For`, `CF-Connecting-IP`) y la config de Traefik en Coolify. Paso 2: `key_func` con la IP real (Cloudflare) solo si el request vino por el proxy confiable.
+11. ~~Rate limit por IP real del cliente detrás del proxy (Cloudflare + Traefik).~~ **Hecho (rama `fix/rate-limit-real-ip`, D-033)**: `client_ip` toma `CF-Connecting-IP` solo si el último salto de `X-Forwarded-For` (lo agrega Traefik) es de Cloudflare; IPv6 por /64. No hizo falta observar prod antes: se verifica después del deploy (ver RUNBOOK).
 
 #### Hallazgos nuevos de las revisiones del 2026-10-10 (anteriores al código revisado; sin fase asignada)
 - Tope de anticipación al reservar: hoy se puede crear un `pending` para el año 9999 (decisión de producto: ¿90 días? ¿configurable?).
@@ -54,6 +54,11 @@ Ya verifiqué contra el código los hallazgos 2, 3, 4, 5, 7, 8 y 9 (se confirman
 - `process_outbox` mantiene el lock de la fila mientras llama a Meta (hasta ~33 s): un cancelar concurrente espera con el booking bloqueado y después pisa `sent` con `cancelled`.
 - Orden de locks invertido: reconciliación Booking→Payment vs webhook Payment→Booking (deadlock posible; ambos reintentan).
 - Validar `client_name` en reservas públicas (largo, sin URLs): llega al template de WhatsApp.
+
+#### Pendientes de la 2.11 (revisión del 2026-10-12; para más adelante)
+- Verificar después del deploy: más de 10 logins fallidos desde el celular (datos móviles) dan 429 ahí y otra red sigue entrando.
+- Login limitado solo por IP: sumar un límite por cuenta (email) contra credential stuffing distribuido.
+- `client_ip` confía en cualquier peer privado: acotarlo a la red de Traefik si algún día se publica el puerto o se suman contenedores a la red.
 
 #### Pendientes de la 2.10 (revisión del 2026-10-12; para más adelante)
 - Avisar al dueño (ayuda o panel) que devolver la seña desde MP cancela el turno solo; si quiere mantenerlo (ej. pagó en efectivo), lo tiene que volver a cargar.
@@ -125,4 +130,4 @@ Rama → test que falla → fix → `./scripts/test.sh` + `ruff check app/ tests
 
 Las fases 1-2 cierran los 12 hallazgos. Se chequea revisando que la sección "Hallazgos abiertos" de CLAUDE.md quede vacía.
 
-Siguiente tarea concreta: **Fase 2.11 (rate limit por IP real)**.
+Siguiente tarea concreta: **Fase 3** (quick wins del panel; antes, decidir si se toma algún hallazgo sin fase).

@@ -214,7 +214,7 @@ Registro completo en [`DECISIONS.md`](DECISIONS.md).
 - **CI**: GitHub Actions corre ruff, mypy y pytest en cada push y PR a `main`; black corre solo vía pre-commit
 - **Migraciones**: corren automáticamente en el `command` de `docker-compose.prod.yml` (`alembic upgrade head` antes de uvicorn)
 - **Backups**: `scripts/backup_db.sh` con rotación local de 30 días y copia opcional a S3 (ver `DEPLOYMENT.md`)
-- **Pendiente de ops**: configurar `--forwarded-allow-ips` en uvicorn/Coolify para que el rate limiting vea la IP real del cliente (ver `DEPLOYMENT.md`)
+- Rate limiting por IP real (D-033): **no** setear `--forwarded-allow-ips` y no publicar el puerto 8000 (ver `DEPLOYMENT.md`)
 
 Procedimiento completo en [`DEPLOYMENT.md`](DEPLOYMENT.md).
 
