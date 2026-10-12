@@ -51,8 +51,14 @@ async def get_available_slots(
         )
 
     service = await session.get(Service, service_id)
-    if not service or service.tenant_id != tenant_id:
+    if not service or service.tenant_id != tenant_id or not service.is_active:
         raise HTTPException(status_code=404, detail="Service not found")
+
+    # Mismo criterio que la reserva: no ofrecer horarios que darían 404.
+    if staff_id is not None:
+        staff = await session.get(Staff, staff_id)
+        if not staff or staff.tenant_id != tenant_id or not staff.is_active:
+            raise HTTPException(status_code=404, detail="Staff not found for tenant")
 
     slots = await compute_available_slots(
         session=session,

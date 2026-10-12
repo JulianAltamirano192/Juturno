@@ -153,7 +153,7 @@
 }
 ```
 
-**Errores**: 400 "No se pueden consultar fechas pasadas", 404 "Tenant not found" / "Service not found" (el servicio debe pertenecer al tenant), 422 (parámetros inválidos).
+**Errores**: 400 "No se pueden consultar fechas pasadas", 404 "Tenant not found" / "Service not found" / "Staff not found for tenant" (servicio y profesional deben ser del tenant y estar activos, igual que al reservar), 422 (parámetros inválidos).
 
 ### 4.3 `POST /public/bookings`
 
@@ -219,7 +219,7 @@ Además, con API key: `GET /tenants/me/mp` y `DELETE /tenants/me/mp` (sección 7
 
 ### 5.1 `GET /bookings/available-slots`
 
-Igual que el público pero **requiere API Key** y valida que `tenant_id` coincida con el de la key. 404 "Service not found" si no coincide (no revela existencia). 400 si la fecha es pasada, 404 si el servicio no es del tenant.
+Igual que el público pero **requiere API Key** y valida que `tenant_id` coincida con el de la key. 404 "Service not found" si no coincide (no revela existencia). 400 si la fecha es pasada, 404 si el servicio o el profesional no son del tenant o están inactivos.
 
 ### 5.2 `POST /bookings`
 
