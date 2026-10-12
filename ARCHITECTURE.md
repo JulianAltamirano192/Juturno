@@ -264,7 +264,7 @@ REQUIRE_STARTED = {"no_show", "completed"}  # solo si start_time <= now
 - `status_changed_at` (TIMESTAMPTZ), `status_changed_by` (actor: `"owner"|"system"|"webhook_mp"`)
 - `cancellation_reason` (solo si `cancelled`)
 - `no_show_at`, `completed_at` (TIMESTAMPTZ)
-- Al cancelar: marca todos los `NotificationOutbox` del booking en `pending` o `failed` (estos últimos los reintenta `process_outbox`) como `cancelled` (`error_message="booking_cancelled"`), para no mandar un WhatsApp después de cancelar (D-030).
+- Al cancelar: marca todos los `NotificationOutbox` del booking en `pending` o `failed` (estos últimos los reintenta `process_outbox`) como `cancelled` (`error_message="booking_cancelled"`), para no mandar un WhatsApp después de cancelar (D-030). Usa `FOR UPDATE SKIP LOCKED`: el evento que `process_outbox` tiene tomado (llamando a Meta) no se espera ni se pisa; si ese envío falla, el reintento ve el turno cancelado y no lo manda.
 
 **NO hace commit**: el caller decide cuándo `await session.commit()` (permite agrupar con otras operaciones).
 
@@ -281,7 +281,7 @@ REQUIRE_STARTED = {"no_show", "completed"}  # solo si start_time <= now
 2. Al confirmar (webhook MP, reconciliación o panel) → marca `confirmed` + crea `NotificationOutbox(type="confirmation")` si no existe — **misma transacción** que la confirmación. Una confirmación manual desde el panel (`/panel/agenda/{id}/confirm`) también la encola (vía `transition_booking_status`).
 3. Job `process_reminders` (cada 5 min) → busca bookings `confirmed` que empiezan dentro de las próximas 24 h (`now < start_time <= now + 24 h`) y `reminder_sent=False` (cubre corridas salteadas y turnos confirmados con menos de 24 h; esos reciben confirmación y recordatorio casi juntos, aceptado). Lee con `FOR UPDATE SKIP LOCKED` para no duplicar si dos corridas se pisan → marca `reminder_sent=True` + crea `NotificationOutbox(type="reminder")` en **lote atómico** (un solo commit).
 4. Job `process_outbox` (cada 1 min) → lista los ids elegibles y procesa cada uno en su propia sesión/transacción con `SELECT ... FOR UPDATE SKIP LOCKED`:
-   - Carga booking + tenant (para timezone)
+   - Carga booking + tenant (para timezone). Si el booking ya no está `confirmed` → `status="cancelled"`, `error_message="booking_not_confirmed"`, sin enviar.
    - `WhatsAppService.send_confirmation()` o `send_reminder()` (template Meta Utility)
    - El envío corre dentro de un savepoint (`begin_nested`): si falla la base adentro, igual se puede marcar el evento `failed`.
    - Si OK → `status="sent"`; si falla (cualquier excepción) → `status="failed"`, `retry_count+=1`, `error_message=exc`
