@@ -87,7 +87,7 @@
 | POST | `/panel/staff/{staff_id}/toggle` | Activar/desactivar staff | Cookie + CSRF |
 | GET | `/panel/horarios` | Listar horarios del negocio (`staff_id IS NULL`) | Cookie |
 | GET | `/panel/horarios/new` | Formulario nuevo horario | Cookie |
-| POST | `/panel/horarios/new` | Crear horario. Form: `day_of_week` (0-6), `start_time`, `end_time` (`HH:MM`, start < end). Rechaza solapamiento con un horario existente del día (y `IntegrityError` → "Ya existe un horario para este día") re-renderizando el form con error | Cookie + CSRF |
+| POST | `/panel/horarios/new` | Crear el mismo horario para uno o varios días. Form: `day_of_week` repetido (0-6, al menos uno; duplicados se ignoran), `start_time`, `end_time` (`HH:MM`, start < end). Crea una fila por día en un solo commit. Todo o nada: si se solapa con un horario existente en algún día elegido no guarda ninguno y el error nombra cada día en conflicto (`IntegrityError` → "Ya existe un horario en alguno de los días elegidos"), re-renderizando el form con los días marcados | Cookie + CSRF |
 | GET | `/panel/horarios/{bh_id}/edit` | Formulario editar horario (404 "Horario no encontrado" si no es del tenant) | Cookie |
 | POST | `/panel/horarios/{bh_id}/edit` | Actualizar horario (mismas validaciones y chequeo de solapamiento) | Cookie + CSRF |
 | POST | `/panel/horarios/{bh_id}/delete` | **Borrar** horario (404 si no existe, no es del tenant o tiene `staff_id`) | Cookie + CSRF |
