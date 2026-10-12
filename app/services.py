@@ -190,6 +190,7 @@ async def compute_available_slots(
     day,
     staff_id,
     tenant_timezone,
+    horizon_days: int,
 ) -> list[str]:
     """Lógica compartida de cálculo de slots. El caller valida auth y tenant."""
     from datetime import time
@@ -200,6 +201,8 @@ async def compute_available_slots(
 
     now_local = datetime.now(tenant_timezone)
     today_local = now_local.date()
+    if day > today_local + timedelta(days=horizon_days):
+        return []
 
     windows = await resolve_day_windows(
         session=session,
@@ -265,6 +268,7 @@ async def is_bookable_start(
     start_time: datetime,
     staff_id,
     tenant_timezone,
+    horizon_days: int,
 ) -> bool:
     """True si start_time es un turno que la grilla ofrecería (futuro, dentro
     del horario, alineado y con lugar para la duración), sin mirar reservas:
@@ -273,7 +277,10 @@ async def is_bookable_start(
         local = start_time.astimezone(tenant_timezone)
     except OverflowError:  # year 1 / 9999 with an explicit offset
         return False
-    if local < datetime.now(tenant_timezone) or local.second or local.microsecond:
+    now_local = datetime.now(tenant_timezone)
+    if local < now_local or local.second or local.microsecond:
+        return False
+    if local.date() > now_local.date() + timedelta(days=horizon_days):
         return False
 
     windows = await resolve_day_windows(

@@ -216,8 +216,9 @@ async def test_payment_link_is_capped_for_far_away_bookings(
     db_session.add(tenant)
     await db_session.commit()
     payload = _booking_payload(tenant.id, service.id, "far")
+    # ~61 days ahead: far beyond the 48 h cap, inside the default 90-day horizon.
     payload["start_time"] = (
-        datetime.fromisoformat(payload["start_time"]) + timedelta(days=365)
+        datetime.fromisoformat(payload["start_time"]) + timedelta(days=60)
     ).isoformat()
 
     before = datetime.now(timezone.utc)

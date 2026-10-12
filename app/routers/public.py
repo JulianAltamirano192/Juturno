@@ -175,6 +175,7 @@ async def get_public_available_slots(
         day=day,
         staff_id=staff_id,
         tenant_timezone=tenant_timezone,
+        horizon_days=tenant.booking_horizon_days,
     )
     return AvailableSlotsResponse(
         date=day,
@@ -273,6 +274,7 @@ async def create_public_booking(
         start_time=start_time,
         staff_id=payload.staff_id,
         tenant_timezone=tenant_timezone,
+        horizon_days=tenant.booking_horizon_days,
     ):
         raise HTTPException(
             status_code=422,
