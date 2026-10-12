@@ -299,11 +299,13 @@ Es la única forma de editar el tenant por API key; el alta/edición de datos de
   - Auto-crea `Payment` si no existe uno con ese `mp_payment_id` (con `transaction_amount`, `payment_method_id`, `date_approved`).
   - Si booking en `pending` (o `expired` y slot libre) → `transition_booking_status(booking, "confirmed", actor="webhook_mp")`.
   - Crea `NotificationOutbox(type="confirmation")` si no existe.
-- Si el pago no está `approved`: el `Payment` se crea/actualiza con el status actual; el booking queda como está.
+- Si el pago no está `approved`: el `Payment` se crea/actualiza con el status actual; el booking queda como está, salvo reembolso total (`refunded`) o contracargo (`charged_back`): cancela el turno si no empezó (`actor="webhook_mp"`, `cancellation_reason` `mp_payment_refunded` / `mp_payment_charged_back`) y no avisa al cliente. Reglas completas en `ARCHITECTURE.md` y D-032.
+- Un `approved` leído sobre un `Payment` ya `refunded`/`charged_back` se ignora (no revierte el estado).
+- `external_reference` que apunta a un booking inexistente: no se crea `Payment`, se loguea warning y el evento queda `processed`.
 - Guards de seguridad (collector_id, moneda ARS, monto finito, `deposit_at_booking`): ver `ARCHITECTURE.md` y `DECISIONS.md`.
 
 **Response codes:**
-- 200 `EVENT_PROCESSED` / `IPN_IGNORED` / `DUPLICATE_EVENT_IGNORED` / `PAYMENT_NOT_FOUND_ON_MP` (evento queda `failed`: una entrega posterior se reprocesa) / `NO_BOOKING_LINKED` / `EVENT_IGNORED_NO_DATA_ID`
+- 200 `EVENT_PROCESSED` / `IPN_IGNORED` / `DUPLICATE_EVENT_IGNORED` / `PAYMENT_NOT_FOUND_ON_MP` (evento queda `failed`: una entrega posterior se reprocesa) / `NO_BOOKING_LINKED` / `BOOKING_NOT_FOUND` / `STALE_STATUS_IGNORED` / `EVENT_IGNORED_NO_DATA_ID`
 - 400 Body vacío, JSON inválido o que no es un objeto
 - 401 Firma inválida
 - 403 Timestamp fuera de ventana

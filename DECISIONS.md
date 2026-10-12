@@ -886,6 +886,30 @@ Commit: `92a24d9`.
 
 ---
 
+## D-032: Reembolso/contracargo cancela el turno que no empezó
+
+**Fecha**: 2026-10-12
+
+**Contexto**: El webhook solo registraba el estado del `Payment` ante un reembolso o contracargo (hallazgo #11): el turno seguía `confirmed` sin seña. Además, un `external_reference` a un booking inexistente violaba la FK al insertar el `Payment` y se interpretaba como `DuplicatePaymentError`, devolviendo `EVENT_PROCESSED` sin rastro.
+
+**Decisión** (elección del dueño, 2026-10-12): `apply_payment_details` cancela el turno (`transition_booking_status`, actor `webhook_mp`, `cancellation_reason` `mp_payment_refunded` / `mp_payment_charged_back`) solo si el turno está `pending`/`confirmed`, `start_time` es futuro, el guard de `collector_id` corrió (el tenant tiene `mp_user_id`) y no existe otro `Payment` `approved` del mismo booking en la DB. La transición cancela el outbox pendiente/fallido (D-030) y no se avisa al cliente. Un turno que ya empezó solo registra el estado. Un `approved` leído sobre un `Payment` ya `refunded`/`charged_back` se ignora (`STALE_STATUS_IGNORED`). Un booking inexistente devuelve `BOOKING_NOT_FOUND`: warning, sin `Payment`, evento `processed`. Además `create_mp_preference` recibe `Decimal` y convierte a `float` solo en el JSON.
+
+**Alternativas**:
+- **Solo registrar el estado del pago** (como antes): turnos confirmados sin seña.
+- **Avisar al dueño y no cancelar**: más seguro, pero exige acción manual por cada reembolso.
+- **Cancelar siempre, incluso con turno empezado o sin guard de tenant**: permite que otra cuenta cancele turnos ajenos fuera de producción.
+
+**Consecuencias**:
+- **Ventaja** — El slot se libera y el estado del turno refleja el dinero.
+- **Riesgo** — Si el dueño reembolsa desde MP pero quería conservar el turno, se cancela igual y hay que recrearlo; el cliente no recibe aviso.
+- **Riesgo** — Un contracargo que el vendedor gana en la disputa queda como `charged_back` (el `approved` posterior se ignora) y el turno cancelado no se reactiva.
+- **Riesgo** — Tras `restore_db.sh` la secuencia de ids puede reutilizar ids de turnos perdidos; un reembolso o pago tardío con `booking-N` podría pegarle a otro turno del mismo tenant (inferido, no probado).
+- **Deuda** — El chequeo de pago duplicado mira solo la DB, no MP. Sin notificación al cliente ni al dueño por la cancelación automática. Un `BOOKING_NOT_FOUND` no se reintenta ni alerta: solo queda el log.
+
+**Implementación**: `app/mp_webhooks.py` (`apply_payment_details`, `create_mp_preference`), `app/routers/public.py`. Tests en `tests/test_mp_webhooks.py`.
+
+---
+
 ## Roadmap de deuda técnica
 
 Ordenado por impacto/urgencia estimada:

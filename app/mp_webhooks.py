@@ -91,7 +91,7 @@ async def search_approved_payment_ids(
 
 async def create_mp_preference(
     booking_id: int,
-    amount: float,
+    amount: Decimal,
     client_name: str,
     expires_at: datetime,
     back_url: str | None = None,
@@ -131,7 +131,7 @@ async def create_mp_preference(
             {
                 "title": f"Reserva #{booking_id}",
                 "quantity": 1,
-                "unit_price": amount,
+                "unit_price": float(amount),  # JSON no admite Decimal
                 "currency_id": "ARS",
             }
         ],
@@ -391,75 +391,84 @@ async def apply_payment_details(
     )
     payment = (await session.execute(stmt_pay)).scalar_one_or_none()
 
-    # Guards run BEFORE creating the Payment record so a rejected webhook
-    # never commits a Payment row for a fraudulent/invalid payment.
+    # A missing booking exits early. Guards run BEFORE creating the Payment
+    # record so a rejected webhook never commits a Payment row for a
+    # fraudulent/invalid payment.
     # Guard 1 (tenant) applies to ALL statuses to prevent cross-tenant data injection.
     # Guards 2 and 3 (currency, amount) only apply to approved payments.
     stmt_booking = select(Booking).where(Booking.id == booking_id).with_for_update()
     booking = (await session.execute(stmt_booking)).scalar_one_or_none()
-    if booking is not None:
-        linked_booking_id = booking.id
+    if booking is None:
+        # Sin esto el INSERT del Payment violaba la FK y se confundía con un
+        # duplicado. Reintentar no lo arregla: queda registrado y logueado.
+        logger.warning(
+            "Webhook MP: pago %s apunta a booking %s inexistente",
+            mp_payment_id,
+            booking_id,
+        )
+        return "BOOKING_NOT_FOUND", linked_booking_id
+    linked_booking_id = booking.id
 
-        # Guard 1: collector_id from the authenticated MP response must match
-        # the tenant that owns this booking. Applies to every payment status.
-        booking_tenant = await session.get(Tenant, booking.tenant_id)
-        collector_id = str(details.get("collector_id") or "")
-        if booking_tenant is None or not booking_tenant.mp_user_id:
-            if settings.is_production:
-                logger.warning(
-                    "Webhook MP: tenant %s sin mp_user_id en producción (booking %s)",
-                    booking.tenant_id,
-                    booking_id,
-                )
-                return "TENANT_MISMATCH", linked_booking_id
-            # sandbox/dev: skip guard (platform-account fallback is expected)
-        elif collector_id != booking_tenant.mp_user_id:
+    # Guard 1: collector_id from the authenticated MP response must match
+    # the tenant that owns this booking. Applies to every payment status.
+    booking_tenant = await session.get(Tenant, booking.tenant_id)
+    collector_id = str(details.get("collector_id") or "")
+    if booking_tenant is None or not booking_tenant.mp_user_id:
+        if settings.is_production:
             logger.warning(
-                "Webhook MP: tenant mismatch — collector_id %s, "
-                "booking %s pertenece a tenant %s (mp_user_id %s)",
-                collector_id,
-                booking_id,
+                "Webhook MP: tenant %s sin mp_user_id en producción (booking %s)",
                 booking.tenant_id,
-                booking_tenant.mp_user_id,
+                booking_id,
             )
             return "TENANT_MISMATCH", linked_booking_id
+        # sandbox/dev: skip guard (platform-account fallback is expected)
+    elif collector_id != booking_tenant.mp_user_id:
+        logger.warning(
+            "Webhook MP: tenant mismatch — collector_id %s, "
+            "booking %s pertenece a tenant %s (mp_user_id %s)",
+            collector_id,
+            booking_id,
+            booking.tenant_id,
+            booking_tenant.mp_user_id,
+        )
+        return "TENANT_MISMATCH", linked_booking_id
 
-        if payment_status == "approved":
-            # Guard 2: only ARS payments are valid for Juturno bookings.
-            if details.get("currency_id") != "ARS":
-                logger.warning(
-                    "Webhook MP: moneda no soportada — %s (booking %s)",
-                    details.get("currency_id"),
-                    booking_id,
-                )
-                return "CURRENCY_NOT_SUPPORTED", linked_booking_id
+    if payment_status == "approved":
+        # Guard 2: only ARS payments are valid for Juturno bookings.
+        if details.get("currency_id") != "ARS":
+            logger.warning(
+                "Webhook MP: moneda no soportada — %s (booking %s)",
+                details.get("currency_id"),
+                booking_id,
+            )
+            return "CURRENCY_NOT_SUPPORTED", linked_booking_id
 
-            # Guard 3: paid amount must cover the effective deposit.
-            # Use booking.deposit_at_booking (snapshotted at reservation time) so
-            # a service price change after the booking doesn't reject a valid payment.
-            # Fall back to effective_deposit() for older bookings without the snapshot.
-            if booking.deposit_at_booking is not None:
-                deposit = booking.deposit_at_booking
-            else:
-                service = await session.get(Service, booking.service_id)
-                if service is None:
-                    # Defensive: CASCADE makes this unreachable normally; fail closed.
-                    logger.warning(
-                        "Webhook MP: service %s no encontrado para booking %s (fail closed)",
-                        booking.service_id,
-                        booking_id,
-                    )
-                    return "AMOUNT_INSUFFICIENT", linked_booking_id
-                deposit = effective_deposit(service.price, service.deposit_amount)
-            paid_amount = Decimal(str(details.get("transaction_amount") or 0))
-            if not paid_amount.is_finite() or paid_amount < deposit:
+        # Guard 3: paid amount must cover the effective deposit.
+        # Use booking.deposit_at_booking (snapshotted at reservation time) so
+        # a service price change after the booking doesn't reject a valid payment.
+        # Fall back to effective_deposit() for older bookings without the snapshot.
+        if booking.deposit_at_booking is not None:
+            deposit = booking.deposit_at_booking
+        else:
+            service = await session.get(Service, booking.service_id)
+            if service is None:
+                # Defensive: CASCADE makes this unreachable normally; fail closed.
                 logger.warning(
-                    "Webhook MP: monto insuficiente — pagado %s, seña requerida %s (booking %s)",
-                    paid_amount,
-                    deposit,
+                    "Webhook MP: service %s no encontrado para booking %s (fail closed)",
+                    booking.service_id,
                     booking_id,
                 )
                 return "AMOUNT_INSUFFICIENT", linked_booking_id
+            deposit = effective_deposit(service.price, service.deposit_amount)
+        paid_amount = Decimal(str(details.get("transaction_amount") or 0))
+        if not paid_amount.is_finite() or paid_amount < deposit:
+            logger.warning(
+                "Webhook MP: monto insuficiente — pagado %s, seña requerida %s (booking %s)",
+                paid_amount,
+                deposit,
+                booking_id,
+            )
+            return "AMOUNT_INSUFFICIENT", linked_booking_id
 
     # All guards passed. Create or update the Payment record.
     # (payment already fetched via SELECT FOR UPDATE above)
@@ -486,6 +495,19 @@ async def apply_payment_details(
             # Otro webhook (o la reconciliación) insertó este mp_payment_id.
             raise DuplicatePaymentError(mp_payment_id) from exc
     else:
+        # Un "approved" leído antes que el reembolso no pisa el estado final.
+        # ponytail: también ignora un contracargo que el vendedor gana en
+        # disputa; el turno ya quedó cancelado, solo cambia el registro.
+        if payment.status in ("refunded", "charged_back") and (
+            payment_status == "approved"
+        ):
+            logger.warning(
+                "Webhook MP: approved viejo para pago %s ya %s (booking %s)",
+                mp_payment_id,
+                payment.status,
+                booking_id,
+            )
+            return "STALE_STATUS_IGNORED", linked_booking_id
         # Actualizar el estado si cambió
         if payment.status != payment_status:
             payment.status = payment_status
@@ -495,8 +517,8 @@ async def apply_payment_details(
                 ) or datetime.now(timezone.utc)
             session.add(payment)
 
-    # Confirm booking if approved (booking already fetched above).
-    if payment_status == "approved" and booking is not None:
+    # Confirm booking if approved.
+    if payment_status == "approved":
         # Solo cambiar estado a confirmed si estaba en pending
         if (
             booking.status == "pending"
@@ -511,6 +533,39 @@ async def apply_payment_details(
         # ya estaba confirmado sin outbox.
         if booking.status == "confirmed":
             await enqueue_confirmation(session, booking)
+
+    # Reembolso total o contracargo de la seña: se cancela el turno que no
+    # empezó, salvo que otro pago aprobado lo siga cubriendo (pago duplicado).
+    # Solo si el guard de collector_id se aplicó (fuera de prod se saltea sin
+    # mp_user_id y otra cuenta podría cancelar turnos ajenos).
+    if (
+        payment_status in ("refunded", "charged_back")
+        and booking_tenant is not None
+        and booking_tenant.mp_user_id
+        and booking.status in ("pending", "confirmed")
+        and booking.start_time > datetime.now(timezone.utc)
+    ):
+        other_approved = (
+            (
+                await session.execute(
+                    select(Payment).where(
+                        Payment.booking_id == booking.id,
+                        Payment.mp_payment_id != mp_payment_id,
+                        Payment.status == "approved",
+                    )
+                )
+            )
+            .scalars()
+            .first()
+        )
+        if other_approved is None:
+            await transition_booking_status(
+                session,
+                booking,
+                "cancelled",
+                actor="webhook_mp",
+                reason=f"mp_payment_{payment_status}",
+            )
 
     return "EVENT_PROCESSED", linked_booking_id
 
