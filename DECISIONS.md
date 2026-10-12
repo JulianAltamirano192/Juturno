@@ -540,7 +540,9 @@ DB.
 - **Deuda resuelta** — Race condition de dos webhooks simultáneos del mismo `mp_payment_id`:
   commits `072ab22` y `345d564`. `uq_payment_mp_payment_id` (migración `be7d31a422d8`) más
   `SELECT ... FOR UPDATE` sobre `Payment` y sobre `Booking`; un INSERT duplicado lanza
-  `DuplicatePaymentError`, que el webhook trata como idempotente.
+  `DuplicatePaymentError`, que el webhook trata como idempotente. Desde la Fase 2b.4 el orden
+  es Booking → Payment, igual que la reconciliación previa a expirar (antes era Payment →
+  Booking y un webhook simultáneo a la reconciliación del mismo pago daba deadlock).
 - **Riesgo** — En sandbox/dev un tenant sin `mp_user_id` saltea el guard de tenant, así que la
   protección real depende de `ENVIRONMENT=production` (y de `MP_SANDBOX=false`, que `config.py`
   fuerza en producción).
