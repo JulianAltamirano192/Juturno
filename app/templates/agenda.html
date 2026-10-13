@@ -22,6 +22,18 @@
   .ag-svc{font-size:14px;color:var(--text-2)}
   .ag-actions{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end}
   .ag-actions form{margin:0}
+  .ag-notes{grid-column:1 / -1;display:flex;flex-direction:column;gap:8px;min-width:0}
+  .ag-note{margin:0;font-size:13px;color:var(--text-2);white-space:pre-wrap;overflow-wrap:anywhere}
+  .ag-notes summary{cursor:pointer;font-size:13px;color:var(--muted-2);min-height:32px;display:inline-flex;align-items:center}
+  .ag-notes form{display:flex;flex-direction:column;gap:8px;margin:8px 0 0}
+  .ag-notes textarea{width:100%;box-sizing:border-box;min-height:80px;padding:10px 14px;border-radius:12px;border:1px solid var(--border-2);background:var(--surface);color:var(--text);font-family:inherit;font-size:16px;resize:vertical;color-scheme:dark}
+  .ag-notes .btn-sm{align-self:flex-start}
+  .ag-export{margin:24px 0 0}
+  .ag-export summary{cursor:pointer;font-size:14px;color:var(--muted-2);min-height:44px;display:inline-flex;align-items:center}
+  .ag-export form{display:flex;flex-wrap:wrap;align-items:flex-end;gap:10px;margin:8px 0 0}
+  .ag-export .field{margin:0;flex:1 1 150px}
+  .ag-export input{height:44px}
+  .ag-export .btn-sm{min-height:44px}
   @media (max-width:1240px){
     .ag-row{grid-template-columns:96px minmax(0,1fr) 170px}
     .ag-svc{display:none}
@@ -63,6 +75,17 @@
   </div>
   <a class="btn-p" href="/panel/agenda/new?day={{ target_day.isoformat() }}">{{ ui.icon('mas') }}Nuevo turno</a>
 </div>
+
+{% if export_invalid %}
+<div class="banner banner-danger" role="alert">{{ ui.icon('alerta') }}<span>Revisá las fechas: el rango puede ser de hasta un año.</span></div>
+{% endif %}
+
+{% if notes_too_long %}
+<div class="banner banner-danger" role="alert">{{ ui.icon('alerta') }}<span>La nota no se guardó: puede tener hasta {{ notes_max }} caracteres.</span></div>
+{% endif %}
+{% if notes_invalid %}
+<div class="banner banner-danger" role="alert">{{ ui.icon('alerta') }}<span>La nota tiene caracteres no permitidos.</span></div>
+{% endif %}
 
 {% if agenda_items %}
 <div class="stats">
@@ -118,6 +141,18 @@
         </form>
       {% endif %}
     </div>
+    <div class="ag-notes">
+      {% if item.internal_notes %}<p class="ag-note">{{ item.internal_notes }}</p>{% endif %}
+      <details>
+        <summary>{% if item.internal_notes %}Editar nota{% else %}Agregar nota{% endif %}</summary>
+        <form method="POST" action="/panel/agenda/{{ item.booking_id }}/notes">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="day" value="{{ target_day.isoformat() }}">
+          <textarea name="internal_notes" maxlength="{{ notes_max }}" aria-label="Nota interna del turno de {{ item.client_name }}" placeholder="Solo la ves vos">{{ item.internal_notes or '' }}</textarea>
+          <button type="submit" class="btn-sm">Guardar</button>
+        </form>
+      </details>
+    </div>
   </div>
   {% endfor %}
 </div>
@@ -128,4 +163,19 @@
   <a class="btn-sm ok" href="/dashboard">Ver mi link</a>
 </div>
 {% endif %}
+
+<details class="ag-export"{% if export_invalid %} open{% endif %}>
+  <summary>Descargar turnos (CSV)</summary>
+  <form method="get" action="/panel/agenda/export">
+    <div class="field">
+      <label for="export-from">Desde</label>
+      <input type="date" id="export-from" name="from" value="{{ export_from }}" required>
+    </div>
+    <div class="field">
+      <label for="export-to">Hasta</label>
+      <input type="date" id="export-to" name="to" value="{{ export_to }}" required>
+    </div>
+    <button type="submit" class="btn-sm">Descargar CSV</button>
+  </form>
+</details>
 {% endblock %}

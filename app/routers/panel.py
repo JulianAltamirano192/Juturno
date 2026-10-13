@@ -1,14 +1,20 @@
+import csv
+import io
+import unicodedata
+from calendar import monthrange
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Annotated
+from urllib.parse import urlencode
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, status
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from sqlalchemy import and_, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import col
 
 from app.auth import get_current_tenant_from_session
 from app.booking_actions import (
@@ -21,6 +27,7 @@ from app.csrf import generate_csrf_token, set_csrf_cookie, validate_csrf
 from app.database import get_db
 from app.models import (
     BOOKING_HORIZON_CHOICES,
+    BOOKING_NOTES_MAX,
     DEPOSIT_EXPIRATION_CHOICES,
     Booking,
     BusinessHours,
@@ -1257,6 +1264,8 @@ async def panel_business_hours_delete(
 async def panel_agenda(
     request: Request,
     day: Annotated[str | None, Query()] = None,
+    notes: Annotated[str | None, Query()] = None,
+    export: Annotated[str | None, Query()] = None,
     tenant: Tenant = Depends(get_current_tenant_from_session),
     session: AsyncSession = Depends(get_db),
 ):
@@ -1287,6 +1296,7 @@ async def panel_agenda(
             "end_local": b.end_time.astimezone(tenant_tz).strftime("%H:%M"),
             "status": b.status,
             "status_label": _AGENDA_STATUS_LABELS.get(b.status, b.status),
+            "internal_notes": b.internal_notes,
         }
         for b, s in rows
     ]
@@ -1304,10 +1314,132 @@ async def panel_agenda(
             "next_day": (target_day + timedelta(days=1)).isoformat(),
             "is_today": target_day == today_local,
             "agenda_items": agenda_items,
+            # Mensaje fijo: nunca se refleja el valor del query param.
+            "notes_too_long": notes == "too_long",
+            "notes_invalid": notes == "invalid",
+            "notes_max": BOOKING_NOTES_MAX,
+            "export_invalid": export == "invalid",
+            # Por defecto se exporta el mes del día que se está viendo.
+            "export_from": target_day.replace(day=1).isoformat(),
+            "export_to": target_day.replace(
+                day=monthrange(target_day.year, target_day.month)[1]
+            ).isoformat(),
         },
     )
     set_csrf_cookie(response, csrf_token)
     return response
+
+
+# Máximo de días por descarga: 366 inclusive (un año bisiesto).
+_EXPORT_MAX_DAYS = 366
+_CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _csv_cell(value: str) -> str:
+    """Evita que Excel/Sheets interpreten la celda como fórmula."""
+    return f"'{value}" if value.startswith(_CSV_FORMULA_PREFIXES) else value
+
+
+def _csv_amount(value: Decimal) -> str:
+    """Monto con coma decimal (planillas en es-AR)."""
+    return f"{value:.2f}".replace(".", ",")
+
+
+# Sin extensión ".csv": Cloudflare cachea esa extensión por defecto y la URL
+# del mes es la misma para todos los tenants.
+@router.get("/panel/agenda/export")
+async def panel_agenda_export_csv(
+    date_from: Annotated[str | None, Query(alias="from")] = None,
+    date_to: Annotated[str | None, Query(alias="to")] = None,
+    tenant: Tenant = Depends(get_current_tenant_from_session),
+    session: AsyncSession = Depends(get_db),
+):
+    """
+    Descarga en CSV los turnos del tenant cuyo inicio cae entre `from` y `to`
+    (ambas inclusive, en la zona horaria del negocio), en cualquier estado.
+    """
+    tenant_tz = _tenant_tz(tenant)
+    try:
+        first = date.fromisoformat(date_from or "")
+        last = date.fromisoformat(date_to or "")
+        valid = 0 <= (last - first).days < _EXPORT_MAX_DAYS
+        range_start = datetime.combine(first, time(0, 0), tzinfo=tenant_tz)
+        # OverflowError si "to" es 9999-12-31 (no hay día siguiente).
+        range_end = datetime.combine(
+            last + timedelta(days=1), time(0, 0), tzinfo=tenant_tz
+        )
+    except (ValueError, OverflowError):
+        valid = False
+    if not valid:
+        # Mensaje fijo en la agenda: nunca se refleja la entrada.
+        return RedirectResponse(
+            url=f"{_AGENDA_ACTION_REDIRECT}?export=invalid",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+
+    stmt = (
+        select(Booking, col(Service.name), col(Staff.name))
+        .join(Service, Booking.service_id == Service.id)
+        .outerjoin(
+            Staff, and_(Booking.staff_id == Staff.id, Staff.tenant_id == tenant.id)
+        )
+        .where(
+            Booking.tenant_id == tenant.id,
+            Service.tenant_id == tenant.id,
+            Booking.start_time >= range_start,
+            Booking.start_time < range_end,
+        )
+        .order_by(Booking.start_time)
+    )
+    rows = (await session.execute(stmt)).all()
+
+    buffer = io.StringIO()
+    # ";" y comillas en todas las celdas: Excel es-AR usa ";" como separador y
+    # un ";" suelto en un nombre partiría la celda (y abriría una fórmula).
+    writer = csv.writer(buffer, delimiter=";", quoting=csv.QUOTE_ALL)
+    writer.writerow(
+        [
+            "Fecha",
+            "Hora",
+            "Servicio",
+            "Personal",
+            "Cliente",
+            "Teléfono",
+            "Estado",
+            "Precio",
+            "Seña",
+            "Notas",
+        ]
+    )
+    for booking, service_name, staff_name in rows:
+        start_local = booking.start_time.astimezone(tenant_tz)
+        deposit = booking.deposit_at_booking or Decimal(0)
+        writer.writerow(
+            [
+                start_local.strftime("%d/%m/%Y"),
+                start_local.strftime("%H:%M"),
+                _csv_cell(service_name),
+                _csv_cell(staff_name or ""),
+                _csv_cell(booking.client_name),
+                _csv_cell(booking.client_phone),
+                _AGENDA_STATUS_LABELS.get(booking.status, booking.status),
+                _csv_amount(booking.price_at_booking),
+                _csv_amount(deposit),
+                _csv_cell(booking.internal_notes or ""),
+            ]
+        )
+
+    filename = f"turnos_{first.isoformat()}_{last.isoformat()}.csv"
+    # BOM: sin él Excel abre el UTF-8 como Latin-1 y rompe los acentos.
+    return Response(
+        content="\ufeff" + buffer.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            # Datos personales: ningún caché (ni Cloudflare) puede guardarlo.
+            "Cache-Control": "no-store, private",
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1640,5 +1772,41 @@ async def panel_agenda_complete(
         raise HTTPException(status_code=409, detail=str(exc))
     except BookingNotStartedError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
+    await session.commit()
+    return _redirect_to_agenda(day)
+
+
+@router.post("/panel/agenda/{booking_id}/notes", response_class=HTMLResponse)
+async def panel_agenda_notes(
+    request: Request,
+    booking_id: int,
+    internal_notes: Annotated[str | None, Form()] = None,
+    day: Annotated[str | None, Form()] = None,
+    tenant: Tenant = Depends(get_current_tenant_from_session),
+    session: AsyncSession = Depends(get_db),
+):
+    """Guarda la nota interna del turno; vacía = sin nota. No cambia el estado."""
+    await validate_csrf(request)
+    booking = await _load_booking_for_tenant(session, booking_id, tenant)
+    # El textarea manda CRLF pero su maxlength cuenta cada salto como uno.
+    text = (internal_notes or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    cleaned = text or None
+    error = None
+    if cleaned is not None and len(cleaned) > BOOKING_NOTES_MAX:
+        error = "too_long"
+    elif cleaned is not None and any(
+        unicodedata.category(c) == "Cc" and c not in "\n\t" for c in cleaned
+    ):
+        # Caracteres de control (p. ej. NUL, que Postgres rechaza → 500). Solo
+        # Cc: el zero-width joiner (Cf) de los emoji compuestos se permite.
+        error = "invalid"
+    if error:
+        params = {"day": day} if day else {}
+        params["notes"] = error
+        return RedirectResponse(
+            url=f"{_AGENDA_ACTION_REDIRECT}?{urlencode(params)}",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    booking.internal_notes = cleaned
     await session.commit()
     return _redirect_to_agenda(day)
