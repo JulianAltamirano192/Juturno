@@ -72,7 +72,7 @@ Ya verifiqué contra el código los hallazgos 2, 3, 4, 5, 7, 8 y 9 (se confirman
 - `GET /public/available-slots` sin rate limit (solo lo tiene `POST /public/bookings`).
 
 #### Pendientes del 26 (turno manual; para el próximo PR)
-- Reservar el prefijo `panel-` de `idempotency_key`: hoy el cliente público o de la API puede usarlo. Si el negocio cancela o confirma desde la agenda esas reservas dentro de las 24 h, pasan a actor `owner` y gastan el cupo diario de 50 altas manuales (peor caso: 24 h sin poder cargar turnos a mano). Arreglo: validador que rechace claves `panel-*` en `BookingCreate` y en el schema público.
+- ~~Reservar el prefijo `panel-` de `idempotency_key`: hoy el cliente público o de la API puede usarlo. Si el negocio cancela o confirma desde la agenda esas reservas dentro de las 24 h, pasan a actor `owner` y gastan el cupo diario de 50 altas manuales (peor caso: 24 h sin poder cargar turnos a mano). Arreglo: validador que rechace claves `panel-*` en `BookingCreate` y en el schema público.~~ **Hecho (rama `fix/reserve-panel-idempotency-prefix`)**: `BookingCreate` rechaza claves `panel-*` con 422; el panel y el validador comparten `MANUAL_BOOKING_KEY_PREFIX`.
 
 #### Pendientes del 11 (seña opcional; para más adelante)
 - Límite diario por negocio o verificación de teléfono para turnos sin seña: el tope por teléfono no frena a quien rota números.
