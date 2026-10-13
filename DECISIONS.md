@@ -987,6 +987,30 @@ Commit: `92a24d9`.
 
 ---
 
+## D-036: WhatsApp desde el número de la plataforma; aviso al dueño
+
+**Fecha**: 2026-10-13
+
+**Contexto**: El dueño no se enteraba de un turno nuevo salvo que mirara la agenda (ROADMAP Fase 3, ítem 27). Había que decidir desde qué número salen los WhatsApp y cómo se avisa al dueño sin romper la outbox.
+
+**Decisión**: Todos los WhatsApp (clientes y dueño) salen del número de la plataforma (`WHATSAPP_PHONE_NUMBER_ID`); el número propio por negocio queda en la Fase 9. El aviso al dueño sale siempre de ese número, porque un negocio no se escribe a sí mismo. `Tenant.whatsapp_number` se guarda normalizado `549...` (`normalize_whatsapp_phone`) en el registro (inválido: 400) y en `POST /panel/settings/whatsapp` (vacío lo borra y desactiva los avisos). Tipo de outbox nuevo `owner_new_booking`, encolado por `transition_booking_status` al pasar a `confirmed` cuando `actor != "owner"`, solo si el negocio tiene número y uno por turno. Anti-abuso: tope `OWNER_ALERTS_PER_DAY = 30` avisos por negocio en 24 h y parámetros de plantilla limpios (sin saltos de línea, máx. 60 caracteres, `-` si vacío). `_send_event` devuelve un motivo de cancelación (`booking_not_confirmed`, `owner_whatsapp_missing`, `owner_whatsapp_invalid`) que queda en `error_message`. No hay migración de datos: el worker normaliza al enviar los números viejos. Plantilla Meta `owner_new_booking` (Utility, es) con negocio, cliente, servicio y fecha. Tests en `tests/test_tenant_whatsapp_number.py`, `tests/test_booking_actions.py` y `tests/test_outbox_worker.py`.
+
+**Alternativas**:
+- **Número por negocio con Meta Embedded Signup**: el aviso y los mensajes salen con la identidad del negocio, pero exige Tech Provider y verificación de negocio; es lo más pesado y va en la Fase 9.
+- **Email al dueño**: sin costo por mensaje ni plantilla de Meta, pero hoy no hay envío de email en el stack y el dueño lo ve más tarde; queda fuera de alcance.
+
+**Consecuencias**:
+- **Ventaja** — El dueño se entera al instante, sin infraestructura nueva: reusa la outbox, sus reintentos (D-022) y la cancelación al cancelar el turno (D-030).
+- **Riesgo** — Relay de spam (hallado por el `security-auditor`, severidad ALTA): el número del dueño no se verifica, así que alguien puede registrar el WhatsApp de un tercero y, reservando turnos, hacer que la plataforma le escriba. El tope por teléfono de los turnos sin seña (D-035) no ayuda: lo elige quien reserva. Mitigación parcial hoy: tope de 30 avisos por negocio en 24 h; igual se puede abusar con muchos negocios y el número de la plataforma puede recibir reportes de spam en Meta.
+- **Riesgo** — El tope cuenta y después inserta: dos confirmaciones simultáneas pueden pasarlo por poco.
+- **Riesgo** — Si la plantilla `owner_new_booking` no está aprobada en Meta, cada aviso falla, se reintenta 7 veces en 2 h y queda `failed` (ver `DEPLOYMENT.md`).
+- **Riesgo** — Entrega *at-least-once*: un timeout con mensaje ya aceptado puede duplicar el aviso.
+- **Deuda** — Verificación del número del dueño por código (OTP) **obligatoria antes de conectar el número real de producción**. Sin rate limit propio en `POST /panel/settings/whatsapp` ni log del cambio de número (BAJOs descartados porque los cubren el tope y el OTP). Número por negocio: Fase 9.
+
+**Implementación**: `app/booking_actions.py` (`enqueue_owner_alert`, `OWNER_ALERTS_PER_DAY`), `app/outbox_worker.py` (`_send_event`), `app/whatsapp_service.py` (`send_owner_new_booking`, `_template_param`), `app/routers/panel.py` (`panel_whatsapp_number`), `app/routers/auth.py`, `app/templates/settings.html`, `app/templates/register.html`.
+
+---
+
 ## Roadmap de deuda técnica
 
 Ordenado por impacto/urgencia estimada:

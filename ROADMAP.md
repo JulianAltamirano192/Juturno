@@ -74,6 +74,10 @@ Ya verifiqué contra el código los hallazgos 2, 3, 4, 5, 7, 8 y 9 (se confirman
 #### Pendientes del 26 (turno manual; para el próximo PR)
 - ~~Reservar el prefijo `panel-` de `idempotency_key`: hoy el cliente público o de la API puede usarlo. Si el negocio cancela o confirma desde la agenda esas reservas dentro de las 24 h, pasan a actor `owner` y gastan el cupo diario de 50 altas manuales (peor caso: 24 h sin poder cargar turnos a mano). Arreglo: validador que rechace claves `panel-*` en `BookingCreate` y en el schema público.~~ **Hecho (rama `fix/reserve-panel-idempotency-prefix`)**: `BookingCreate` rechaza claves `panel-*` con 422; el panel y el validador comparten `MANUAL_BOOKING_KEY_PREFIX`.
 
+#### Pendientes del 27 (aviso al dueño)
+- **Obligatorio antes de conectar el número real de producción**: verificar el número del dueño por código (OTP) antes de guardarlo. Hoy el número no se verifica y el tope de 30 avisos por negocio en 24 h es solo una mitigación parcial.
+- Plantilla `owner_new_booking` aprobada en Meta antes del deploy.
+
 #### Pendientes del 11 (seña opcional; para más adelante)
 - Límite diario por negocio o verificación de teléfono para turnos sin seña: el tope por teléfono no frena a quien rota números.
 - `POST /bookings` (API) no auto-confirma servicios sin seña: sigue creando `pending`.
@@ -96,7 +100,7 @@ Ya verifiqué contra el código los hallazgos 2, 3, 4, 5, 7, 8 y 9 (se confirman
 13. ~~Arreglar cómo se muestra el nombre de la cuenta MP.~~ **Hecho (rama `fix/mp-account-display-name`)**: al conectar se guarda `first_name last_name` de `/users/me` (si faltan, el nickname autogenerado de MP) y el nombre largo hace salto de línea en celular. Las cuentas ya conectadas muestran el nickname hasta que reconecten.
 13b. ~~Plazos configurables por el negocio en Ajustes.~~ **Hecho (rama `feat/deposit-expiration-setting`)**: desplegable "Plazo para pagar la seña" (15 min a 24 h, sin "sin vencimiento"). El tope de 48 h del link queda como constante técnica: con plazos de hasta 24 h nunca se activa.
 26. ~~Turno manual desde el panel (cliente sin turno o reserva por teléfono).~~ **Hecho (rama `feat/manual-booking`)**: botón "Nuevo turno" en la agenda; hora libre (sin grilla, horario ni horizonte) pero siempre futura; WhatsApp obligatorio. Nace `confirmed` sin seña vía `transition_booking_status` (encola la confirmación); superposición → 409. Tope de 50 altas manuales por negocio en 24 h (anti-spam de WhatsApp, pedido por el `security-auditor`).
-27. Aviso al dueño cuando entra un turno confirmado (WhatsApp o email), reusando la outbox.
+27. ~~Aviso al dueño cuando entra un turno confirmado (WhatsApp o email), reusando la outbox.~~ **Hecho (rama `feat/owner-booking-alert`)**: WhatsApp al número que el negocio carga en el registro o en Ajustes (vacío desactiva los avisos); no se avisa cuando confirma el propio dueño. Tope de 30 avisos por negocio en 24 h (anti-spam, pedido por el `security-auditor`). Email queda afuera. Ver D-036.
 28. Notas internas por turno + exportar turnos a CSV.
 29. QR descargable de `/t/{slug}` (generado en el navegador, sin dependencia nueva en el backend) + vista semanal de la agenda.
 38. Agenda: seña cobrada y saldo a cobrar por turno (`price_at_booking - deposit_at_booking`) + total del día.
@@ -154,4 +158,4 @@ Rama → test que falla → fix → `./scripts/test.sh` + `ruff check app/ tests
 
 Las fases 1-2 cierran los 12 hallazgos. Se chequea revisando que la sección "Hallazgos abiertos" de CLAUDE.md quede vacía.
 
-Siguiente tarea concreta: **Fase 3, ítem 27** (aviso al dueño cuando entra un turno confirmado). Los ítems 11, 12, 13, 13b y 26 están hechos; quedan los pendientes listados arriba.
+Siguiente tarea concreta: **Fase 3, ítem 28** (notas internas por turno + exportar turnos a CSV). Los ítems 11, 12, 13, 13b, 26 y 27 están hechos; quedan los pendientes listados arriba.
