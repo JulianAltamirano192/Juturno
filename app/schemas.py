@@ -52,6 +52,10 @@ class AvailableSlotsResponse(BaseModel):
     slots: list[str]
 
 
+# Prefijo de idempotency_key reservado para las altas manuales del panel.
+MANUAL_BOOKING_KEY_PREFIX = "panel-"
+
+
 class BookingCreate(BaseModel):
     tenant_id: int
     service_id: int
@@ -61,3 +65,14 @@ class BookingCreate(BaseModel):
     start_time: datetime
     end_time: datetime | None = None
     idempotency_key: str
+
+    @field_validator("idempotency_key")
+    @classmethod
+    def _reserve_panel_prefix(cls, value: str) -> str:
+        # `panel-` es de las altas manuales del panel: su tope diario cuenta por
+        # ese prefijo. Una reserva externa con esa clave podría gastar el cupo.
+        if value.startswith(MANUAL_BOOKING_KEY_PREFIX):
+            raise ValueError(
+                f"La clave no puede empezar con '{MANUAL_BOOKING_KEY_PREFIX}'."
+            )
+        return value

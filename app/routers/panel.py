@@ -34,7 +34,7 @@ from app.mp_connect import (
     mp_authorization_redirect,
 )
 from app.phone import InvalidPhoneError, normalize_whatsapp_phone
-from app.schemas import clean_client_name
+from app.schemas import MANUAL_BOOKING_KEY_PREFIX, clean_client_name
 from app.services import effective_deposit
 from app.templates import templates
 
@@ -1367,7 +1367,7 @@ async def panel_agenda_new_submit(
             .select_from(Booking)
             .where(
                 Booking.tenant_id == tenant.id,
-                Booking.idempotency_key.startswith("panel-"),
+                Booking.idempotency_key.startswith(MANUAL_BOOKING_KEY_PREFIX),
                 # La clave la elige también la reserva pública; el actor no.
                 Booking.status_changed_by == "owner",
                 Booking.created_at > datetime.now(timezone.utc) - timedelta(days=1),
@@ -1479,7 +1479,7 @@ async def panel_agenda_new_submit(
         end_time=end_time,
         price_at_booking=service.price,
         deposit_at_booking=Decimal(0),
-        idempotency_key=f"panel-{uuid4().hex}",
+        idempotency_key=f"{MANUAL_BOOKING_KEY_PREFIX}{uuid4().hex}",
         status="pending",
     )
     try:
