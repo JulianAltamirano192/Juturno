@@ -16,6 +16,7 @@ from app.database import get_db
 from app.limiter import limiter
 from app.models import Tenant
 from app.password import hash_password, verify_password
+from app.phone import InvalidPhoneError, normalize_whatsapp_phone
 from app.session import (
     SESSION_COOKIE_NAME,
     delete_session_cookie,
@@ -101,6 +102,27 @@ async def register_submit(
         set_csrf_cookie(response, new_csrf)
         return response
 
+    # Número para avisos de turnos nuevos: se guarda normalizado o no se guarda.
+    clean_whatsapp = None
+    if whatsapp_number and whatsapp_number.strip():
+        try:
+            clean_whatsapp = normalize_whatsapp_phone(whatsapp_number)
+        except InvalidPhoneError:
+            new_csrf = generate_csrf_token(request)
+            response = templates.TemplateResponse(
+                request,
+                "register.html",
+                {
+                    "csrf_token": new_csrf,
+                    "form_data": form_data,
+                    "error_message": "Ese número no parece un celular válido. "
+                    "Probá con código de área, por ejemplo 11 5555 5555.",
+                },
+                status_code=400,
+            )
+            set_csrf_cookie(response, new_csrf)
+            return response
+
     normalized_email = owner_email.strip().lower()
     existing_owner = (
         await session.execute(
@@ -128,9 +150,6 @@ async def register_submit(
 
     pwd_hash = hash_password(password)
 
-    clean_whatsapp = (
-        whatsapp_number.strip() if whatsapp_number and whatsapp_number.strip() else None
-    )
     new_tenant = Tenant(
         name=name.strip(),
         slug=final_slug,

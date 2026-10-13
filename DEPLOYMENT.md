@@ -88,6 +88,8 @@ sh -c "python -m alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.
 
 > **Checklist pre-deploy**: verificar que **todas** las variables están seteadas en Coolify antes del primer deploy y después de agregar cualquier variable nueva a `Settings`. Ver D-014 y D-018 en `DECISIONS.md`. No setear `TEST_DATABASE_URL` en prod: apaga el scheduler.
 
+> **Plantilla de Meta antes de desplegar**: la plantilla `owner_new_booking` (categoría Utility, idioma es, 4 parámetros: negocio, cliente, servicio, fecha) tiene que estar **aprobada** en Meta antes del deploy que trae el aviso al dueño (D-036). Si no lo está, cada aviso falla, se reintenta 7 veces en 2 h y queda `failed`. Es el mismo número de la plataforma (`WHATSAPP_PHONE_NUMBER_ID`); no hay variable nueva. Antes de conectar el número real de producción falta además la verificación OTP del número del dueño (D-036).
+
 > ⚠️ **Pendiente de confirmar**: `docker-compose.prod.yml` solo pasa explícitamente al servicio `api` este subset: `DATABASE_URL`, `REDIS_URL`, `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `META_VERIFY_TOKEN`, `META_APP_SECRET`, `MP_ACCESS_TOKEN`, `MP_SECRET_KEY`, `SENTRY_DSN`, `ENVIRONMENT` y `CORS_ORIGINS`. Las demás (`SECRET_KEY`, `PUBLIC_BASE_URL`, `MP_MARKETPLACE_*`, `MP_NOTIFICATION_URL`, `MP_TOKEN_ENCRYPTION_KEY`, `MP_SANDBOX`) tienen que llegar al contenedor por el mecanismo de variables de Coolify. Ya hubo un crash loop en producción (2026-10-07) porque `MP_SANDBOX` no estaba definida en Coolify y el default es `true`. Desde el repo no se puede verificar qué inyecta Coolify en runtime: confirmarlo en los Runtime Logs del contenedor.
 
 ---

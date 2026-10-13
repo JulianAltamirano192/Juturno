@@ -99,7 +99,7 @@ Tenant (1) ──────< Service
      │       ├── last_used_at (throttle 5min), revoked_at
      │
      ├──< NotificationOutbox
-     │       ├── notification_type: confirmation | reminder
+     │       ├── notification_type: confirmation | reminder | owner_new_booking
      │       ├── status: pending | sent | failed | cancelled
      │       └── retry_count, error_message, created_at
      │
@@ -275,16 +275,17 @@ REQUIRE_STARTED = {"no_show", "completed"}  # solo si start_time <= now
 ## 8. Patrón Outbox (`NotificationOutbox` + `process_outbox`)
 
 **Tabla `notification_outbox`:**
-- `booking_id`, `notification_type` (`confirmation`|`reminder`), `status` (`pending`|`sent`|`failed`|`cancelled`)
+- `booking_id`, `notification_type` (`confirmation`|`reminder`|`owner_new_booking`), `status` (`pending`|`sent`|`failed`|`cancelled`)
 - `retry_count`, `error_message`, `created_at`
 
 **Flujo:**
 1. Al crear booking (`POST /bookings` o `/public/bookings`) → inserta `Booking` (y en flujo público con seña también `Payment`). **No** se crea `NotificationOutbox` acá, salvo en el flujo público sin seña, que confirma en el momento y encola la confirmación (paso 2).
 2. Al confirmar (webhook MP, reconciliación o panel) → marca `confirmed` + crea `NotificationOutbox(type="confirmation")` si no existe — **misma transacción** que la confirmación. Una confirmación manual desde el panel (`/panel/agenda/{id}/confirm`) también la encola (vía `transition_booking_status`), igual que el alta manual `POST /panel/agenda/new`, que crea el turno `pending` y lo pasa a `confirmed` en la misma transacción.
+   - **Aviso al dueño (`owner_new_booking`)**: en la misma transacción, `transition_booking_status` también encola `enqueue_owner_alert` si `actor != "owner"` (webhook MP, reconciliación, reserva pública sin seña `client`, `system`): lo que el dueño hace en el panel no se le avisa a sí mismo. Solo se encola si el negocio tiene `whatsapp_number` (vacío = avisos desactivados), uno por turno, y con tope `OWNER_ALERTS_PER_DAY = 30` por negocio en 24 h móviles (cuenta avisos en cualquier estado; al llegar al tope no se encola y se loguea un warning). Sale siempre del número de la plataforma (D-036).
 3. Job `process_reminders` (cada 5 min) → busca bookings `confirmed` que empiezan dentro de las próximas 24 h (`now < start_time <= now + 24 h`) y `reminder_sent=False` (cubre corridas salteadas y turnos confirmados con menos de 24 h; esos reciben confirmación y recordatorio casi juntos, aceptado). Lee con `FOR UPDATE SKIP LOCKED` para no duplicar si dos corridas se pisan → marca `reminder_sent=True` + crea `NotificationOutbox(type="reminder")` en **lote atómico** (un solo commit).
 4. Job `process_outbox` (cada 1 min) → lista los ids elegibles y procesa cada uno en su propia sesión/transacción con `SELECT ... FOR UPDATE SKIP LOCKED`:
-   - Carga booking + tenant (para timezone). Si el booking ya no está `confirmed` → `status="cancelled"`, `error_message="booking_not_confirmed"`, sin enviar.
-   - `WhatsAppService.send_confirmation()` o `send_reminder()` (template Meta Utility)
+   - Carga booking + tenant (para timezone). `_send_event` devuelve `None` si envió o un motivo si no corresponde enviar; con motivo → `status="cancelled"`, `error_message=<motivo>`, sin reintento. Motivos: `booking_not_confirmed` (el turno ya no está `confirmed`), `owner_whatsapp_missing` (el negocio borró su número) y `owner_whatsapp_invalid` (el número guardado no es un teléfono válido; el worker lo normaliza al enviar, así que también cubre números viejos sin normalizar).
+   - `WhatsAppService.send_confirmation()` o `send_reminder()` (template Meta Utility) al cliente; `send_owner_new_booking()` al `Tenant.whatsapp_number` para `owner_new_booking`
    - El envío corre dentro de un savepoint (`begin_nested`): si falla la base adentro, igual se puede marcar el evento `failed`.
    - Si OK → `status="sent"`; si falla (cualquier excepción) → `status="failed"`, `retry_count+=1`, `error_message=exc`
    - **Commit por evento**: un error (de Meta o de datos, ej. timezone inválida) no afecta a los demás ni deja un "mensaje veneno" que rompa el lote.
@@ -376,6 +377,7 @@ Registrados en el `lifespan` de `app/main.py` con `AsyncIOScheduler` (trigger `i
 - **Plantillas Utility** (aprobadas por Meta, categoría "Utility", funcionan fuera de ventana 24h):
   - `booking_confirmation`: parámetros `{nombre, fecha, booking_id}`
   - `booking_reminder`: parámetros `{nombre, fecha}`
+  - `owner_new_booking` (es): parámetros `{negocio, cliente, servicio, fecha}`, dirigida al dueño. Cada parámetro se limpia (`_template_param`): sin saltos de línea ni tabs, máx. 60 caracteres, `-` si queda vacío
 - **Envío**: `WhatsAppService` → `POST https://graph.facebook.com/v19.0/{phone_number_id}/messages`
   - Singleton `httpx.AsyncClient` (pool conexiones, timeout 10 s).
   - Hasta 3 intentos con backoff exponencial (espera 1 s y 2 s entre ellos) en 429/5xx/timeout; el tercer fallo propaga la excepción y `process_outbox` marca el evento `failed`.

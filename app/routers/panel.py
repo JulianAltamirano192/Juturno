@@ -419,6 +419,15 @@ _HORIZON_FLASH = {
     "invalid": "Elegí una de las opciones de la lista.",
 }
 
+_WHATSAPP_FLASH = {
+    "saved": "Guardamos el WhatsApp para avisos de turnos nuevos.",
+    "removed": "Desactivamos los avisos por WhatsApp.",
+    "invalid": (
+        "Ese número no parece un celular válido. Probá con código de área, "
+        "por ejemplo 11 5555 5555."
+    ),
+}
+
 _DEPOSIT_FLASH = {
     "saved": "Guardamos el plazo para pagar la seña.",
     "invalid": "Elegí una de las opciones de la lista.",
@@ -431,6 +440,7 @@ async def panel_settings(
     mp: str | None = None,
     horizon: str | None = None,
     deposit: str | None = None,
+    whatsapp: str | None = None,
     tenant: Tenant = Depends(get_current_tenant_from_session),
 ):
     csrf_token = generate_csrf_token(request)
@@ -440,6 +450,7 @@ async def panel_settings(
         (mp, _MP_FLASH),
         (horizon, _HORIZON_FLASH),
         (deposit, _DEPOSIT_FLASH),
+        (whatsapp, _WHATSAPP_FLASH),
     ):
         flash = messages.get(value or "")
         if flash:
@@ -514,6 +525,36 @@ async def panel_booking_horizon(
     await session.commit()
     return RedirectResponse(
         url="/panel/settings?horizon=saved", status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
+@router.post("/panel/settings/whatsapp")
+async def panel_whatsapp_number(
+    request: Request,
+    tenant: Tenant = Depends(get_current_tenant_from_session),
+    session: AsyncSession = Depends(get_db),
+):
+    await validate_csrf(request)
+    form = await request.form()
+    raw = str(form.get("whatsapp_number", "")).strip()
+    if not raw:
+        # Vacío = sin avisos por WhatsApp.
+        tenant.whatsapp_number = None
+        result = "removed"
+    else:
+        try:
+            tenant.whatsapp_number = normalize_whatsapp_phone(raw)
+        except InvalidPhoneError:
+            return RedirectResponse(
+                url="/panel/settings?whatsapp=invalid",
+                status_code=status.HTTP_303_SEE_OTHER,
+            )
+        result = "saved"
+    session.add(tenant)
+    await session.commit()
+    return RedirectResponse(
+        url=f"/panel/settings?whatsapp={result}",
+        status_code=status.HTTP_303_SEE_OTHER,
     )
 
 

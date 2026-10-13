@@ -19,6 +19,12 @@ def normalize_phone_for_meta(phone: str) -> str:
     return phone
 
 
+def _template_param(text: str, max_len: int = 60) -> str:
+    """Parámetro de plantilla aceptable para Meta: sin saltos de línea ni tabs
+    (espacios colapsados), con largo acotado y nunca vacío."""
+    return " ".join(text.split())[:max_len] or "-"
+
+
 class WhatsAppClientSingleton:
     """
     Singleton para mantener un único httpx.AsyncClient compartiendo
@@ -145,6 +151,37 @@ class WhatsAppService:
                         "parameters": [
                             {"type": "text", "text": nombre},
                             {"type": "text", "text": fecha},
+                        ],
+                    }
+                ],
+            },
+        }
+        return await self._send_request_with_retry(payload)
+
+    async def send_owner_new_booking(
+        self, phone: str, negocio: str, cliente: str, servicio: str, fecha: str
+    ):
+        """
+        Template Message (Utility) que avisa al dueño de un turno confirmado.
+        Requiere que la plantilla 'owner_new_booking' (es) esté aprobada en
+        Meta, p. ej.: "Nuevo turno en {{1}}: {{2}} reservó {{3}} para el {{4}}."
+        """
+        payload = {
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": normalize_phone_for_meta(phone),
+            "type": "template",
+            "template": {
+                "name": "owner_new_booking",
+                "language": {"code": "es"},
+                "components": [
+                    {
+                        "type": "body",
+                        "parameters": [
+                            {"type": "text", "text": _template_param(negocio)},
+                            {"type": "text", "text": _template_param(cliente)},
+                            {"type": "text", "text": _template_param(servicio)},
+                            {"type": "text", "text": _template_param(fecha)},
                         ],
                     }
                 ],
