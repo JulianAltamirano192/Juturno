@@ -81,4 +81,16 @@
     <button type="submit" class="btn-p">Guardar</button>
   </form>
 </section>
+
+<section class="form-card" aria-labelledby="h-whatsapp">
+  <h2 id="h-whatsapp" style="font-size:18px">Avisos por WhatsApp</h2>
+  <form method="POST" action="/panel/settings/whatsapp" class="mp-row">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="field">
+      <label for="whatsapp_number">Te avisamos a este número cuando se confirma un turno nuevo: cuando el cliente paga la seña o reserva un servicio sin seña. Dejalo vacío para no recibir avisos.</label>
+      <input type="tel" id="whatsapp_number" name="whatsapp_number" inputmode="tel" autocomplete="tel" placeholder="Ej: 11 5555 5555" value="{{ tenant.whatsapp_number or '' }}">
+    </div>
+    <button type="submit" class="btn-p">Guardar</button>
+  </form>
+</section>
 {% endblock %}

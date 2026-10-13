@@ -54,7 +54,7 @@ async def test_post_register_success(client: AsyncClient, db_session: AsyncSessi
     assert tenant.name == "Estudio Central"
     assert tenant.slug == "estudio-central"
     assert tenant.owner_email == "dueno@estudio.com"
-    assert tenant.whatsapp_number == "1155555555"
+    assert tenant.whatsapp_number == "5491155555555"
     assert tenant.session_version == 1
     # Slots, agenda and WhatsApp texts use this zone; UTC shifted them 3 hours.
     assert tenant.timezone == "America/Argentina/Buenos_Aires"
