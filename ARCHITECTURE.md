@@ -81,6 +81,7 @@ Tenant (1) ──────< Service
      │       ├── price_at_booking (Decimal)
      │       ├── deposit_at_booking (Decimal, nullable) — snapshot de effective_deposit al crear
      │       │     └── CHECK ck_booking_deposit_at_booking_non_negative (NULL o >= 0)
+     │       ├── internal_notes (VARCHAR(500), nullable) — nota privada del dueño; solo la ve el panel y el CSV, nunca la página pública ni WhatsApp
      │       ├── status: pending | confirmed | cancelled | expired | no_show | completed
      │       ├── idempotency_key (unique compuesto con tenant_id — `uq_booking_idempotency_key`)
      │       ├── reminder_sent (bool), created_at
@@ -272,6 +273,10 @@ REQUIRE_STARTED = {"no_show", "completed"}  # solo si start_time <= now
 
 ---
 
+**Notas internas y export CSV (`app/routers/panel.py`)**: `Booking.internal_notes` es privada del dueño (se edita en cualquier estado con `POST /panel/agenda/{id}/notes`). `GET /panel/agenda/export` baja los turnos de un rango (TZ del negocio, máx. 366 días) como CSV para Excel es-AR: BOM UTF-8, separador `;`, todas las celdas entre comillas, coma decimal, y prefijo `'` en celdas que empiezan con `=`, `+`, `-`, `@`, tab o CR (inyección de fórmulas). La ruta no termina en `.csv` y responde `Cache-Control: no-store, private`: Cloudflare cachea `.csv` por defecto y la URL del mes es igual para todos los negocios, así que un caché compartido podría servir datos de un negocio a otro.
+
+---
+
 ## 8. Patrón Outbox (`NotificationOutbox` + `process_outbox`)
 
 **Tabla `notification_outbox`:**
@@ -428,7 +433,7 @@ app/
 - Cookie firmada (`juturno_session`) → `routers/panel.py` o `routers/auth.py`
 - Header `X-Tenant-API-Key` → `routers/api.py`
 
-Los routers de `mp_connect.py`, `mp_webhooks.py` y `webhooks.py` viven junto a su integración. La suite tiene 356 tests en 34 archivos (`tests/`), que corren con `./scripts/test.sh`.
+Los routers de `mp_connect.py`, `mp_webhooks.py` y `webhooks.py` viven junto a su integración. La suite tiene 614 tests en 47 archivos (`tests/`), que corren con `./scripts/test.sh`.
 
 ---
 
