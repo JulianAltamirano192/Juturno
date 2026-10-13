@@ -9,6 +9,7 @@ from sqlalchemy import (
     Index,
     Integer,
     Numeric,
+    String,
     UniqueConstraint,
     text,
 )
@@ -24,6 +25,9 @@ BOOKING_HORIZON_CHOICES = (15, 30, 60, 90)
 # Minutos para pagar la seña que el negocio puede elegir en el panel (13b).
 # Sin "sin vencimiento": el link de pago vence a las 48 h igual (D-031).
 DEPOSIT_EXPIRATION_CHOICES = (15, 30, 60, 120, 360, 1440)
+
+# Largo máximo de la nota interna de un turno (solo la ve el dueño).
+BOOKING_NOTES_MAX = 500
 
 
 class Tenant(SQLModel, table=True):
@@ -304,6 +308,12 @@ class Booking(SQLModel, table=True):
     completed_at: datetime | None = Field(
         default=None,
         sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
+
+    # Nota privada del dueño; vacía = NULL.
+    internal_notes: str | None = Field(
+        default=None,
+        sa_column=Column(String(BOOKING_NOTES_MAX), nullable=True),
     )
 
     created_at: datetime = Field(
