@@ -39,7 +39,7 @@
 
 | Convención | Detalle |
 |------------|---------|
-| **Idempotencia** | `idempotency_key` (string, **UNIQUE compuesto `(tenant_id, idempotency_key)`** — `uq_booking_idempotency_key`) en `POST /bookings` y `POST /public/bookings`. Un retry con la misma key del mismo tenant → **200** + booking existente (`message: "Reserva recuperada (idempotente)"`). Keys de distintos tenants no colisionan. También cubre la carrera: si el `INSERT` choca por `IntegrityError` y existe el booking con esa key, devuelve 200. |
+| **Idempotencia** | `idempotency_key` (string, **UNIQUE compuesto `(tenant_id, idempotency_key)`** — `uq_booking_idempotency_key`) en `POST /bookings` y `POST /public/bookings`. Un retry con la misma key del mismo tenant → **200** + booking existente (`message: "Reserva recuperada (idempotente)"`). Keys de distintos tenants no colisionan. El prefijo `panel-` está reservado para las altas manuales del panel: una key que empiece con `panel-` da 422 (validación de `BookingCreate`). También cubre la carrera: si el `INSERT` choca por `IntegrityError` y existe el booking con esa key, devuelve 200. |
 | **Timestamps** | ISO 8601 UTC: `2026-10-15T14:30:00+00:00` o `2026-10-15T14:30:00Z`. Un `start_time` sin zona se interpreta en la timezone del tenant. |
 | **Decimales** | DB y Python usan `Decimal` (`Numeric(10,2)`). `PublicServiceRead.price` y `.deposit_amount` son `Decimal` en el schema pero un `field_serializer` los serializa como **número JSON** (ej: `5000.0`). En el panel, los montos se parsean con `Decimal` (acepta coma o punto). |
 | **Errores** | `{ "detail": "mensaje en español" }` (4xx/5xx de `HTTPException`). Errores de validación de FastAPI/Pydantic: 422 con `detail` como lista. |

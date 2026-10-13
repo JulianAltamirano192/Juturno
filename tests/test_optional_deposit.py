@@ -11,11 +11,13 @@ from datetime import datetime, time, timedelta, timezone
 from decimal import Decimal
 
 import pytest
+from pydantic import ValidationError
 from sqlalchemy import func, select
 
 from app import main as main_module
 from app.models import Booking, NotificationOutbox, Payment, Service, Tenant
 from app.phone import normalize_whatsapp_phone
+from app.schemas import BookingCreate
 
 
 @pytest.fixture(autouse=True)
@@ -303,3 +305,27 @@ async def test_no_deposit_cap_is_not_bypassed_by_panel_like_key(
     res = await client.post("/public/bookings", json=payload)
 
     assert res.status_code == 422
+
+
+@pytest.mark.parametrize("key", ["panel-abc", "panel-"])
+def test_booking_schema_rejects_reserved_panel_key(key):
+    # El prefijo `panel-` es de las altas manuales: si un cliente lo usa, el
+    # dueño que cancela o confirma esas reservas gasta su cupo diario.
+    with pytest.raises(ValidationError):
+        BookingCreate(**_payload(1, 1, key=key))
+
+
+@pytest.mark.parametrize("key", ["PANEL-abc", "x-panel-abc", "panelabc"])
+def test_booking_schema_allows_other_keys(key):
+    assert BookingCreate(**_payload(1, 1, key=key)).idempotency_key == key
+
+
+@pytest.mark.asyncio
+async def test_public_booking_rejects_reserved_panel_key(client, db_session, fake_mp):
+    tenant, service = await _tenant_with_service(db_session, Decimal(0))
+
+    payload = _payload(tenant.id, service.id, key="panel-cliente")
+    res = await client.post("/public/bookings", json=payload)
+
+    assert res.status_code == 422
+    assert await _count(db_session, Booking, Booking.tenant_id == tenant.id) == 0
