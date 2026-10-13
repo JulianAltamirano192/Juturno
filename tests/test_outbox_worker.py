@@ -39,8 +39,12 @@ async def _event(
     created_ago: timedelta = timedelta(0),
     tenant_tz: str = "UTC",
     booking_status: str = "confirmed",
+    notification_type: str = "confirmation",
+    tenant_whatsapp: str | None = None,
 ) -> NotificationOutbox:
-    tenant = Tenant(name=f"Tenant {key}", timezone=tenant_tz)
+    tenant = Tenant(
+        name=f"Tenant {key}", timezone=tenant_tz, whatsapp_number=tenant_whatsapp
+    )
     db_session.add(tenant)
     await db_session.flush()
     service = Service(tenant_id=tenant.id, name="Turno", duration_minutes=30, price=1)
@@ -62,7 +66,7 @@ async def _event(
     await db_session.flush()
     event = NotificationOutbox(
         booking_id=booking.id,
-        notification_type="confirmation",
+        notification_type=notification_type,
         status=status,
         retry_count=retry_count,
         created_at=datetime.now(timezone.utc) - created_ago,
@@ -277,3 +281,117 @@ async def test_cancel_skips_event_locked_by_worker(db_session):
     assert booking.status == "cancelled"
     assert event.status == "sent"  # el tomado se saltea y no se pisa
     assert other.status == "cancelled"  # el resto se cancela igual
+
+
+@pytest.fixture
+def owner_sent(monkeypatch):
+    """Intercepta los avisos al dueño y registra con qué parámetros salieron."""
+    calls: list[tuple] = []
+
+    async def fake_send(self, phone, negocio, cliente, servicio, fecha):
+        calls.append((phone, negocio, cliente, servicio, fecha))
+        return _OkResponse()
+
+    monkeypatch.setattr(
+        outbox_worker.WhatsAppService, "send_owner_new_booking", fake_send
+    )
+    return calls
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "stored", ["5491144443333", "11 4444 3333"], ids=["normalizado", "legado-crudo"]
+)
+async def test_owner_alert_is_sent_to_tenant_number(
+    db_session, sent, owner_sent, stored
+):
+    """El aviso va al número del negocio (los valores viejos crudos se
+    normalizan al enviar) con negocio, cliente, servicio y fecha."""
+    event = await _event(
+        db_session,
+        f"owner-ok-{stored}",
+        notification_type="owner_new_booking",
+        tenant_whatsapp=stored,
+    )
+    booking = await db_session.get(Booking, event.booking_id)
+
+    await process_outbox(TestingSessionLocal)
+
+    await db_session.refresh(event)
+    assert event.status == "sent"
+    assert sent == []  # no le llega nada al cliente
+    fecha = outbox_worker.format_booking_datetime(booking.start_time, "UTC")
+    assert owner_sent == [
+        ("5491144443333", f"Tenant owner-ok-{stored}", "Cliente", "Turno", fecha)
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("stored", "reason"),
+    [(None, "owner_whatsapp_missing"), ("123", "owner_whatsapp_invalid")],
+)
+async def test_owner_alert_without_valid_number_is_cancelled(
+    db_session, owner_sent, stored, reason
+):
+    """Si el dueño borró su número después de encolar, o el valor viejo no es
+    un teléfono válido, el aviso se cancela con motivo propio."""
+    event = await _event(
+        db_session,
+        f"owner-bad-{reason}",
+        notification_type="owner_new_booking",
+        tenant_whatsapp=stored,
+    )
+
+    await process_outbox(TestingSessionLocal)
+
+    await db_session.refresh(event)
+    assert event.status == "cancelled"
+    assert event.error_message == reason
+    assert owner_sent == []
+
+
+@pytest.mark.asyncio
+async def test_owner_alert_of_not_confirmed_booking_is_cancelled(
+    db_session, owner_sent
+):
+    """Un turno cancelado antes de enviar el aviso no se le notifica al dueño."""
+    event = await _event(
+        db_session,
+        "owner-cancelled",
+        notification_type="owner_new_booking",
+        tenant_whatsapp="5491144443333",
+        booking_status="cancelled",
+    )
+
+    await process_outbox(TestingSessionLocal)
+
+    await db_session.refresh(event)
+    assert event.status == "cancelled"
+    assert event.error_message == "booking_not_confirmed"
+    assert owner_sent == []
+
+
+@pytest.mark.asyncio
+async def test_owner_alert_template_params_are_sanitized(monkeypatch):
+    """Meta rechaza saltos de línea, tabs y parámetros vacíos: se colapsan los
+    espacios, se recorta el largo y un texto vacío sale como "-"."""
+    payloads: list[dict] = []
+
+    async def fake_request(self, payload):
+        payloads.append(payload)
+        return _OkResponse()
+
+    monkeypatch.setattr(
+        outbox_worker.WhatsAppService, "_send_request_with_retry", fake_request
+    )
+    service = outbox_worker.WhatsAppService(phone_number_id="1", access_token="t")
+
+    await service.send_owner_new_booking(
+        "5491144443333", "Mi\nNegocio\t\tSA", "Ana   Pérez", "", "x" * 200
+    )
+
+    params = payloads[0]["template"]["components"][0]["parameters"]
+    texts = [p["text"] for p in params]
+    assert texts[:3] == ["Mi Negocio SA", "Ana Pérez", "-"]
+    assert texts[3] == "x" * 60

@@ -5,18 +5,23 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
+from sqlalchemy import select
 
 from app.booking_actions import (
+    OWNER_ALERTS_PER_DAY,
     VALID_TRANSITIONS,
     BookingNotStartedError,
     InvalidTransitionError,
+    enqueue_owner_alert,
     transition_booking_status,
 )
 from app.models import Booking, NotificationOutbox, Service, Tenant
 from tests.conftest import TestingSessionLocal
 
 
-async def _make_booking(session, status="pending", start_offset_hours=-1):
+async def _make_booking(
+    session, status="pending", start_offset_hours=-1, whatsapp_number=None
+):
     """Crea tenant + service + booking. start_offset_hours=-1 = ya empezó."""
     tenant = Tenant(
         name="Test Biz Actions",
@@ -24,6 +29,7 @@ async def _make_booking(session, status="pending", start_offset_hours=-1):
         owner_email=f"actions-{uuid.uuid4().hex[:8]}@test.com",
         password_hash="x",
         session_version=1,
+        whatsapp_number=whatsapp_number,
     )
     session.add(tenant)
     await session.flush()
@@ -243,3 +249,148 @@ def test_valid_transitions_matrix():
     assert VALID_TRANSITIONS["cancelled"] == set()
     assert VALID_TRANSITIONS["no_show"] == set()
     assert VALID_TRANSITIONS["completed"] == set()
+
+
+async def _outbox_types(booking_id) -> list[str]:
+    async with TestingSessionLocal() as session:
+        rows = await session.execute(
+            select(NotificationOutbox.notification_type).where(
+                NotificationOutbox.booking_id == booking_id
+            )
+        )
+        return sorted(rows.scalars().all())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("actor", ["webhook_mp", "client", "system"])
+async def test_confirm_by_non_owner_enqueues_owner_alert(actor):
+    """Un turno que confirma otro (seña pagada, reserva sin seña) avisa al dueño."""
+    async with TestingSessionLocal() as session:
+        _, _, booking = await _make_booking(
+            session, status="pending", whatsapp_number="5491144443333"
+        )
+
+        await transition_booking_status(session, booking, "confirmed", actor=actor)
+        await session.commit()
+
+    assert await _outbox_types(booking.id) == ["confirmation", "owner_new_booking"]
+
+
+@pytest.mark.asyncio
+async def test_confirm_by_owner_does_not_enqueue_owner_alert():
+    """Si confirma el propio dueño desde el panel, no se le avisa."""
+    async with TestingSessionLocal() as session:
+        _, _, booking = await _make_booking(
+            session, status="pending", whatsapp_number="5491144443333"
+        )
+
+        await transition_booking_status(session, booking, "confirmed", actor="owner")
+        await session.commit()
+
+    assert await _outbox_types(booking.id) == ["confirmation"]
+
+
+@pytest.mark.asyncio
+async def test_confirm_without_owner_number_does_not_enqueue_owner_alert():
+    """Sin número del negocio los avisos al dueño quedan desactivados."""
+    async with TestingSessionLocal() as session:
+        _, _, booking = await _make_booking(session, status="pending")
+
+        await transition_booking_status(
+            session, booking, "confirmed", actor="webhook_mp"
+        )
+        await session.commit()
+
+    assert await _outbox_types(booking.id) == ["confirmation"]
+
+
+@pytest.mark.asyncio
+async def test_owner_alert_is_enqueued_once_per_booking():
+    """Nunca dos avisos al dueño por el mismo turno."""
+    async with TestingSessionLocal() as session:
+        _, _, booking = await _make_booking(
+            session, status="pending", whatsapp_number="5491144443333"
+        )
+
+        await transition_booking_status(session, booking, "confirmed", actor="client")
+        await session.flush()
+        await enqueue_owner_alert(session, booking)
+        await session.commit()
+
+    assert await _outbox_types(booking.id) == ["confirmation", "owner_new_booking"]
+
+
+async def _seed_owner_alerts(session, tenant_id, service_id, count, ago):
+    """Crea `count` turnos cancelados del tenant, cada uno con un aviso al dueño
+    creado hace `ago` (cancelados para no chocar con el EXCLUDE)."""
+    now = datetime.now(timezone.utc)
+    for i in range(count):
+        start = now + timedelta(days=2, hours=i)
+        booking = Booking(
+            tenant_id=tenant_id,
+            service_id=service_id,
+            client_name="Relleno",
+            client_phone="5491100000000",
+            start_time=start,
+            end_time=start + timedelta(minutes=30),
+            price_at_booking=Decimal("5000.00"),
+            idempotency_key=f"seed-{uuid.uuid4().hex}",
+            status="cancelled",
+        )
+        session.add(booking)
+        await session.flush()
+        session.add(
+            NotificationOutbox(
+                booking_id=booking.id,
+                notification_type="owner_new_booking",
+                status="sent",
+                created_at=now - ago,
+            )
+        )
+    await session.flush()
+
+
+@pytest.mark.asyncio
+async def test_owner_alerts_are_capped_per_tenant_per_day():
+    """Con el tope diario de avisos alcanzado, el turno se confirma y se le
+    avisa al cliente, pero no se encola otro aviso al dueño."""
+    async with TestingSessionLocal() as session:
+        tenant, service, booking = await _make_booking(
+            session, status="pending", whatsapp_number="5491144443333"
+        )
+        await _seed_owner_alerts(
+            session, tenant.id, service.id, OWNER_ALERTS_PER_DAY, timedelta(hours=1)
+        )
+
+        await transition_booking_status(session, booking, "confirmed", actor="client")
+        await session.commit()
+
+    assert await _outbox_types(booking.id) == ["confirmation"]
+
+
+@pytest.mark.asyncio
+async def test_owner_alert_cap_ignores_old_and_other_tenant_alerts():
+    """Los avisos de hace más de 24 h y los de otro tenant no cuentan para el tope."""
+    async with TestingSessionLocal() as session:
+        other, other_service, _ = await _make_booking(
+            session, status="cancelled", whatsapp_number="5491144443333"
+        )
+        await _seed_owner_alerts(
+            session, other.id, other_service.id, OWNER_ALERTS_PER_DAY, timedelta(0)
+        )
+        tenant, service, booking = await _make_booking(
+            session, status="pending", whatsapp_number="5491144443333"
+        )
+        await _seed_owner_alerts(
+            session,
+            tenant.id,
+            service.id,
+            OWNER_ALERTS_PER_DAY - 1,
+            timedelta(hours=1),
+        )
+        await _seed_owner_alerts(session, tenant.id, service.id, 5, timedelta(hours=25))
+
+        await transition_booking_status(session, booking, "confirmed", actor="client")
+        await session.commit()
+
+    assert await _outbox_types(booking.id) == ["confirmation", "owner_new_booking"]

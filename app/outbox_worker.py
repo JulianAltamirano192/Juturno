@@ -5,7 +5,8 @@ from sqlalchemy import and_, func, literal_column, or_, select
 from sqlmodel import col
 
 from app.config import settings
-from app.models import Booking, NotificationOutbox, Tenant
+from app.models import Booking, NotificationOutbox, Service, Tenant
+from app.phone import InvalidPhoneError, normalize_whatsapp_phone
 from app.whatsapp_service import WhatsAppService
 
 logger = logging.getLogger(__name__)
@@ -59,6 +60,8 @@ async def process_outbox(async_session_maker) -> None:
     Cada evento va en su propia transacción: un error (de Meta o de datos,
     p. ej. una timezone inválida) marca solo ese evento como fallido, y lo
     ya enviado queda commiteado aunque el proceso muera a mitad del lote.
+    Si `_send_event` devuelve un motivo, el evento queda `cancelled` con ese
+    motivo en `error_message` (no se reintenta).
     """
     whatsapp = WhatsAppService(
         phone_number_id=settings.WHATSAPP_PHONE_NUMBER_ID,
@@ -93,10 +96,10 @@ async def process_outbox(async_session_maker) -> None:
             try:
                 # Savepoint: si falla la base adentro, se puede igual marcar failed.
                 async with session.begin_nested():
-                    sent = await _send_event(session, whatsapp, event)
-                if not sent:
+                    reason = await _send_event(session, whatsapp, event)
+                if reason is not None:
                     event.status = "cancelled"
-                    event.error_message = "booking_not_confirmed"
+                    event.error_message = reason
                     continue
                 event.status = "sent"
                 event.error_message = None
@@ -118,17 +121,40 @@ async def process_outbox(async_session_maker) -> None:
                 )
 
 
-async def _send_event(session, whatsapp: WhatsAppService, event) -> bool:
-    """Envía el evento; False si el turno ya no está confirmado (no se manda)."""
+async def _send_event(session, whatsapp: WhatsAppService, event) -> str | None:
+    """
+    Envía el evento. Devuelve None si se envió, o el motivo por el que no
+    corresponde mandarlo: el turno ya no está confirmado, o (aviso al dueño)
+    el negocio no tiene número o el guardado no es un teléfono válido.
+    """
     booking = await session.get(Booking, event.booking_id)
     if booking is None:
         raise RuntimeError("Booking not found")
     if booking.status != "confirmed":
-        return False
+        return "booking_not_confirmed"
 
     tenant = await session.get(Tenant, booking.tenant_id)
     tenant_tz = tenant.timezone if tenant else "America/Argentina/Buenos_Aires"
     fecha_legible = format_booking_datetime(booking.start_time, tenant_tz)
+
+    if event.notification_type == "owner_new_booking":
+        if tenant is None or not tenant.whatsapp_number:
+            return "owner_whatsapp_missing"
+        try:
+            # Normaliza también los números viejos guardados sin normalizar.
+            phone = normalize_whatsapp_phone(tenant.whatsapp_number)
+        except InvalidPhoneError:
+            return "owner_whatsapp_invalid"
+        service = await session.get(Service, booking.service_id)
+        response = await whatsapp.send_owner_new_booking(
+            phone,
+            tenant.name,
+            booking.client_name,
+            service.name if service else "",
+            fecha_legible,
+        )
+        response.raise_for_status()
+        return None
 
     send = (
         whatsapp.send_confirmation
@@ -139,4 +165,4 @@ async def _send_event(session, whatsapp: WhatsAppService, event) -> bool:
         booking.client_phone, booking.id, booking.client_name, fecha_legible
     )
     response.raise_for_status()
-    return True
+    return None
