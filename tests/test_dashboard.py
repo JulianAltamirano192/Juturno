@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from app.config import settings
 from app.models import Booking, Service, Tenant
 from app.session import create_session_token
 
@@ -184,3 +185,34 @@ async def test_dashboard_hides_public_link_without_slug(client, db_session):
     assert resp.status_code == 200
     assert "/t/None" not in resp.text
     assert "Tu link de reservas" not in resp.text
+
+
+@pytest.mark.asyncio
+async def test_dashboard_renders_qr_of_public_url(client, db_session):
+    tenant = await _setup(db_session)
+    resp = await client.get(
+        "/dashboard", cookies={"juturno_session": make_session_cookie(tenant)}
+    )
+
+    text = resp.text
+    assert '<script src="/static/vendor/qrcode-1.4.4.js"></script>' in text
+    public_url = f"{settings.PUBLIC_BASE_URL.rstrip('/')}/t/{tenant.slug}"
+    assert f'data-qr-url="{public_url}"' in text
+    assert f'data-qr-slug="{tenant.slug}"' in text
+    assert "Descargar QR" in text
+
+
+@pytest.mark.asyncio
+async def test_dashboard_without_slug_has_no_qr(client, db_session):
+    tenant = _tenant("Sin Slug QR", "noslug-qr")
+    tenant.slug = None
+    db_session.add(tenant)
+    await db_session.commit()
+
+    resp = await client.get(
+        "/dashboard", cookies={"juturno_session": make_session_cookie(tenant)}
+    )
+
+    assert resp.status_code == 200
+    assert "qrcode-1.4.4.js" not in resp.text
+    assert "data-qr-url" not in resp.text

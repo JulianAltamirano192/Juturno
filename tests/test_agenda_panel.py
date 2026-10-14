@@ -1,10 +1,11 @@
 """Tests de integración para la vista de agenda por día (Tarea 7)."""
 
-from datetime import datetime, time, timedelta
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 import pytest
+from sqlalchemy import select
 
 from app.models import Booking, Service, Tenant
 from app.session import create_session_token
@@ -280,3 +281,198 @@ async def test_agenda_shows_booking_crossing_midnight(client, db_session):
     )
     assert resp_yesterday.status_code == 200
     assert "Cliente Nocturno" in resp_yesterday.text
+
+
+# ---------------------------------------------------------------------------
+# Vista semanal (?view=week)
+# ---------------------------------------------------------------------------
+
+# Semana fija de lunes a domingo (pasada, para no depender de "hoy").
+WEEK_MONDAY = date(2026, 6, 1)
+WEEK_SUNDAY = WEEK_MONDAY + timedelta(days=6)
+
+
+async def _tenant_with_week(session, prefix="Cliente"):
+    """Tenant con turnos en los bordes de la semana (hora local del tenant)."""
+    assert WEEK_MONDAY.weekday() == 0
+    tenant = Tenant(
+        name=f"Semana {prefix}",
+        slug=f"semana-{prefix.lower()}-{int(datetime.now().timestamp() * 1000)}",
+        owner_email=f"semana-{prefix.lower()}@test.com",
+        password_hash="x",
+        session_version=1,
+        timezone=TENANT_TZ,
+    )
+    session.add(tenant)
+    await session.flush()
+    service = Service(
+        tenant_id=tenant.id,
+        name="Servicio semanal",
+        duration_minutes=30,
+        price=Decimal("1000.00"),
+        is_active=True,
+    )
+    session.add(service)
+    await session.flush()
+
+    tz = ZoneInfo(TENANT_TZ)
+
+    def _booking(day, hh, mm, suffix, status="confirmed"):
+        client = f"{prefix} {suffix}"
+        start = datetime.combine(day, time(hh, mm), tzinfo=tz)
+        return Booking(
+            tenant_id=tenant.id,
+            service_id=service.id,
+            client_name=client,
+            client_phone="5491100000000",
+            start_time=start,
+            end_time=start + timedelta(minutes=30),
+            price_at_booking=Decimal("1000.00"),
+            status=status,
+            idempotency_key=f"semana-{client}",
+        )
+
+    session.add_all(
+        [
+            _booking(WEEK_MONDAY, 0, 15, "Lunes"),
+            # 22:30 ART del domingo = 01:30 UTC del lunes siguiente.
+            _booking(WEEK_SUNDAY, 22, 30, "Domingo", "pending"),
+            # Domingo anterior 23:15 ART = lunes 02:15 UTC: no es de la semana.
+            _booking(WEEK_MONDAY - timedelta(days=1), 23, 15, "Previo"),
+            _booking(WEEK_SUNDAY + timedelta(days=1), 0, 15, "Siguiente"),
+        ]
+    )
+    await session.commit()
+    await session.refresh(tenant)
+    return tenant
+
+
+async def _get_week(client, tenant, day=WEEK_MONDAY + timedelta(days=2)):
+    return await client.get(
+        "/panel/agenda",
+        params={"view": "week", "day": str(day)},
+        cookies={"juturno_session": make_session_cookie(tenant)},
+    )
+
+
+@pytest.mark.asyncio
+async def test_week_requires_session(client):
+    resp = await client.get(
+        "/panel/agenda", params={"view": "week"}, follow_redirects=False
+    )
+    assert resp.status_code == 303
+    assert "/login" in resp.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_week_shows_monday_to_sunday_in_tenant_timezone(client, db_session):
+    tenant = await _tenant_with_week(db_session)
+
+    resp = await _get_week(client, tenant)
+
+    assert resp.status_code == 200
+    text = resp.text
+    assert "Cliente Lunes" in text
+    assert "Cliente Domingo" in text
+    assert "Cliente Previo" not in text
+    assert "Cliente Siguiente" not in text
+    # Hora local, ordenado por inicio y con etiqueta de estado.
+    assert "00:15" in text and "22:30" in text
+    assert text.index("Cliente Lunes") < text.index("Cliente Domingo")
+    assert "Pendiente de pago" in text and "Servicio semanal" in text
+    # Días vacíos de la semana y enlace de cada día a la vista diaria.
+    assert "Sin turnos" in text
+    assert f'href="/panel/agenda?day={WEEK_MONDAY + timedelta(days=1)}"' in text
+    # Navegación a semana anterior / siguiente y "Esta semana" (no es la actual).
+    assert f"view=week&day={WEEK_MONDAY - timedelta(days=7)}" in text
+    assert f"view=week&day={WEEK_MONDAY + timedelta(days=7)}" in text
+    assert "Esta semana" in text
+
+
+@pytest.mark.asyncio
+async def test_week_is_read_only(client, db_session):
+    tenant = await _tenant_with_week(db_session)
+
+    text = (await _get_week(client, tenant)).text
+
+    assert "/confirm" not in text
+    assert "/cancel" not in text
+    assert "/notes" not in text
+
+
+@pytest.mark.asyncio
+async def test_week_isolation_between_tenants(client, db_session):
+    tenant = await _tenant_with_week(db_session)
+    await _tenant_with_week(db_session, "Ajeno")
+
+    text = (await _get_week(client, tenant)).text
+
+    assert "Cliente Lunes" in text
+    assert "Ajeno" not in text
+
+
+@pytest.mark.asyncio
+async def test_week_escapes_client_name(client, db_session):
+    tenant = await _tenant_with_week(db_session)
+    booking = (
+        await db_session.execute(
+            select(Booking).where(
+                Booking.tenant_id == tenant.id,
+                Booking.client_name == "Cliente Lunes",
+            )
+        )
+    ).scalar_one()
+    booking.client_name = "<script>alert(1)</script>"
+    await db_session.commit()
+
+    text = (await _get_week(client, tenant)).text
+
+    assert "<script>alert(1)</script>" not in text
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in text
+
+
+@pytest.mark.asyncio
+async def test_week_invalid_day_falls_back_to_current_week(client, db_session):
+    tenant, today = await _tenant_with_bookings(db_session)
+
+    resp = await client.get(
+        "/panel/agenda",
+        params={"view": "week", "day": "no-es-una-fecha"},
+        cookies={"juturno_session": make_session_cookie(tenant)},
+    )
+
+    assert resp.status_code == 200
+    assert "Cliente morning" in resp.text
+    monday = today - timedelta(days=today.weekday())
+    assert f'href="/panel/agenda?day={monday}"' in resp.text
+    assert "Esta semana" not in resp.text
+
+
+@pytest.mark.asyncio
+async def test_unknown_view_falls_back_to_daily(client, db_session):
+    tenant = await _tenant_with_week(db_session)
+
+    resp = await client.get(
+        "/panel/agenda",
+        params={"view": "month", "day": str(WEEK_MONDAY)},
+        cookies={"juturno_session": make_session_cookie(tenant)},
+    )
+
+    assert resp.status_code == 200
+    assert "Cliente Lunes" in resp.text
+    assert "Cliente Domingo" not in resp.text
+    assert "Sin turnos" not in resp.text
+
+
+@pytest.mark.asyncio
+async def test_daily_view_links_to_its_week(client, db_session):
+    tenant = await _tenant_with_week(db_session)
+
+    resp = await client.get(
+        "/panel/agenda",
+        params={"day": str(WEEK_SUNDAY)},
+        cookies={"juturno_session": make_session_cookie(tenant)},
+    )
+
+    assert resp.status_code == 200
+    assert f"/panel/agenda?view=week&day={WEEK_SUNDAY}" in resp.text

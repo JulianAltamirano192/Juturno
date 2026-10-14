@@ -286,9 +286,19 @@ async def _bookings_for_day(
     session: AsyncSession, tenant: Tenant, target_day: date
 ) -> list[tuple[Booking, Service]]:
     """Turnos del tenant que tocan el día dado (en su zona horaria), por inicio."""
+    return await _bookings_for_days(session, tenant, target_day, 1)
+
+
+async def _bookings_for_days(
+    session: AsyncSession, tenant: Tenant, first_day: date, days: int
+) -> list[tuple[Booking, Service]]:
+    """Turnos del tenant que tocan `days` días locales desde `first_day`, por inicio."""
     tenant_tz = _tenant_tz(tenant)
-    day_start = datetime.combine(target_day, time(0, 0), tzinfo=tenant_tz)
-    day_end = day_start + timedelta(days=1)
+    day_start = datetime.combine(first_day, time(0, 0), tzinfo=tenant_tz)
+    # Fin en hora local (no +N*24h): respeta un eventual cambio de horario.
+    day_end = datetime.combine(
+        first_day + timedelta(days=days), time(0, 0), tzinfo=tenant_tz
+    )
     stmt = (
         select(Booking, Service)
         .join(Service, Booking.service_id == Service.id)
@@ -1264,6 +1274,7 @@ async def panel_business_hours_delete(
 async def panel_agenda(
     request: Request,
     day: Annotated[str | None, Query()] = None,
+    view: Annotated[str | None, Query()] = None,
     notes: Annotated[str | None, Query()] = None,
     export: Annotated[str | None, Query()] = None,
     tenant: Tenant = Depends(get_current_tenant_from_session),
@@ -1273,6 +1284,7 @@ async def panel_agenda(
     Vista de agenda por día: todos los turnos del tenant que tocan el día
     dado, ordenados por horario de inicio. Las horas se muestran en la
     zona horaria del tenant (Booking.start_time está en UTC en la DB).
+    Con `view=week`, vista de solo lectura de la semana (lunes a domingo).
     """
     tenant_tz = _tenant_tz(tenant)
     today_local = datetime.now(tenant_tz).date()
@@ -1283,6 +1295,11 @@ async def panel_agenda(
             target_day = date.fromisoformat(day)
         except ValueError:
             target_day = today_local
+
+    if view == "week":
+        return await _render_week_agenda(
+            request, tenant, session, target_day, today_local
+        )
 
     rows = await _bookings_for_day(session, tenant, target_day)
 
@@ -1324,6 +1341,67 @@ async def panel_agenda(
             "export_to": target_day.replace(
                 day=monthrange(target_day.year, target_day.month)[1]
             ).isoformat(),
+        },
+    )
+    set_csrf_cookie(response, csrf_token)
+    return response
+
+
+async def _render_week_agenda(
+    request: Request,
+    tenant: Tenant,
+    session: AsyncSession,
+    target_day: date,
+    today_local: date,
+) -> HTMLResponse:
+    """Semana de lunes a domingo que contiene `target_day`, agrupada por día."""
+    tenant_tz = _tenant_tz(tenant)
+    monday = target_day - timedelta(days=target_day.weekday())
+    week = [
+        {
+            "date": monday + timedelta(days=i),
+            "label": _format_agenda_day_label(monday + timedelta(days=i)),
+            "items": [],
+        }
+        for i in range(7)
+    ]
+    rows = await _bookings_for_days(session, tenant, monday, 7)
+    for b, s in rows:
+        start_local = b.start_time.astimezone(tenant_tz)
+        # Un turno que empezó el domingo anterior y cruza la medianoche va al lunes.
+        index = max((start_local.date() - monday).days, 0)
+        week[index]["items"].append(
+            {
+                "client_name": b.client_name,
+                "service_name": s.name,
+                "start_local": start_local.strftime("%H:%M"),
+                "end_local": b.end_time.astimezone(tenant_tz).strftime("%H:%M"),
+                "status": b.status,
+                "status_label": _AGENDA_STATUS_LABELS.get(b.status, b.status),
+            }
+        )
+
+    sunday = monday + timedelta(days=6)
+    is_current = monday <= today_local <= sunday
+    # Sin acciones, pero el layout tiene el formulario de "Cerrar sesión".
+    csrf_token = generate_csrf_token(request)
+    response = templates.TemplateResponse(
+        request,
+        "agenda.html",
+        {
+            "tenant": tenant,
+            "csrf_token": csrf_token,
+            "view": "week",
+            "week": week,
+            "week_label": f"{monday.day}/{monday.month} al {sunday.day}/{sunday.month}",
+            "week_count": sum(
+                1 for b, _ in rows if b.status not in ("cancelled", "expired")
+            ),
+            "prev_week": (monday - timedelta(days=7)).isoformat(),
+            "next_week": (monday + timedelta(days=7)).isoformat(),
+            "is_current_week": is_current,
+            # El selector "Día" lleva a hoy si es esta semana; si no, al lunes.
+            "day_view_day": (today_local if is_current else monday).isoformat(),
         },
     )
     set_csrf_cookie(response, csrf_token)

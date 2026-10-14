@@ -34,6 +34,21 @@
   .ag-export .field{margin:0;flex:1 1 150px}
   .ag-export input{height:44px}
   .ag-export .btn-sm{min-height:44px}
+  .view-tg{display:inline-flex;align-self:center;padding:3px;border-radius:12px;border:1px solid var(--border);background:var(--surface)}
+  .view-tg a{display:inline-flex;align-items:center;justify-content:center;min-height:38px;padding:0 14px;border-radius:9px;font-size:14px;font-weight:600;color:var(--text-2)}
+  .view-tg a.on{background:var(--surface-2);color:var(--text)}
+  .wk-list{display:flex;flex-direction:column;gap:12px}
+  .wk-day{padding:14px 16px;border-radius:16px;background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.08)}
+  .wk-day h2{margin:0 0 4px;font-size:15px}
+  .wk-day h2 a{display:inline-flex;align-items:center;gap:6px;min-height:44px;color:inherit}
+  .wk-day h2 a svg{width:16px;height:16px;flex-shrink:0;color:var(--muted-2)}
+  .wk-row{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;padding:10px 0;border-top:1px solid rgba(255,255,255,.06)}
+  .wk-row.dim{opacity:.6}
+  .wk-time{min-width:104px;font-family:var(--font-display);font-weight:700}
+  .wk-who{display:flex;flex:1 1 140px;flex-direction:column;min-width:0}
+  .wk-who strong{overflow-wrap:anywhere}
+  .wk-who span{font-size:13px;color:var(--muted-2)}
+  .wk-empty{margin:0;font-size:14px;color:var(--muted)}
   @media (max-width:1240px){
     .ag-row{grid-template-columns:96px minmax(0,1fr) 170px}
     .ag-svc{display:none}
@@ -45,6 +60,8 @@
     .day-nav .dn-label{min-width:0;flex-grow:1}
     .day-nav .icon-btn{width:44px}
     .day-nav .today{display:none}
+    .view-tg{align-self:stretch}
+    .view-tg a{flex:1 1 0}
     .ag-row{grid-template-columns:52px minmax(0,1fr);gap:4px 12px;padding:14px}
     .ag-row .ag-time{grid-row:span 2}
     .ag-time strong{font-size:16px}
@@ -58,6 +75,44 @@
 {% endblock %}
 
 {% block dash_content %}
+{% if view == 'week' %}
+<div class="ph">
+  <div>
+    <h1>Agenda</h1>
+    <p>Tus turnos de la semana. Para confirmar o cancelar un turno, tocá el nombre del día.</p>
+  </div>
+  <div class="day-nav">
+    <a class="icon-btn" href="/panel/agenda?view=week&day={{ prev_week }}" aria-label="Semana anterior">{{ ui.icon('izq') }}</a>
+    <div class="dn-label">
+      <strong>Semana del {{ week_label }}</strong>
+      <span>{% if is_current_week %}Semana actual · {% endif %}{{ week_count }} turnos</span>
+    </div>
+    <a class="icon-btn" href="/panel/agenda?view=week&day={{ next_week }}" aria-label="Semana siguiente">{{ ui.icon('der') }}</a>
+    {% if not is_current_week %}<a class="btn-sm today" href="/panel/agenda?view=week">Esta semana</a>{% endif %}
+  </div>
+  <nav class="view-tg" aria-label="Vista de la agenda">
+    <a href="/panel/agenda?day={{ day_view_day }}">Día</a>
+    <a class="on" href="/panel/agenda?view=week&day={{ week[0].date.isoformat() }}" aria-current="page">Semana</a>
+  </nav>
+</div>
+
+<div class="wk-list">
+  {% for d in week %}
+  <section class="wk-day">
+    <h2><a href="/panel/agenda?day={{ d.date.isoformat() }}">{{ d.label }}{{ ui.icon('der') }}</a></h2>
+    {% for item in d["items"] %}
+    <div class="wk-row{% if item.status in ['cancelled', 'expired'] %} dim{% endif %}">
+      <span class="wk-time">{{ item.start_local }} a {{ item.end_local }}</span>
+      <span class="wk-who"><strong>{{ item.client_name }}</strong><span>{{ item.service_name }}</span></span>
+      <span class="badge badge-{{ item.status }}">{{ item.status_label }}</span>
+    </div>
+    {% else %}
+    <p class="wk-empty">Sin turnos</p>
+    {% endfor %}
+  </section>
+  {% endfor %}
+</div>
+{% else %}
 {% set active_items = agenda_items|rejectattr("status", "in", ["cancelled", "expired"])|list %}
 <div class="ph">
   <div>
@@ -73,6 +128,10 @@
     <a class="icon-btn" href="/panel/agenda?day={{ next_day }}" aria-label="Día siguiente">{{ ui.icon('der') }}</a>
     {% if not is_today %}<a class="btn-sm today" href="/panel/agenda">Hoy</a>{% endif %}
   </div>
+  <nav class="view-tg" aria-label="Vista de la agenda">
+    <a class="on" href="/panel/agenda?day={{ target_day.isoformat() }}" aria-current="page">Día</a>
+    <a href="/panel/agenda?view=week&day={{ target_day.isoformat() }}">Semana</a>
+  </nav>
   <a class="btn-p" href="/panel/agenda/new?day={{ target_day.isoformat() }}">{{ ui.icon('mas') }}Nuevo turno</a>
 </div>
 
@@ -178,4 +237,5 @@
     <button type="submit" class="btn-sm">Descargar CSV</button>
   </form>
 </details>
+{% endif %}
 {% endblock %}
