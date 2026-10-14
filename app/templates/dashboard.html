@@ -11,6 +11,8 @@
   .link-card .lc-url span{color:var(--cyan-l)}
   .link-card .lc-help{font-size:14px;color:var(--text-2)}
   .lc-actions{display:flex;flex-wrap:wrap;gap:10px}
+  .lc-qr{width:112px;height:112px;flex-shrink:0;border-radius:12px;background:#fff;image-rendering:pixelated}
+  .lc-qr[hidden],[data-qr-download][hidden]{display:none}
   .home-grid{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:20px;align-items:start}
   .card-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:12px}
   .card-head h2{font-size:18px}
@@ -52,7 +54,9 @@
     <span class="lc-url">{{ public_url_display }}<span>{{ tenant.slug }}</span></span>
     <span class="lc-help">Compartilo en tu Instagram, WhatsApp o Google.</span>
   </div>
+  <canvas class="lc-qr" data-qr-url="{{ public_url }}" data-qr-slug="{{ tenant.slug }}" role="img" aria-label="Código QR de tu link de reservas" hidden></canvas>
   <div class="lc-actions">
+    <button type="button" class="btn-o light" data-qr-download hidden>Descargar QR</button>
     <button type="button" class="btn-o light" data-copy="{{ public_url }}">{{ ui.icon('copiar') }}<span>Copiar link</span></button>
     <a class="btn-o wa" href="https://wa.me/?text={{ ('Reservá tu turno en ' ~ tenant.name ~ ': ' ~ public_url)|urlencode }}" target="_blank" rel="noopener">{{ ui.icon('whatsapp') }}Compartir</a>
     <a class="btn-o lc-open" href="{{ public_url }}" target="_blank" rel="noopener">Abrir</a>
@@ -105,6 +109,7 @@
 {% endblock %}
 
 {% block scripts %}
+{% if public_url %}<script src="/static/vendor/qrcode-1.4.4.js"></script>{% endif %}
 <script>
   document.querySelectorAll("[data-copy]").forEach((btn) => {
     const label = btn.querySelector("span");
@@ -118,5 +123,59 @@
       setTimeout(() => { label.textContent = "Copiar link"; }, 1800);
     });
   });
+
+{% if public_url %}
+  // QR del link de reservas: vista previa y PNG para imprimir (con la URL debajo).
+  const qrCanvas = document.querySelector("[data-qr-url]");
+  if (qrCanvas && window.qrcode) {
+    const url = qrCanvas.dataset.qrUrl;
+    const qr = qrcode(0, "M");
+    qr.addData(url);
+    qr.make();
+    const n = qr.getModuleCount();
+
+    // Margen blanco de 4 módulos por lado (zona de silencio del estándar QR).
+    const drawQr = (canvas, width, caption) => {
+      const cell = Math.floor(width / (n + 8));
+      const side = cell * (n + 8);
+      const captionH = caption ? Math.round(side * 0.12) : 0;
+      canvas.width = side;
+      canvas.height = side + captionH;
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = "#000";
+      for (let r = 0; r < n; r += 1) {
+        for (let c = 0; c < n; c += 1) {
+          if (qr.isDark(r, c)) ctx.fillRect((c + 4) * cell, (r + 4) * cell, cell, cell);
+        }
+      }
+      if (caption) {
+        let size = Math.round(captionH * 0.5);
+        do {
+          ctx.font = `600 ${size}px sans-serif`;
+          size -= 2;
+        } while (ctx.measureText(caption).width > side * 0.9 && size > 12);
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(caption, side / 2, side + captionH / 2);
+      }
+    };
+
+    drawQr(qrCanvas, 224, "");
+    // Ocultos sin JS: sin el script quedarían un cuadro vacío y un botón muerto.
+    const qrButton = document.querySelector("[data-qr-download]");
+    qrCanvas.hidden = false;
+    qrButton.hidden = false;
+    qrButton.addEventListener("click", () => {
+      const canvas = document.createElement("canvas");
+      drawQr(canvas, 1000, url.replace(/^https?:\/\//, ""));
+      const link = document.createElement("a");
+      link.href = canvas.toDataURL("image/png");
+      link.download = `qr-${qrCanvas.dataset.qrSlug}.png`;
+      link.click();
+    });
+  }
+{% endif %}
 </script>
 {% endblock %}

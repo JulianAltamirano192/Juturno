@@ -273,6 +273,8 @@ REQUIRE_STARTED = {"no_show", "completed"}  # solo si start_time <= now
 
 ---
 
+**Vista semanal y QR (`app/routers/panel.py`, `dashboard.html`)**: `GET /panel/agenda?view=week&day=YYYY-MM-DD` arma la semana lunes a domingo (TZ del negocio) que contiene `day`, agrupada por día y de solo lectura; cada día enlaza a la vista diaria. Reusa `_bookings_for_days` (el fin del rango se calcula en hora local, no sumando 24 h). Un turno que empezó el domingo anterior y cruza la medianoche se muestra el lunes. El QR de `/t/{slug}` del Inicio se dibuja en el navegador (canvas) con `app/static/vendor/qrcode-1.4.4.js` (qrcode-generator 1.4.4, MIT, sha256 `18ae399f81182bc9de916e9c77b195df20cc58d6f2d55a62b085a299f1bf1780`) copiado al repo, sin CDN ni dependencia nueva en el backend; sin JS el QR y el botón "Descargar QR" quedan ocultos.
+
 **Notas internas y export CSV (`app/routers/panel.py`)**: `Booking.internal_notes` es privada del dueño (se edita en cualquier estado con `POST /panel/agenda/{id}/notes`). `GET /panel/agenda/export` baja los turnos de un rango (TZ del negocio, máx. 366 días) como CSV para Excel es-AR: BOM UTF-8, separador `;`, todas las celdas entre comillas, coma decimal, y prefijo `'` en celdas que empiezan con `=`, `+`, `-`, `@`, tab o CR (inyección de fórmulas). La ruta no termina en `.csv` y responde `Cache-Control: no-store, private`: Cloudflare cachea `.csv` por defecto y la URL del mes es igual para todos los negocios, así que un caché compartido podría servir datos de un negocio a otro.
 
 ---
@@ -405,7 +407,7 @@ app/
 ├── limiter.py           — singleton Limiter de slowapi (separado para evitar imports circulares)
 ├── templates.py         — singleton Jinja2Templates (+ filtro Jinja `money`: "$ 18.000")
 ├── templates/           — plantillas Jinja2 (diseño neón: base.html responsive, landing.html standalone)
-├── static/              — montado en /static (StaticFiles): fonts/ (Sora + DM Sans woff2 + fonts.css), landing/*.webp. Público sin auth
+├── static/              — montado en /static (StaticFiles): fonts/ (Sora + DM Sans woff2 + fonts.css), landing/*.webp, vendor/qrcode-1.4.4.js (qrcode-generator 1.4.4, MIT). Público sin auth
 ├── schemas.py           — schemas Pydantic compartidos: SlotQuery, AvailableSlotsResponse, BookingCreate
 ├── models.py            — modelos SQLModel y constraints
 ├── routers/

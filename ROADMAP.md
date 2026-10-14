@@ -102,7 +102,7 @@ Ya verifiqué contra el código los hallazgos 2, 3, 4, 5, 7, 8 y 9 (se confirman
 26. ~~Turno manual desde el panel (cliente sin turno o reserva por teléfono).~~ **Hecho (rama `feat/manual-booking`)**: botón "Nuevo turno" en la agenda; hora libre (sin grilla, horario ni horizonte) pero siempre futura; WhatsApp obligatorio. Nace `confirmed` sin seña vía `transition_booking_status` (encola la confirmación); superposición → 409. Tope de 50 altas manuales por negocio en 24 h (anti-spam de WhatsApp, pedido por el `security-auditor`).
 27. ~~Aviso al dueño cuando entra un turno confirmado (WhatsApp o email), reusando la outbox.~~ **Hecho (rama `feat/owner-booking-alert`)**: WhatsApp al número que el negocio carga en el registro o en Ajustes (vacío desactiva los avisos); no se avisa cuando confirma el propio dueño. Tope de 30 avisos por negocio en 24 h (anti-spam, pedido por el `security-auditor`). Email queda afuera. Ver D-036.
 28. ~~Notas internas por turno + exportar turnos a CSV.~~ **Hecho (rama `feat/booking-notes-csv`)**: nota privada de hasta 500 caracteres por turno, editable en cualquier estado desde la agenda, y descarga en CSV de los turnos de un rango de fechas (hasta 366 días) pensada para Excel en es-AR.
-29. QR descargable de `/t/{slug}` (generado en el navegador, sin dependencia nueva en el backend) + vista semanal de la agenda.
+29. ~~QR descargable de `/t/{slug}` (generado en el navegador, sin dependencia nueva en el backend) + vista semanal de la agenda.~~ **Hecho (rama `feat/qr-weekly-agenda`)**: el Inicio muestra el QR del link de reservas con botón "Descargar QR" (PNG con la URL debajo); la agenda tiene vista semanal de solo lectura (`?view=week`), lunes a domingo, con enlace a cada día.
 38. Agenda: seña cobrada y saldo a cobrar por turno (`price_at_booking - deposit_at_booking`) + total del día.
 39. Aviso destacado del negocio en la página pública (texto corto, editable en Ajustes, escapado al renderizar).
 40. Panel instalable (PWA): `manifest` + ícono; sin service worker por ahora.
@@ -158,4 +158,4 @@ Rama → test que falla → fix → `./scripts/test.sh` + `ruff check app/ tests
 
 Las fases 1-2 cierran los 12 hallazgos. Se chequea revisando que la sección "Hallazgos abiertos" de CLAUDE.md quede vacía.
 
-Siguiente tarea concreta: **Fase 3, ítem 29** (QR descargable de `/t/{slug}` + vista semanal de la agenda). Los ítems 11, 12, 13, 13b, 26, 27 y 28 están hechos; quedan los pendientes listados arriba.
+Siguiente tarea concreta: **Fase 3, ítem 38** (agenda: seña cobrada y saldo a cobrar por turno + total del día). Los ítems 11, 12, 13, 13b, 26, 27, 28 y 29 están hechos; quedan los pendientes listados arriba.
