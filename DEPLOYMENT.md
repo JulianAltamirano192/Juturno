@@ -54,6 +54,7 @@ docker compose exec db createdb -U postgres saas_test
 ```bash
 sh -c "python -m alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers"
 ```
+- **Antes** de migrar, el servicio `backup` del mismo compose hace un dump de la base (ver "Backup automático en cada deploy" en la sección 7); la API depende de que termine bien (`service_completed_successfully`), así que sin backup no hay migración.
 - Migraciones corren **automáticamente** al iniciar el contenedor. El `CMD` del Dockerfile (sin migraciones) solo aplica si se usa la imagen sin ese compose.
 - `--proxy-headers` hace que uvicorn lea `X-Forwarded-For` / `X-Forwarded-Proto` detrás de Traefik, pero solo de IPs confiables: por defecto `--forwarded-allow-ips` es `127.0.0.1`.
 - **Rate limiting (D-033)**: la app calcula la IP real con `client_ip` (`app/limiter.py`) a partir de `X-Forwarded-For` / `CF-Connecting-IP`; no depende de que uvicorn confíe en el proxy. Requisitos de ops:
@@ -171,7 +172,8 @@ docker compose exec api alembic downgrade -1
 
 # O en CLI (VPS o local): checkout del commit anterior + rebuild
 git checkout <commit_anterior>
-docker compose -f docker-compose.prod.yml up -d --build
+# exclude_from_hc es de Coolify y `docker compose` lo rechaza: se filtra.
+sed '/exclude_from_hc/d' docker-compose.prod.yml | docker compose -f - up -d --build
 # (volver a main con: git checkout main)
 ```
 
@@ -233,6 +235,20 @@ docker compose exec api alembic downgrade -1
 ## 7. Backups
 
 **Scripts:** `scripts/backup_db.sh` y `scripts/restore_db.sh` (ejecutables). Ambos usan `docker compose exec -T db ...` del compose del directorio actual y leen `POSTGRES_DB` / `POSTGRES_USER` del entorno de la shell (defaults `saas_db` / `postgres`), no del `.env`. En el VPS con Coolify los contenedores tienen nombres propios: verificar que `docker compose exec db` resuelva al servicio correcto desde el directorio donde se corre (no pudo confirmarse desde el repo).
+
+### Backup automático en cada deploy (D-042)
+
+`docker-compose.prod.yml` tiene un servicio `backup` de un solo uso (`postgres:16-alpine`, la misma imagen que `db`, así `pg_dump` coincide en versión mayor). En cada deploy espera a que `db` esté sano, hace `pg_dump --clean --if-exists` comprimido, verifica el gzip (`gzip -t`), lo deja en el volumen `db_backups` como `saas_db_YYYYMMDD_HHMMSS.sql.gz` (hora UTC) y conserva las 20 copias más recientes. Si algo falla, termina con error, no deja el `.tmp` y **la API no arranca ni migra**. Lleva `exclude_from_hc: true` para que Coolify no cuente su contenedor terminado en la salud de la app.
+
+- **Dónde quedan:** en el VPS, en el volumen `db_backups` (Coolify le antepone el id del recurso: `docker volume ls | grep db_backups`). Están en el mismo servidor: protegen de una migración o un deploy malo, **no** de perder el VPS. Bajá copias a otro lado (`scp`) o activá S3 (ver abajo).
+- **Listar:** `docker run --rm -v <volumen>:/backups alpine ls -lh /backups`
+- **Sacar una copia del volumen:** `docker run --rm -v <volumen>:/backups -v /root/juturno-backups:/out alpine cp /backups/<archivo> /out/` y después `chmod 600 /root/juturno-backups/*` (tienen nombres y teléfonos de clientes; los dumps se crean con `umask 077`).
+- **Restaurar** (probalo primero con una copia en local, ver "Test de restore"):
+  1. Frenar la API para que nadie escriba: `docker stop <contenedor api>` (tiene `restart: unless-stopped` y Coolify puede volver a levantarla en un Redeploy: no despliegues mientras restaurás).
+  2. Si el backup es de **antes** de una migración, `--clean` solo borra lo que estaba en el dump: tablas o columnas nuevas quedan y `alembic_version` vuelve a la revisión vieja, así que el próximo deploy choca con "already exists". Recreá el esquema antes: `docker exec <contenedor db> sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"'`. Ojo: la extensión `btree_gist` vive en `public` y el dump la vuelve a crear.
+  3. Restaurar en una sola transacción, cortando al primer error: `zcat /root/juturno-backups/<archivo> | docker exec -i <contenedor db> sh -c 'psql -v ON_ERROR_STOP=1 --single-transaction -U "$POSTGRES_USER" -d "$POSTGRES_DB"'`.
+  4. Volver a levantar la API (`docker start <contenedor api>` o Redeploy del commit que corresponde a esa versión de la base).
+- **Si el backup falla en un deploy** (la API queda sin arrancar): mirá los logs del contenedor `backup` en Coolify. Causas típicas: contraseña de `POSTGRES_PASSWORD` cambiada o **disco lleno**. Con el disco lleno la rotación no llega a correr (solo corre después de un backup exitoso): liberá espacio a mano borrando las copias más viejas (`docker run --rm -v <volumen>:/backups alpine sh -c 'ls -1r /backups/saas_db_*.sql.gz | tail -n +11 | xargs -r rm -f'` deja las 10 más recientes) y hacé Redeploy.
 
 ### Backup manual
 

@@ -305,7 +305,7 @@ curl https://api.juturno.com/health
 |-----|----------|
 | [`README.md`](README.md) | Quickstart, env vars tabla completa, comandos |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | Modelos, flujos, auth, slots, outbox, scheduler, MP, WhatsApp |
-| [`DECISIONS.md`](DECISIONS.md) | 41 ADRs (D-001 a D-041) — por qué se hizo así |
+| [`DECISIONS.md`](DECISIONS.md) | 42 ADRs (D-001 a D-042) — por qué se hizo así |
 | [`DEPLOYMENT.md`](DEPLOYMENT.md) | Deploy, migraciones, rollback, backups, CI, secrets |
 | [`API_REFERENCE.md`](API_REFERENCE.md) | 47 rutas con schemas, auth, rate limits, códigos de error |
 | [`RUNBOOK.md`](RUNBOOK.md) | Incidentes: síntomas, diagnóstico, mitigación, fix |

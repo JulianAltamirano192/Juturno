@@ -106,7 +106,8 @@ docker compose exec api alembic history --verbose
 
 # Manual (CLI): checkout del commit anterior + rebuild con compose de prod
 git checkout <commit_anterior>
-docker compose -f docker-compose.prod.yml up -d --build
+# exclude_from_hc es de Coolify y `docker compose` lo rechaza: se filtra.
+sed '/exclude_from_hc/d' docker-compose.prod.yml | docker compose -f - up -d --build
 # Volver a main: git checkout main
 ```
 

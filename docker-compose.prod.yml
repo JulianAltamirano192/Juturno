@@ -14,6 +14,39 @@ services:
       timeout: 5s
       retries: 5
 
+  # Backup de la base en cada deploy, antes de migrar (D-042). Corre una vez y
+  # termina; si falla, la API no arranca ni migra. Misma imagen que db: pg_dump
+  # de la misma versión mayor. Quedan las 20 copias más recientes en db_backups.
+  backup:
+    image: postgres:16-alpine
+    restart: "no"
+    # Coolify: un servicio de un solo uso no define la salud de la app. No es del
+    # Compose Spec: `docker compose` a mano lo rechaza (ver DEPLOYMENT, sección 5).
+    exclude_from_hc: true
+    environment:
+      PGHOST: db
+      PGUSER: ${POSTGRES_USER:-postgres}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: ${POSTGRES_DB:-saas_db}
+    volumes:
+      - db_backups:/backups
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -euo pipefail
+        umask 077  # datos personales: solo el dueño puede leer los dumps
+        f=/backups/saas_db_$$(date -u +%Y%m%d_%H%M%S).sql.gz
+        trap 'rm -f "$$f.tmp"' EXIT  # un dump fallido no deja basura
+        pg_dump --clean --if-exists | gzip > "$$f.tmp"
+        gzip -t "$$f.tmp"
+        mv "$$f.tmp" "$$f"
+        echo "Backup OK: $$f ($$(du -h "$$f" | cut -f1))"
+        # Por nombre (timestamp UTC), no por mtime: copiar archivos lo cambia.
+        ls -1r /backups/saas_db_*.sql.gz | tail -n +21 | xargs -r rm -f
+    depends_on:
+      db:
+        condition: service_healthy
+
   redis:
     image: redis:7-alpine
     restart: unless-stopped
@@ -46,6 +79,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      backup:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 10s
@@ -54,3 +89,4 @@ services:
 
 volumes:
   postgres_data:
+  db_backups:
