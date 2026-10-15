@@ -84,7 +84,7 @@ async def create_booking(
     session: AsyncSession = Depends(get_db),
 ):
     """
-    Crea una reserva derivando end_time automáticamente a partir de service.duration_minutes.
+    Crea una reserva derivando end_time de service.duration_minutes + buffer_minutes.
     Es totalmente idempotente por idempotency_key (devuelve 200 + booking existente si se reintenta).
     Devuelve 409 si el slot ya está ocupado (ExcludeConstraint) por otra reserva distinta.
     """
@@ -160,7 +160,9 @@ async def create_booking(
             ),
         )
 
-    end_time = start_time + timedelta(minutes=service.duration_minutes)
+    end_time = start_time + timedelta(
+        minutes=service.duration_minutes + service.buffer_minutes
+    )
 
     new_booking = Booking(
         tenant_id=payload.tenant_id,

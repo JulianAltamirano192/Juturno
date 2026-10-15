@@ -231,6 +231,7 @@ async def compute_available_slots(
     if not windows:
         return []
 
+    buffer = timedelta(minutes=service.buffer_minutes)
     day_start = min(w[0] for w in windows)
     day_end = max(w[1] for w in windows)
 
@@ -238,7 +239,7 @@ async def compute_available_slots(
         and_(
             Booking.tenant_id == tenant_id,
             Booking.status.in_(["pending", "confirmed"]),
-            Booking.start_time < day_end,
+            Booking.start_time < day_end + buffer,
             Booking.end_time > day_start,
         )
     )
@@ -247,9 +248,12 @@ async def compute_available_slots(
 
     bookings_db = (await session.execute(stmt)).scalars().all()
 
+    # El tiempo libre del servicio nuevo no puede pisar al turno siguiente:
+    # cada turno existente "empieza" buffer minutos antes. El tiempo libre de
+    # los existentes ya está en su end_time.
     bookings_intervals = [
         (
-            b.start_time.astimezone(tenant_timezone),
+            b.start_time.astimezone(tenant_timezone) - buffer,
             b.end_time.astimezone(tenant_timezone),
         )
         for b in bookings_db

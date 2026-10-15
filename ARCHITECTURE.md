@@ -61,8 +61,10 @@
 Tenant (1) ──────< Service
      │                │
      │                ├── duration_minutes, price, deposit_amount (nullable = 30% del precio; 0 = sin seña)
+     │                ├── buffer_minutes (INTEGER NOT NULL DEFAULT 0; tiempo libre después del turno, D-044)
      │                ├── is_active
-     │                └── CHECK ck_service_deposit_amount_non_negative (deposit_amount IS NULL OR >= 0)
+     │                ├── CHECK ck_service_deposit_amount_non_negative (deposit_amount IS NULL OR >= 0)
+     │                └── CHECK ck_service_buffer_minutes (buffer_minutes IN SERVICE_BUFFER_CHOICES: 0, 5, 10, 15, 20, 30, 45, 60)
      │
      ├──< Staff
      │       └── is_active (default true)
@@ -135,6 +137,7 @@ El tenant guarda además: `slug` (único), `timezone` (default `America/Argentin
 - `uq_booking_idempotency_key` sobre `(tenant_id, idempotency_key)`: la misma clave en dos tenants distintos no choca (migración `b0e5b8028ae7`).
 - `uq_tenant_mp_user_id`: índice único **parcial** sobre `tenant(mp_user_id) WHERE mp_user_id IS NOT NULL` (migración `c7d8e9f0a1b2`). Una cuenta MP pertenece a un solo negocio; los `NULL` conviven (D-021).
 - `uq_payment_mp_payment_id` sobre `payment(mp_payment_id)`: red de seguridad contra dos webhooks concurrentes que inserten el mismo pago (migración `be7d31a422d8`).
+- `ck_service_buffer_minutes`: `buffer_minutes` solo admite los valores de `SERVICE_BUFFER_CHOICES` (migración `e7a8de2da19a`, D-044).
 - `ck_booking_deposit_at_booking_non_negative` y `ck_service_deposit_amount_non_negative`: la seña nunca es negativa (migraciones `55526fb8c0f9` y `346cd2b92a65`).
 
 
@@ -231,7 +234,8 @@ Lógica de prioridad:
 Lógica única compartida (D-017) por `GET /bookings/available-slots` (API key) y `GET /public/available-slots` (público); cada endpoint valida auth y tenant antes de llamarla.
 0. Si `day` es posterior a `today_local + horizon_days` (`Tenant.booking_horizon_days`, TZ del tenant) devuelve `[]`. `is_bookable_start` aplica el mismo tope a `start_time` (422 en las dos creaciones de booking).
 1. Resuelve las ventanas del día con `resolve_day_windows`; si no hay, devuelve `[]`.
-2. Trae los bookings `pending`/`confirmed` del tenant que pisan el rango `[min(inicio), max(fin)]` de las ventanas (filtra por `staff_id` si viene).
+2. Trae los bookings `pending`/`confirmed` del tenant que pisan el rango `[min(inicio), max(fin)]` de las ventanas (filtra por `staff_id` si viene). Con tiempo libre la consulta se amplía a `start_time < day_end + buffer` (D-044).
+   - **Tiempo libre (D-044)**: el de cada turno existente ya está dentro de su `end_time` (se guarda como inicio + duración + `buffer_minutes` del servicio de ese turno). El del servicio NUEVO se aplica corriendo hacia atrás el inicio de cada turno existente `service.buffer_minutes`, para que el turno nuevo más su tiempo libre no pise al siguiente. El último turno de una franja no necesita que su tiempo libre entre antes del cierre. `is_bookable_start` no cambia: el 409 por solapamiento lo da el EXCLUDE.
 3. Pasa todo a `calculate_available_slots` con grilla de 30 min.
 4. Si `day` es hoy en la TZ del tenant, descarta slots anteriores a `now_local`.
 
@@ -246,6 +250,7 @@ Lógica única compartida (D-017) por `GET /bookings/available-slots` (API key) 
 - Retorna `list[str]` formato `"HH:MM"` en orden cronológico.
 - **Nota**: diseñado para un día de un tenant/staff (pocas ventanas, pocas reservas). No llamar con cientos de ventanas.
 - Los slots son una sugerencia: la garantía real contra doble reserva es el constraint de la sección 6.
+- El tiempo libre (D-044) vive dentro de `booking.end_time` (inicio + duración + `buffer_minutes`) en los tres lugares que crean turnos (`POST /public/bookings`, `POST /bookings` y la reserva manual del panel), así que el EXCLUDE y el chequeo de turno libre de `mp_webhooks` lo respetan sin cambios.
 
 ---
 
@@ -466,7 +471,7 @@ app/
 - Cookie firmada (`juturno_session`) → `routers/panel.py` o `routers/auth.py`
 - Header `X-Tenant-API-Key` → `routers/api.py`
 
-Los routers de `mp_connect.py`, `mp_webhooks.py` y `webhooks.py` viven junto a su integración. La suite tiene 838 tests en 58 archivos (`tests/`), que corren con `./scripts/test.sh`.
+Los routers de `mp_connect.py`, `mp_webhooks.py` y `webhooks.py` viven junto a su integración. La suite tiene 854 tests en 59 archivos (`tests/`), que corren con `./scripts/test.sh`.
 
 ---
 
