@@ -74,6 +74,9 @@
 | POST | `/panel/settings/notice` | Guarda `Tenant.public_notice`, el aviso destacado de `/t/{slug}` (máx. 280 caracteres, `PUBLIC_NOTICE_MAX`). Form: `public_notice`, `csrf_token`. Vacío lo borra (`NULL`); más de 280 o con caracteres de control se rechaza sin cambiar nada. 303 a `/panel/settings?notice=saved`, `?notice=removed`, `?notice=too_long` o `?notice=invalid` | Cookie + CSRF |
 | POST | `/panel/settings/booking-horizon` | Guarda `Tenant.booking_horizon_days`. Form: `booking_horizon_days` (solo 15, 30, 60 o 90), `csrf_token`. 303 a `/panel/settings?horizon=saved` o `?horizon=invalid` (valor fuera de la lista: no guarda) | Cookie + CSRF |
 | POST | `/panel/settings/category` | Guarda `Tenant.business_category` y `business_category_other` (validador `clean_business_category`). Form: `business_category`, `business_category_other?`, `csrf_token`. Mismas reglas que en `/register`; el texto libre solo se guarda con `otro` (si no, queda `NULL`). 303 a `/panel/settings?category=saved` o `?category=invalid` (rubro fuera de la lista u "otro" sin texto válido: no guarda). El rubro hoy no se muestra en la página pública ni en la API | Cookie + CSRF |
+| POST | `/panel/settings/profile` | Guarda `Tenant.locality` (2 a 60 caracteres, sin caracteres de control), `instagram` y `facebook` (validador `clean_business_profile`). Form: `locality`, `instagram`, `facebook`, `csrf_token`. Vacío borra el dato (`NULL`). De las redes se guarda solo el usuario (Facebook también `profile.php?id=N`): se aceptan `@usuario` o un link del perfil, y se rechazan links a secciones (publicaciones, explorar, grupos, etc.). 303 a `/panel/settings?profile=saved`, `?profile=invalid_locality`, `?profile=invalid_instagram` o `?profile=invalid_facebook` (no guarda nada). Hoy no se expone en la API JSON | Cookie + CSRF |
+| POST | `/panel/settings/logo` | Sube o reemplaza el logo (rate limit 10/min por IP; `multipart/form-data`, campo `logo`, más `csrf_token`). Se rechaza con `?logo=too_big` si `Content-Length` falta o supera 8 MB + 64 KB (se chequea antes de parsear el body) o si el archivo pasa de 8 MB. Se re-codifica con Pillow (`app/logo.py`, ver ARCHITECTURE.md §2) y se hace upsert en `tenant_logo`. 303 a `/panel/settings?logo=saved`, `?logo=not_image` (no es JPEG/PNG/WebP, está corrupto o pasa los 25 MP) o `?logo=too_big` | Cookie + CSRF |
+| POST | `/panel/settings/logo/remove` | Borra la fila de `tenant_logo`. 303 a `/panel/settings?logo=removed` (también si no había logo) | Cookie + CSRF |
 | POST | `/panel/mp/connect/start` | Guarda el state en Redis, setea la cookie `mp_oauth_state` (HttpOnly) y responde 302 a MP. 503 si falta `MP_MARKETPLACE_CLIENT_ID` | Cookie + CSRF |
 | POST | `/panel/mp/disconnect` | Borra localmente tokens y metadata MP → 302 `/panel/settings?mp=disconnected`. Bloqueado con 302 `?mp=pending` si hay un turno `pending` con `Payment.mp_preference_id` y plazo de seña vigente (`created_at + deposit_expiration_minutes`; minutos `NULL` = siempre bloquea). No revoca la autorización en MP | Cookie + CSRF |
 | GET | `/dashboard` | Vista principal: resumen del día, próximos turnos, checklist de configuración y link público de reserva con su QR descargable (oculto si el tenant no tiene slug; el QR se genera en el navegador, el backend no interviene). Todo filtrado por `tenant_id` | Cookie |
@@ -117,7 +120,8 @@
 | GET | `/public/tenants/{identifier}` | Info pública tenant + servicios activos (`identifier` = ID numérico o slug) | — | `PublicTenantDetailResponse` |
 | GET | `/public/available-slots` | Slots libres para servicio/día | Query: `tenant_id`, `service_id`, `day`, `staff_id?` | `AvailableSlotsResponse` |
 | POST | `/public/bookings` | Crear booking `pending` + preferencia MP → `payment_url`; si la seña efectiva es 0, queda `confirmed` sin MP (`payment_url` `""`). Límite 20/minute | `BookingCreate` | `PublicBookingResponse` (201) |
-| GET | `/t/{slug}` | Página HTML reserva (mobile-first); muestra `Tenant.public_notice` debajo del header si existe | — | `HTMLResponse` |
+| GET | `/t/{slug}` | Página HTML reserva (mobile-first); muestra `Tenant.public_notice` debajo del header si existe, el logo en lugar de la inicial (`/t/{slug}/logo?v=<updated_at en ms>`) y una línea con localidad e Instagram/Facebook | — | `HTMLResponse` |
+| GET | `/t/{slug}/logo` | Logo del negocio (rate limit 120/min por IP). `image/webp` con `Cache-Control: public, max-age=3600`, `X-Content-Type-Options: nosniff` y `Content-Security-Policy: default-src 'none'; sandbox`. 404 si el negocio no existe o no tiene logo. El `?v=` solo rompe la caché; el endpoint lo ignora | — | WebP (≤ 512 px) |
 | GET | `/` | Landing de marketing (`landing.html`, standalone; la demo corre solo en el cliente, sin llamadas al backend). No aparece en OpenAPI | — | `HTMLResponse` |
 | GET | `/static/*` | Assets estáticos de `app/static/` (fuentes Sora/DM Sans self-hosted en `fonts/`, imágenes `.webp` del landing, `vendor/qrcode-1.4.4.js`). ⚠️ **Públicos sin auth: solo poner assets acá, nunca datos ni secrets** | — | archivo |
 
@@ -217,7 +221,7 @@ Si la preferencia de MP falla, el booking se revierte (rollback).
 
 ### 4.4 `GET /t/{slug}`
 
-**Response 200**: HTML página reserva (renderiza `public_booking.html` con tenant + servicios).
+**Response 200**: HTML página reserva (renderiza `public_booking.html` con tenant + servicios, aviso, logo, localidad y redes). Los links de Instagram/Facebook los arma la plantilla a partir del usuario guardado; nunca se renderiza una URL escrita por el dueño.
 **Response 404**: HTML "No encontramos ese negocio".
 
 ---
