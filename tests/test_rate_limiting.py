@@ -63,3 +63,13 @@ async def test_register_rate_limit_returns_429(rate_limited_client):
         await rate_limited_client.post("/register", data=data)
     response = await rate_limited_client.post("/register", data=data)
     assert response.status_code == 429
+
+
+@pytest.mark.asyncio
+async def test_public_available_slots_rate_limit_returns_429(rate_limited_client):
+    """GET /public/available-slots must return 429 after 60 requests per minute."""
+    params = {"tenant_id": 999999, "service_id": 1, "day": "2030-01-01"}
+    for _ in range(60):
+        await rate_limited_client.get("/public/available-slots", params=params)
+    response = await rate_limited_client.get("/public/available-slots", params=params)
+    assert response.status_code == 429

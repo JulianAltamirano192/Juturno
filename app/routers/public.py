@@ -26,8 +26,12 @@ from app.mp_crypto import MPTokenCryptoError
 from app.mp_webhooks import create_mp_preference
 from app.schemas import AvailableSlotsResponse, BookingCreate, clean_client_name
 from app.services import (
+    active_staff,
+    compute_any_staff_slots,
     compute_available_slots,
     effective_deposit,
+    free_staff_for,
+    has_overlapping_booking,
     is_bookable_start,
 )
 from app.templates import templates
@@ -68,6 +72,7 @@ class PublicBookingResponse(BaseModel):
     booking_id: int
     payment_url: str
     status: str
+    staff_name: str | None = None
 
 
 @router.get("/", response_class=HTMLResponse, include_in_schema=False)
@@ -148,7 +153,10 @@ async def get_public_tenant_detail(
 
 
 @router.get("/public/available-slots", response_model=AvailableSlotsResponse)
+# "Sin preferencia" cuesta unas 7 consultas por profesional: con tope por IP.
+@limiter.limit("60/minute")
 async def get_public_available_slots(
+    request: Request,
     tenant_id: Annotated[int, Query(gt=0, description="ID del negocio")],
     service_id: Annotated[int, Query(gt=0, description="ID del servicio")],
     day: Annotated[date, Query(description="Fecha YYYY-MM-DD")],
@@ -176,20 +184,49 @@ async def get_public_available_slots(
         if not staff or staff.tenant_id != tenant_id or not staff.is_active:
             raise HTTPException(status_code=404, detail="Staff not found for tenant")
 
-    slots = await compute_available_slots(
-        session=session,
-        tenant_id=tenant_id,
-        service=service,
-        day=day,
-        staff_id=staff_id,
-        tenant_timezone=tenant_timezone,
-        horizon_days=tenant.booking_horizon_days,
-    )
+    common = {
+        "session": session,
+        "tenant_id": tenant_id,
+        "service": service,
+        "day": day,
+        "tenant_timezone": tenant_timezone,
+        "horizon_days": tenant.booking_horizon_days,
+    }
+    team = [] if staff_id is not None else await active_staff(session, tenant_id)
+    if len(team) >= 2:
+        # "Sin preferencia" con varios profesionales: vale cualquiera libre.
+        slots = await compute_any_staff_slots(staff_ids=[m.id for m in team], **common)
+    else:
+        slots = await compute_available_slots(staff_id=staff_id, **common)
     return AvailableSlotsResponse(
         date=day,
         service_duration_min=service.duration_minutes,
         timezone=tenant.timezone,
         slots=slots,
+    )
+
+
+async def _idempotent_response(session: AsyncSession, booking: Booking) -> JSONResponse:
+    """200 con la reserva ya creada para esa idempotency_key."""
+    payment_stmt = select(Payment).where(
+        and_(
+            Payment.booking_id == booking.id,
+            Payment.method == "mercado_pago",
+            Payment.mp_checkout_url.is_not(None),
+        )
+    )
+    existing_payment = (await session.execute(payment_stmt)).scalar_one_or_none()
+    checkout_url = existing_payment.mp_checkout_url if existing_payment else ""
+    staff = await session.get(Staff, booking.staff_id) if booking.staff_id else None
+    return JSONResponse(
+        status_code=200,
+        content={
+            "message": "Reserva recuperada (idempotente)",
+            "booking_id": booking.id,
+            "payment_url": checkout_url,
+            "status": booking.status,
+            "staff_name": staff.name if staff else None,
+        },
     )
 
 
@@ -243,33 +280,22 @@ async def create_public_booking(
     )
     existing_booking = (await session.execute(existing_stmt)).scalar_one_or_none()
     if existing_booking is not None:
-        payment_stmt = select(Payment).where(
-            and_(
-                Payment.booking_id == existing_booking.id,
-                Payment.method == "mercado_pago",
-                Payment.mp_checkout_url.is_not(None),
-            )
-        )
-        existing_payment = (await session.execute(payment_stmt)).scalar_one_or_none()
-        checkout_url = existing_payment.mp_checkout_url if existing_payment else ""
-        return JSONResponse(
-            status_code=200,
-            content={
-                "message": "Reserva recuperada (idempotente)",
-                "booking_id": existing_booking.id,
-                "payment_url": checkout_url,
-                "status": existing_booking.status,
-            },
-        )
+        return await _idempotent_response(session, existing_booking)
 
     service = await session.get(Service, payload.service_id)
     if not service or service.tenant_id != payload.tenant_id or not service.is_active:
         raise HTTPException(status_code=404, detail="Service not found for tenant")
 
     if payload.staff_id is not None:
-        staff = await session.get(Staff, payload.staff_id)
-        if not staff or staff.tenant_id != payload.tenant_id or not staff.is_active:
+        chosen = await session.get(Staff, payload.staff_id)
+        if not chosen or chosen.tenant_id != payload.tenant_id or not chosen.is_active:
             raise HTTPException(status_code=404, detail="Staff not found for tenant")
+        pool = [chosen]
+    else:
+        # "Sin preferencia": con 2+ profesionales se asigna uno libre; con 0 o
+        # 1 el turno queda sin profesional, como siempre.
+        team = await active_staff(session, payload.tenant_id)
+        pool = team if len(team) >= 2 else []
 
     tenant_timezone = ZoneInfo(
         tenant.timezone if tenant.timezone else "America/Argentina/Buenos_Aires"
@@ -278,15 +304,20 @@ async def create_public_booking(
     if start_time.tzinfo is None:
         start_time = start_time.replace(tzinfo=tenant_timezone)
 
-    if not await is_bookable_start(
-        session=session,
-        tenant_id=payload.tenant_id,
-        service=service,
-        start_time=start_time,
-        staff_id=payload.staff_id,
-        tenant_timezone=tenant_timezone,
-        horizon_days=tenant.booking_horizon_days,
-    ):
+    bookable = [
+        member
+        for member in (pool or [None])
+        if await is_bookable_start(
+            session=session,
+            tenant_id=payload.tenant_id,
+            service=service,
+            start_time=start_time,
+            staff_id=member.id if member else None,
+            tenant_timezone=tenant_timezone,
+            horizon_days=tenant.booking_horizon_days,
+        )
+    ]
+    if not bookable:
         raise HTTPException(
             status_code=422,
             detail="Ese horario no está disponible. Elegí uno de los turnos ofrecidos.",
@@ -295,6 +326,33 @@ async def create_public_booking(
     end_time = start_time + timedelta(
         minutes=service.duration_minutes + service.buffer_minutes
     )
+
+    if pool:
+        # Un turno sin profesional no choca en el EXCLUDE con los asignados:
+        # free_staff_for lo descarta antes.
+        candidates = await free_staff_for(
+            session=session,
+            tenant_id=payload.tenant_id,
+            start_time=start_time,
+            end_time=end_time,
+            staff=bookable,
+            tenant_timezone=tenant_timezone,
+        )
+        if not candidates:
+            raise HTTPException(
+                status_code=409, detail="Slot ya reservado o superpuesto"
+            )
+    elif await has_overlapping_booking(
+        session=session,
+        tenant_id=payload.tenant_id,
+        start_time=start_time,
+        end_time=end_time,
+        staff_id=None,
+    ):
+        # Sin profesional ocupa a todos: no puede pisar ni a uno asignado.
+        raise HTTPException(status_code=409, detail="Slot ya reservado o superpuesto")
+    else:
+        candidates = [None]
 
     deposit_decimal = effective_deposit(service.price, service.deposit_amount)
 
@@ -328,47 +386,38 @@ async def create_public_booking(
                 ),
             )
 
-    new_booking = Booking(
-        tenant_id=payload.tenant_id,
-        service_id=payload.service_id,
-        staff_id=payload.staff_id,
-        client_name=client_name,
-        client_phone=client_phone,
-        start_time=start_time,
-        end_time=end_time,
-        price_at_booking=service.price,
-        deposit_at_booking=deposit_decimal,
-        idempotency_key=payload.idempotency_key,
-        status="pending",
-    )
-
-    session.add(new_booking)
-    try:
-        await session.flush()
-    except IntegrityError:
-        await session.rollback()
-        existing_booking = (await session.execute(existing_stmt)).scalar_one_or_none()
-        if existing_booking is not None:
-            payment_stmt = select(Payment).where(
-                and_(
-                    Payment.booking_id == existing_booking.id,
-                    Payment.method == "mercado_pago",
-                    Payment.mp_checkout_url.is_not(None),
-                )
-            )
-            existing_payment = (
-                await session.execute(payment_stmt)
+    # Se prueba cada candidato en un SAVEPOINT: si otro lo tomó entre el
+    # chequeo y el INSERT, el EXCLUDE lo rechaza y se pasa al siguiente.
+    new_booking = None
+    for member in candidates:
+        attempt = Booking(
+            tenant_id=payload.tenant_id,
+            service_id=payload.service_id,
+            staff_id=member.id if member else None,
+            client_name=client_name,
+            client_phone=client_phone,
+            start_time=start_time,
+            end_time=end_time,
+            price_at_booking=service.price,
+            deposit_at_booking=deposit_decimal,
+            idempotency_key=payload.idempotency_key,
+            status="pending",
+        )
+        try:
+            async with session.begin_nested():
+                session.add(attempt)
+                await session.flush()
+        except IntegrityError:
+            existing_booking = (
+                await session.execute(existing_stmt)
             ).scalar_one_or_none()
-            checkout_url = existing_payment.mp_checkout_url if existing_payment else ""
-            return JSONResponse(
-                status_code=200,
-                content={
-                    "message": "Reserva recuperada (idempotente)",
-                    "booking_id": existing_booking.id,
-                    "payment_url": checkout_url,
-                    "status": existing_booking.status,
-                },
-            )
+            if existing_booking is not None:
+                return await _idempotent_response(session, existing_booking)
+            continue
+        new_booking = attempt
+        staff_name = member.name if member else None
+        break
+    if new_booking is None:
         raise HTTPException(status_code=409, detail="Slot ya reservado o superpuesto")
 
     if deposit_decimal == 0:
@@ -383,6 +432,7 @@ async def create_public_booking(
             booking_id=new_booking.id,
             payment_url="",
             status=new_booking.status,
+            staff_name=staff_name,
         )
 
     try:
@@ -445,6 +495,7 @@ async def create_public_booking(
         booking_id=new_booking.id,
         payment_url=mp_result["checkout_url"],
         status=new_booking.status,
+        staff_name=staff_name,
     )
 
 
@@ -513,6 +564,9 @@ async def public_booking_page(
         }
         for s in services
     ]
+    team = await active_staff(session, tenant.id)
+    # Con un solo profesional no hay nada que elegir: no se muestra el paso.
+    staff_data = [{"id": m.id, "name": m.name} for m in team] if len(team) >= 2 else []
     nonce = secrets.token_urlsafe(16)
     response = templates.TemplateResponse(
         request,
@@ -530,6 +584,7 @@ async def public_booking_page(
             "brand_theme": brand_theme(tenant.brand_color),
             "timezone": tenant.timezone or "America/Argentina/Buenos_Aires",
             "services": services_data,
+            "staff": staff_data,
         },
     )
     response.headers["Content-Security-Policy"] = _public_page_csp(nonce)

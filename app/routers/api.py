@@ -17,6 +17,7 @@ from app.schemas import AvailableSlotsResponse, BookingCreate, clean_client_name
 from app.services import (
     compute_available_slots,
     effective_deposit,
+    has_overlapping_booking,
     is_bookable_start,
 )
 
@@ -163,6 +164,14 @@ async def create_booking(
     end_time = start_time + timedelta(
         minutes=service.duration_minutes + service.buffer_minutes
     )
+    if await has_overlapping_booking(
+        session=session,
+        tenant_id=payload.tenant_id,
+        start_time=start_time,
+        end_time=end_time,
+        staff_id=payload.staff_id,
+    ):
+        raise HTTPException(status_code=409, detail="Slot ya reservado o superpuesto")
 
     new_booking = Booking(
         tenant_id=payload.tenant_id,

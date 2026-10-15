@@ -1204,6 +1204,36 @@ En `compute_available_slots` se corre hacia atrás el inicio de cada turno exist
 
 ---
 
+## D-045: El cliente elige el profesional ("Sin preferencia" con asignación automática)
+
+**Fecha**: 2026-10-15
+
+**Contexto**: la página pública reservaba siempre sin profesional, aunque el negocio tuviera varios y horarios propios por profesional (D-041). Fase 5, ítem 16: que el cliente pueda elegir con quién atenderse. Julián decidió que con "Sin preferencia" se muestre un horario si al menos un profesional está libre, y que al reservar el sistema asigne uno.
+
+**Decisión**:
+- **Cuándo aparece**: el paso "¿Con quién querés atenderte?" (Sin preferencia + cada profesional) solo se muestra con 2 o más profesionales **activos**; con 0 o 1 todo sigue como antes (turno sin profesional). No hay migración ni cambios de modelo.
+- **Slots**: `GET /public/available-slots` sin `staff_id` y con 2+ activos devuelve la unión de los horarios de cada profesional (`compute_any_staff_slots`). Como cuesta ~7 consultas por profesional, el endpoint pasó a tener rate limit de 60/minuto por IP.
+- **Un turno sin profesional ocupa a todos los profesionales.** `compute_available_slots` con `staff_id` también cuenta los turnos sin profesional (afecta a `GET /bookings/available-slots`). Como el `EXCLUDE` usa `COALESCE(staff_id, -1)` y no compara asignados con sin asignados, `has_overlapping_booking` lo valida al crear en `POST /public/bookings` y `POST /bookings` (409). La reserva manual del panel no cambia: la decide el dueño.
+- **Asignación**: sin `staff_id` y con 2+ activos, `POST /public/bookings` elige entre los que pueden atender ese horario (422 si ninguno, por horario propio o día bloqueado) y están libres (409 si ninguno): primero el de menos turnos ese día en la zona del negocio, desempata el más antiguo. Inserta probando candidatos en un SAVEPOINT: si el `EXCLUDE` rechaza a uno (lo tomaron en paralelo) prueba el siguiente; la `idempotency_key` sigue garantizando una sola reserva. Con `staff_id` se usa ese (404 si es de otro negocio o inactivo). La respuesta suma `staff_name`, también en el reintento idempotente (200).
+- **Página**: `/t/{slug}` publica `staff` (id y nombre de los activos), muestra "Te atiende X" en el resumen y la confirmación, y la barra de progreso pasa a 5 pasos.
+
+**Alternativas**:
+- **Dejar todo como hoy** (turno sin profesional): no cambia nada, pero el cliente no puede elegir y los horarios propios por profesional (D-041) no sirven de cara al público. Descartada.
+- **Elegir profesional obligatorio**: más simple de calcular (siempre hay un `staff_id`), pero obliga al cliente a decidir aunque le dé igual, y rompe a los negocios con un solo profesional o sin ninguno. Descartada; "Sin preferencia" es la opción por defecto.
+- **Cerrar el hueco del `EXCLUDE`** (migrar el constraint para que un turno sin profesional bloquee a todos): sería atómico, pero implica tocar un constraint gist en producción, un cambio de alto riesgo. Se prefirió el chequeo en código.
+
+**Consecuencias**:
+- **Ventaja** — Sin migración: no se toca el constraint ni el modelo, y los negocios con 0 o 1 profesional no notan nada.
+- **Ventaja** — La asignación balancea la carga por día y es tolerante a pedidos en paralelo (SAVEPOINT por candidato).
+- **Riesgo** — Un turno sin profesional y uno asignado creados a la vez pueden encimarse: el chequeo y el INSERT no son atómicos y el `EXCLUDE` no los compara (aceptado, hay un `ponytail` en `has_overlapping_booking`).
+- **Riesgo** — Los turnos sin profesional ocupan a todos: en un negocio con varios profesionales un turno viejo sin profesional bloquea ese horario para todos, aunque el negocio tenga gente libre. Es el comportamiento buscado, pero puede sorprender a quien cargó turnos antes de tener varios profesionales.
+- **Riesgo** — "Sin preferencia" cuesta ~7 consultas por profesional activo y no hay tope de profesionales por negocio: un negocio con muchos encarece cada consulta (mitigado solo con el rate limit de 60/minuto por IP).
+- **Riesgo** — Cambia `GET /bookings/available-slots` (API key): con `staff_id` ahora descuenta también los turnos sin profesional, y `POST /bookings` puede devolver 409 donde antes aceptaba.
+- **Deuda** — Sin tope de profesionales activos por negocio. Los ids de staff/tenant/service no tienen tope int4 en los schemas (ya existía).
+- **Deuda** — La carrera sin-profesional vs. asignado: la solución de fondo es asignar siempre un profesional o un lock por tenant.
+
+---
+
 ## Roadmap de deuda técnica
 
 Ordenado por impacto/urgencia estimada:

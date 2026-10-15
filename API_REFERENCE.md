@@ -44,7 +44,7 @@
 | **Decimales** | DB y Python usan `Decimal` (`Numeric(10,2)`). `PublicServiceRead.price` y `.deposit_amount` son `Decimal` en el schema pero un `field_serializer` los serializa como **número JSON** (ej: `5000.0`). En el panel, los montos se parsean con `Decimal` (acepta coma o punto). |
 | **Headers de seguridad** | Toda respuesta lleva `Content-Security-Policy: frame-ancestors 'none'; base-uri 'none'; object-src 'none'`, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff` y `Strict-Transport-Security: max-age=31536000` (middleware `security_headers` en `app/main.py`, D-040): ninguna página se puede enmarcar desde otro sitio. `/t/{slug}` y `/t/{slug}/logo` mandan su propia CSP, más completa. Excepción: los 500 no manejados. |
 | **Errores** | `{ "detail": "mensaje en español" }` (4xx/5xx de `HTTPException`). Errores de validación de FastAPI/Pydantic: 422 con `detail` como lista. |
-| **Rate limiting** | `slowapi` por IP del cliente (`get_remote_address`). Excedido → **429** `{"error": "Rate limit exceeded: ..."}`. Solo tres endpoints tienen límite (ver tabla). Se desactiva si `TEST_DATABASE_URL` está seteada. |
+| **Rate limiting** | `slowapi` por IP del cliente (`get_remote_address`). Excedido → **429** `{"error": "Rate limit exceeded: ..."}`. Solo cuatro endpoints tienen límite (ver tabla). Se desactiva si `TEST_DATABASE_URL` está seteada. |
 | **Códigos** | 200 OK, 201 Created, 302 Found (flujo MP), 303 See Other (redirects del panel), 400 Bad Request, 401 Unauthorized, 403 Forbidden, 404 Not Found, 409 Conflict, 422 Unprocessable Entity, 429 Too Many Requests, 500, 502 Bad Gateway, 503 Service Unavailable, 504 Gateway Timeout. |
 | **Fechas en queries** | `day=YYYY-MM-DD` (ej: `day=2026-10-15`). |
 | **Docs automáticas** | FastAPI expone `/docs`, `/redoc` y `/openapi.json` (no están deshabilitadas en `app/main.py`). |
@@ -57,6 +57,7 @@
 | `POST /login` | 10/minute |
 | `POST /register` | 5/minute |
 | `POST /public/bookings` | 20/minute |
+| `GET /public/available-slots` | 60/minute |
 
 ---
 
@@ -123,7 +124,7 @@
 | Método | Path | Descripción | Request | Response |
 |--------|------|-------------|---------|----------|
 | GET | `/public/tenants/{identifier}` | Info pública tenant + servicios activos (`identifier` = ID numérico o slug) | — | `PublicTenantDetailResponse` |
-| GET | `/public/available-slots` | Slots libres para servicio/día | Query: `tenant_id`, `service_id`, `day`, `staff_id?` | `AvailableSlotsResponse` |
+| GET | `/public/available-slots` | Slots libres para servicio/día; sin `staff_id` y con 2+ profesionales activos, la unión de los horarios de cada uno ("Sin preferencia"). Límite 60/minute | Query: `tenant_id`, `service_id`, `day`, `staff_id?` | `AvailableSlotsResponse` |
 | POST | `/public/bookings` | Crear booking `pending` + preferencia MP → `payment_url`; si la seña efectiva es 0, queda `confirmed` sin MP (`payment_url` `""`). Límite 20/minute | `BookingCreate` | `PublicBookingResponse` (201) |
 | GET | `/t/{slug}` | Página HTML reserva (mobile-first); aplica el color de marca del negocio (`Tenant.brand_color`) con variables CSS en `<style id="brand">`, o el tema de Juturno si es `NULL`; muestra `Tenant.public_notice` debajo del header si existe, el logo en lugar de la inicial (`/t/{slug}/logo?v=<updated_at en ms>`) y una línea con localidad e Instagram/Facebook. Manda `Content-Security-Policy` con nonce por request (`script-src 'nonce-…'`, `img-src`/`font-src`/`connect-src 'self'`, `frame-ancestors 'none'`; D-039) y `Cache-Control: no-store`; la 404 de slug inexistente también, con `script-src 'none'` | — | `HTMLResponse` |
 | GET | `/t/{slug}/logo` | Logo del negocio (rate limit 120/min por IP). `image/webp` con `Cache-Control: public, max-age=3600`, `X-Content-Type-Options: nosniff` y `Content-Security-Policy: default-src 'none'; sandbox; frame-ancestors 'none'`. 404 si el negocio no existe o no tiene logo. El `?v=` solo rompe la caché; el endpoint lo ignora | — | WebP (≤ 512 px) |
@@ -162,6 +163,10 @@
 - `day` (date, `YYYY-MM-DD`; no puede ser anterior a hoy en la TZ del tenant). Si es posterior a hoy + `booking_horizon_days` (TZ del tenant) responde 200 con `slots: []`; el día hoy + horizonte todavía se ofrece
 - `staff_id` (int, opcional)
 
+**Sin `staff_id` ("Sin preferencia", D-045)**: si el negocio tiene 2 o más profesionales activos, devuelve la unión de los horarios libres de cada uno (`compute_any_staff_slots`): un horario se ofrece si al menos un profesional está libre. Con 0 o 1 profesional activo se comporta como siempre (turnos sin profesional). Con `staff_id` devuelve solo los de ese profesional.
+
+**Rate limit**: 60/minute por IP. "Sin preferencia" hace unas 7 consultas por profesional, por eso este endpoint ya no queda sin tope.
+
 Un día bloqueado por el negocio o por el profesional pedido (`blocked_period`, D-043) responde 200 con `slots: []`.
 
 Los slots respetan el tiempo libre (`Service.buffer_minutes`, D-044): un horario solo se ofrece si el turno más su tiempo libre no pisa al turno siguiente.
@@ -176,7 +181,7 @@ Los slots respetan el tiempo libre (`Service.buffer_minutes`, D-044): un horario
 }
 ```
 
-**Errores**: 400 "No se pueden consultar fechas pasadas", 404 "Tenant not found" / "Service not found" / "Staff not found for tenant" (servicio y profesional deben ser del tenant y estar activos, igual que al reservar), 422 (parámetros inválidos).
+**Errores**: 400 "No se pueden consultar fechas pasadas", 404 "Tenant not found" / "Service not found" / "Staff not found for tenant" (servicio y profesional deben ser del tenant y estar activos, igual que al reservar), 422 (parámetros inválidos), 429 (rate limit).
 
 ### 4.3 `POST /public/bookings`
 
@@ -198,6 +203,8 @@ Los slots respetan el tiempo libre (`Service.buffer_minutes`, D-044): un horario
 - `client_name` (`clean_client_name`): normalizado NFKC, espacios y saltos de línea colapsados; 2 a 60 caracteres, al menos una letra, sin caracteres invisibles/de control y sin links ni dominios (`://`, `www.`, `algo.com` con TLDs comunes), si no 422 con `detail` de texto (más de 200 caracteres: 422 de validación del schema). Llega al WhatsApp del negocio y al pagador de MP. Lo mismo en `POST /bookings` (API key).
 - `start_time` sin zona se interpreta en la del tenant. Tiene que ser un turno que ofrecería `GET /public/available-slots`: futuro, dentro del horario de atención (del profesional si tiene uno propio), alineado a la grilla de 30 min, sin segundos, con lugar para la duración del servicio no más allá de hoy + `booking_horizon_days` y en un día no bloqueado (D-043; `is_bookable_start`, 422). No mira las reservas existentes: un slot ocupado sigue siendo 409.
 - Servicio y profesional tienen que estar activos (inactivo = 404, igual que inexistente).
+- **Profesional (D-045)**: con `staff_id` se usa ese profesional (404 si es de otro negocio o está inactivo). Sin `staff_id` y con 2 o más profesionales activos ("Sin preferencia") se asigna uno automáticamente: entre los que pueden atender ese horario (horario propio y días no bloqueados) y están libres, el de menos turnos `pending`/`confirmed` ese día en la zona del negocio; desempata el más antiguo. Con 0 o 1 profesional activo el turno queda sin profesional, como antes.
+- **Un turno sin profesional ocupa a todos los profesionales**: se rechaza con 409 si pisa cualquier turno activo (asignado o no), y un turno asignado se rechaza si pisa uno sin profesional. El `EXCLUDE` no compara asignados con sin asignar, así que lo valida `has_overlapping_booking` antes del INSERT.
 - **Servicio sin seña** (seña efectiva 0, es decir `deposit_amount = 0`): la reserva se crea y pasa a `confirmed` (actor `client`) en la misma transacción, se encola la confirmación por WhatsApp, no se crea `Payment` ni preferencia MP y no hace falta MP conectado (tampoco en producción). `payment_url` es `""`.
 - Tope por teléfono: con 3 turnos futuros `confirmed` sin seña del mismo teléfono en ese negocio, un cuarto sin seña da 422. No cuentan los turnos que cargó el negocio desde el panel (`status_changed_by = "owner"`; se usa el actor y no la `idempotency_key`, que la elige el cliente). El conteo y el insert no son atómicos: dos pedidos simultáneos pueden llegar a 4.
 
@@ -207,16 +214,17 @@ Los slots respetan el tiempo libre (`Service.buffer_minutes`, D-044): un horario
   "message": "Reserva creada",
   "booking_id": 42,
   "payment_url": "https://sandbox.mercadopago.com/checkout/preference/...",
-  "status": "pending"
+  "status": "pending",
+  "staff_name": "Marcos"
 }
 ```
-`payment_url` es el `sandbox_init_point` si `MP_SANDBOX` y el `init_point` en producción. `status` es el estado del booking (`pending` con seña; `confirmed` sin seña, con `message: "Reserva confirmada"` y `payment_url: ""`). La recuperación idempotente (200) también lo incluye.
+`staff_name` es el nombre del profesional asignado (el elegido o el automático) y `null` si el turno quedó sin profesional. `payment_url` es el `sandbox_init_point` si `MP_SANDBOX` y el `init_point` en producción. `status` es el estado del booking (`pending` con seña; `confirmed` sin seña, con `message: "Reserva confirmada"` y `payment_url: ""`). La recuperación idempotente (200) también incluye `staff_name`.
 
 **Errores:**
 - 404 "Tenant not found" / "Service not found for tenant" / "Staff not found for tenant"
-- 409 "Slot ya reservado o superpuesto" (ExcludeConstraint `IntegrityError` sin booking previo con esa `idempotency_key`)
+- 409 "Slot ya reservado o superpuesto" (ExcludeConstraint `IntegrityError` sin booking previo con esa `idempotency_key`; también si pisa un turno sin profesional, o si con "Sin preferencia" ningún profesional queda libre)
 - 422 "El WhatsApp no parece completo..." (teléfono inválido)
-- 422 "Ese horario no está disponible. Elegí uno de los turnos ofrecidos." (`start_time` fuera de la grilla, pasado, fuera de horario o más allá del horizonte de reservas)
+- 422 "Ese horario no está disponible. Elegí uno de los turnos ofrecidos." (`start_time` fuera de la grilla, pasado, fuera de horario o más allá del horizonte de reservas; con "Sin preferencia", también cuando ningún profesional puede atender ese horario por su horario propio o un día bloqueado)
 - 422 `ERR_PAGO_NO_CONFIGURADO` (producción + tenant sin MP conectado; se hace rollback, no queda reserva). Texto: "Este negocio todavía no configuró su cuenta de Mercado Pago. Avisale al local para que conecte su cuenta y vuelvas a reservar."
 - 422 "Ya tenés 3 turnos reservados en este negocio. Para sacar otro, comunicate directamente con el negocio." (tope por teléfono, solo servicios sin seña)
 - 429 rate limit (20/minute por IP)
@@ -226,11 +234,14 @@ Los slots respetan el tiempo libre (`Service.buffer_minutes`, D-044): un horario
 
 Si la preferencia de MP falla, el booking se revierte (rollback).
 
-**Idempotencia**: mismo `idempotency_key` + `tenant_id` → **200** + `{message: "Reserva recuperada (idempotente)", booking_id, payment_url}` con la `payment_url` ya generada (cadena vacía si no hay `Payment` de MP con checkout URL).
+Al insertar, cada candidato se prueba en un SAVEPOINT: si el `EXCLUDE` rechaza a uno (otro pedido lo tomó en paralelo) se prueba el siguiente; si ninguno entra, 409. La `idempotency_key` sigue garantizando una sola reserva.
+
+**Idempotencia**: mismo `idempotency_key` + `tenant_id` → **200** + `{message: "Reserva recuperada (idempotente)", booking_id, payment_url, status, staff_name}` con la `payment_url` ya generada (cadena vacía si no hay `Payment` de MP con checkout URL).
 
 ### 4.4 `GET /t/{slug}`
 
-**Response 200**: HTML página reserva (renderiza `public_booking.html` con tenant + servicios, aviso, logo, localidad y redes). Si el negocio tiene `brand_color`, escribe en `<style id="brand">` las variables CSS que `brand_theme` deriva de ese color (solo hex y enteros, nunca texto del dueño); sin color, la página es idéntica a la de siempre. Los links de Instagram/Facebook los arma la plantilla a partir del usuario guardado; nunca se renderiza una URL escrita por el dueño.
+**Response 200**: HTML página reserva (renderiza `public_booking.html` con tenant + servicios, profesionales, aviso, logo, localidad y redes). Si el negocio tiene `brand_color`, escribe en `<style id="brand">` las variables CSS que `brand_theme` deriva de ese color (solo hex y enteros, nunca texto del dueño); sin color, la página es idéntica a la de siempre. Los links de Instagram/Facebook los arma la plantilla a partir del usuario guardado; nunca se renderiza una URL escrita por el dueño.
+Si el negocio tiene 2 o más profesionales activos, la página publica `staff` (`id` y `name` de los activos) y suma el paso "¿Con quién querés atenderte?" ("Sin preferencia" + cada profesional), "Te atiende X" en el resumen y la confirmación, y la barra de progreso pasa a 5 pasos. Con 0 o 1, no aparece el paso (D-045).
 **Response 404**: HTML "No encontramos ese negocio".
 
 ---
@@ -247,7 +258,7 @@ Además, con API key: `GET /tenants/me/mp` y `DELETE /tenants/me/mp` (sección 7
 
 ### 5.1 `GET /bookings/available-slots`
 
-Igual que el público (incluidos los días bloqueados, que devuelven `slots: []`, y el horizonte: días posteriores a hoy + `booking_horizon_days` devuelven `slots: []`) pero **requiere API Key** y valida que `tenant_id` coincida con el de la key. 404 "Service not found" si no coincide (no revela existencia). 400 si la fecha es pasada, 404 si el servicio o el profesional no son del tenant o están inactivos.
+Igual que el público (incluidos los días bloqueados, que devuelven `slots: []`, y el horizonte: días posteriores a hoy + `booking_horizon_days` devuelven `slots: []`) pero **requiere API Key** y valida que `tenant_id` coincida con el de la key. 404 "Service not found" si no coincide (no revela existencia). 400 si la fecha es pasada, 404 si el servicio o el profesional no son del tenant o están inactivos. No tiene rate limit ni la unión de "Sin preferencia" (D-045): sin `staff_id` mira los turnos de todo el negocio; con `staff_id` cuenta los de ese profesional **y** los turnos sin profesional, porque un turno sin profesional ocupa a todos.
 
 ### 5.2 `POST /bookings`
 
@@ -255,6 +266,7 @@ Igual que el público (incluidos los días bloqueados, que devuelven `slots: []`
 - `end_time` se deriva de `service.duration_minutes + service.buffer_minutes` (el campo del request se ignora; D-044).
 - Status inicial: `pending`.
 - Mismas reglas que el público para `start_time` y para servicio/profesional activos.
+- No asigna profesional automáticamente (D-045): usa el `staff_id` del request o deja el turno sin profesional. Un turno sin profesional ocupa a todos, así que `has_overlapping_booking` devuelve 409 si pisa cualquier turno activo (y un turno asignado, si pisa uno sin profesional).
 
 **Response 201:** `{ "message": "Reserva creada", "booking_id": 42 }`
 **Response 200 (retry idempotente):** `{ "message": "Reserva recuperada (idempotente)", "booking_id": 42 }`
@@ -496,7 +508,7 @@ deposit_expiration_minutes: int | None = None  # ge=1
 | 422 | `POST /public/bookings` (prod) | `ERR_PAGO_NO_CONFIGURADO` (tenant sin MP conectado; no aplica a servicios sin seña) |
 | 422 | `POST /public/bookings` | Tope de 3 turnos futuros sin seña por teléfono en el negocio |
 | 422 | Cualquiera con body/query | Validación Pydantic (tipos, `gt=0`, `ge=1`) |
-| 429 | `POST /login`, `POST /register`, `POST /public/bookings` | Rate limit (10 / 5 / 20 por minuto por IP) |
+| 429 | `POST /login`, `POST /register`, `POST /public/bookings`, `GET /public/available-slots` | Rate limit (10 / 5 / 20 / 60 por minuto por IP) |
 | 500 | Webhook MP | Error inesperado (MP API rechazo no-404, `MPTokenCryptoError`): evento queda `failed`, MP reintenta |
 | 502 | `POST /public/bookings` | `MPTokenCryptoError` al resolver token del tenant / MP rechaza preferencia / timeout creando preferencia |
 | 502 | `/mp/connect/callback` | Canje de `code` rechazado o sin `access_token` |

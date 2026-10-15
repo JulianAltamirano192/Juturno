@@ -196,7 +196,7 @@ Lo servido son siempre bytes generados por la app, nunca los del usuario. El log
 
 ### 4.4 Rate limiting (slowapi)
 - Singleton `limiter` en `app/limiter.py`, clave = IP del cliente (`client_ip`, D-033), handler `RateLimitExceeded` → 429.
-- Límites: `POST /login` 10/min, `POST /register` 5/min, `POST /public/bookings` 20/min.
+- Límites: `POST /login` 10/min, `POST /register` 5/min, `POST /public/bookings` 20/min, `GET /public/available-slots` 60/min (D-045: "Sin preferencia" hace ~7 consultas por profesional).
 - Se desactiva cuando `TEST_DATABASE_URL` está seteada (los tests de `test_rate_limiting.py` lo reactivan a propósito).
 - ⚠️ Storage en memoria del proceso (sin `storage_uri`): el contador no se comparte entre réplicas ni sobrevive a un restart.
 - IP real (D-033), cadena Cliente → Cloudflare → Traefik → uvicorn: uvicorn ignora los headers de proxy (`FORWARDED_ALLOW_IPS` queda en `127.0.0.1`) y el peer es la IP privada de Traefik. `client_ip`: peer público → el peer; peer privado → último `X-Forwarded-For` (lo agrega Traefik, no falsificable); si ese salto es de Cloudflare (`CLOUDFLARE_NETWORKS`, lista fija) → `CF-Connecting-IP`; si no, el salto. Las IPv6 se agrupan por /64.
@@ -234,10 +234,17 @@ Lógica de prioridad:
 Lógica única compartida (D-017) por `GET /bookings/available-slots` (API key) y `GET /public/available-slots` (público); cada endpoint valida auth y tenant antes de llamarla.
 0. Si `day` es posterior a `today_local + horizon_days` (`Tenant.booking_horizon_days`, TZ del tenant) devuelve `[]`. `is_bookable_start` aplica el mismo tope a `start_time` (422 en las dos creaciones de booking).
 1. Resuelve las ventanas del día con `resolve_day_windows`; si no hay, devuelve `[]`.
-2. Trae los bookings `pending`/`confirmed` del tenant que pisan el rango `[min(inicio), max(fin)]` de las ventanas (filtra por `staff_id` si viene). Con tiempo libre la consulta se amplía a `start_time < day_end + buffer` (D-044).
+2. Trae los bookings `pending`/`confirmed` del tenant que pisan el rango `[min(inicio), max(fin)]` de las ventanas. Con `staff_id` filtra por ese profesional **y** por los turnos sin profesional (`staff_id IS NULL`), porque un turno sin profesional ocupa a todos (D-045). Con tiempo libre la consulta se amplía a `start_time < day_end + buffer` (D-044).
    - **Tiempo libre (D-044)**: el de cada turno existente ya está dentro de su `end_time` (se guarda como inicio + duración + `buffer_minutes` del servicio de ese turno). El del servicio NUEVO se aplica corriendo hacia atrás el inicio de cada turno existente `service.buffer_minutes`, para que el turno nuevo más su tiempo libre no pise al siguiente. El último turno de una franja no necesita que su tiempo libre entre antes del cierre. `is_bookable_start` no cambia: el 409 por solapamiento lo da el EXCLUDE.
 3. Pasa todo a `calculate_available_slots` con grilla de 30 min.
 4. Si `day` es hoy en la TZ del tenant, descarta slots anteriores a `now_local`.
+
+### 5.3b Profesionales: "Sin preferencia" y asignación automática (D-045)
+- `active_staff(session, tenant_id)`: profesionales activos del negocio, por id. El paso de elegir profesional solo existe con 2 o más; con 0 o 1 todo funciona como antes (turno sin profesional).
+- **Un turno sin profesional ocupa a todos los profesionales.** El `EXCLUDE` usa `COALESCE(staff_id, -1)`, así que no compara asignados con sin asignar. Dos mitades cubren ese hueco: `compute_available_slots` con `staff_id` cuenta también los turnos sin profesional (afecta a `GET /bookings/available-slots`), y `has_overlapping_booking` lo valida al crear en `POST /public/bookings` y `POST /bookings` (409). La reserva manual del panel no cambia: la decide el dueño.
+- **Slots con "Sin preferencia"**: `compute_any_staff_slots(staff_ids, ...)` llama a `compute_available_slots` por cada profesional activo y devuelve la unión ordenada. Solo lo usa `GET /public/available-slots` (sin `staff_id`, 2+ activos); cuesta ~7 consultas por profesional, por eso tiene rate limit 60/min.
+- **Asignación al reservar** (`POST /public/bookings` sin `staff_id`, 2+ activos): `is_bookable_start` por profesional deja los que pueden atender (422 si ninguno); `free_staff_for` descarta los ocupados en el rango (409 si no queda ninguno, o si hay un turno sin profesional que pisa) y ordena por menos turnos ese día en la TZ del negocio, desempatando por id (el más antiguo). Después se inserta probando cada candidato en un SAVEPOINT (`begin_nested`): si el `EXCLUDE` rechaza a uno porque otro pedido lo tomó en paralelo, prueba el siguiente; la `idempotency_key` sigue garantizando una sola reserva. La respuesta incluye `staff_name`.
+- ⚠️ Carrera aceptada: un turno sin profesional y uno asignado creados a la vez pueden encimarse, porque el chequeo y el INSERT no son atómicos y el `EXCLUDE` no los compara (`ponytail` en `has_overlapping_booking`). Arreglo de fondo si llega a pasar: asignar siempre un profesional o un lock por tenant.
 
 ### 5.4 `calculate_available_slots(windows, bookings, duration_min, granularity_min=30)`
 - `windows`: lista de `(window_start, window_end)` del día (puede ser mañana + tarde).
@@ -267,7 +274,7 @@ Lógica única compartida (D-017) por `GET /bookings/available-slots` (API key) 
   ) WHERE (status IN ('pending', 'confirmed'));
   ```
 - **Ventajas**: atómico bajo concurrencia extrema, declarativo, versionado, cross-tenant safe.
-- **Race conditions imposibles**: la DB rechaza el INSERT con `IntegrityError` (exclusion violation).
+- **Race conditions imposibles entre turnos del mismo profesional** (o ambos sin profesional): la DB rechaza el INSERT con `IntegrityError` (exclusion violation). La excepción es un turno sin profesional contra uno asignado: el constraint no los compara (ver 5.3b).
 - Endpoints capturan `IntegrityError` → recuperan por `(tenant_id, idempotency_key)` (200 "Reserva recuperada (idempotente)") o, si no existe, 409 "Slot ya reservado o superpuesto".
 - Un `expired` que se reconfirma por pago tardío vuelve a competir por el horario: el webhook chequea antes con `_slot_still_free` (misma semántica que el constraint) y solo confirma si sigue libre.
 
@@ -471,7 +478,7 @@ app/
 - Cookie firmada (`juturno_session`) → `routers/panel.py` o `routers/auth.py`
 - Header `X-Tenant-API-Key` → `routers/api.py`
 
-Los routers de `mp_connect.py`, `mp_webhooks.py` y `webhooks.py` viven junto a su integración. La suite tiene 854 tests en 59 archivos (`tests/`), que corren con `./scripts/test.sh`.
+Los routers de `mp_connect.py`, `mp_webhooks.py` y `webhooks.py` viven junto a su integración. La suite tiene 875 tests en 60 archivos (`tests/`), que corren con `./scripts/test.sh`.
 
 ---
 
