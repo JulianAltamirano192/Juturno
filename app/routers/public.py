@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col
 
 from app.booking_actions import transition_booking_status
+from app.brand import brand_theme
 from app.config import settings
 from app.database import get_db
 from app.limiter import limiter
@@ -507,6 +508,7 @@ async def public_booking_page(
             "instagram": tenant.instagram,
             "facebook": tenant.facebook,
             "logo_version": logo_version(logo_updated_at),
+            "brand_theme": brand_theme(tenant.brand_color),
             "timezone": tenant.timezone or "America/Argentina/Buenos_Aires",
             "services": services_data,
         },

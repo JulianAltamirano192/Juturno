@@ -27,6 +27,7 @@ from app.booking_actions import (
     InvalidTransitionError,
     transition_booking_status,
 )
+from app.brand import DEFAULT_BRAND_COLOR, clean_brand_color
 from app.config import settings
 from app.csrf import generate_csrf_token, set_csrf_cookie, validate_csrf
 from app.database import get_db
@@ -569,8 +570,19 @@ _LOGO_FLASH = {
     ),
 }
 
+_BRAND_FLASH = {
+    "saved": "Guardamos el color de tu página de reservas.",
+    "removed": "Volvimos al color de Juturno en tu página de reservas.",
+    "invalid": "Elegí un color con el selector.",
+    "too_dark": (
+        "Ese color casi no se ve sobre el fondo oscuro de tu página. "
+        "Elegí uno más claro."
+    ),
+}
+
 _FLASH_ERRORS = {
     "invalid",
+    "too_dark",
     "too_long",
     "invalid_locality",
     "invalid_instagram",
@@ -609,6 +621,7 @@ async def panel_settings(
     category: str | None = None,
     profile: str | None = None,
     logo: str | None = None,
+    brand: str | None = None,
     tenant: Tenant = Depends(get_current_tenant_from_session),
     session: AsyncSession = Depends(get_db),
 ):
@@ -624,6 +637,7 @@ async def panel_settings(
         (category, _CATEGORY_FLASH),
         (profile, _PROFILE_FLASH),
         (logo, _LOGO_FLASH),
+        (brand, _BRAND_FLASH),
     ):
         flash = messages.get(value or "")
         if flash:
@@ -648,6 +662,7 @@ async def panel_settings(
             "notice_max": PUBLIC_NOTICE_MAX,
             "logo_version": logo_version(logo_updated_at),
             "logo_max_mb": LOGO_UPLOAD_MAX_BYTES // (1024 * 1024),
+            "brand_color": tenant.brand_color or DEFAULT_BRAND_COLOR,
         },
     )
     set_csrf_cookie(response, csrf_token)
@@ -840,6 +855,33 @@ async def panel_business_profile(
     await session.commit()
     return RedirectResponse(
         url="/panel/settings?profile=saved", status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
+@router.post("/panel/settings/brand-color")
+async def panel_brand_color(
+    request: Request,
+    brand_color: Annotated[str | None, Form()] = None,
+    tenant: Tenant = Depends(get_current_tenant_from_session),
+    session: AsyncSession = Depends(get_db),
+):
+    """Color de la página pública; vacío = vuelve al tema de Juturno."""
+    await validate_csrf(request)
+    try:
+        color = clean_brand_color(brand_color)
+    except ValueError as exc:
+        return RedirectResponse(
+            url=f"/panel/settings?brand={exc.args[0]}",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    # El <input type="color"> siempre manda valor y arranca en el cian por
+    # defecto: guardarlo sin tocarlo deja el tema de Juturno (con su degradé).
+    tenant.brand_color = None if color == DEFAULT_BRAND_COLOR else color
+    session.add(tenant)
+    await session.commit()
+    result = "saved" if tenant.brand_color else "removed"
+    return RedirectResponse(
+        url=f"/panel/settings?brand={result}", status_code=status.HTTP_303_SEE_OTHER
     )
 
 

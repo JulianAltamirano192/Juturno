@@ -78,6 +78,11 @@ class Tenant(SQLModel, table=True):
             f"booking_horizon_days IN {BOOKING_HORIZON_CHOICES}",
             name="ck_tenant_booking_horizon_days",
         ),
+        # Va dentro de un <style> en la página pública: solo "#rrggbb".
+        CheckConstraint(
+            "brand_color IS NULL OR brand_color ~ '^#[0123456789abcdef]{6}$'",
+            name="ck_tenant_brand_color",
+        ),
     )
 
     id: int | None = Field(default=None, primary_key=True)
@@ -117,6 +122,11 @@ class Tenant(SQLModel, table=True):
         default=None,
         sa_column=Column(String(LOCALITY_MAX), nullable=True),
         description="Localidad o barrio, texto libre (lo usará el buscador).",
+    )
+    brand_color: str | None = Field(
+        default=None,
+        sa_column=Column(String(7), nullable=True),
+        description='Color de la página pública, "#rrggbb". NULL = tema de Juturno.',
     )
     instagram: str | None = Field(
         default=None,

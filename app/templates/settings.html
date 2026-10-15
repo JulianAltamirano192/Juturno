@@ -153,6 +153,25 @@
   {% endif %}
 </section>
 
+<section class="form-card" aria-labelledby="h-brand">
+  <h2 id="h-brand" style="font-size:18px">Color de tu página</h2>
+  <form method="POST" action="/panel/settings/brand-color" class="mp-row">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="field" style="flex:1 1 auto;min-width:0">
+      <label for="brand_color">Se usa en los botones y detalles de tu página de reservas. Si el color casi no se ve sobre el fondo oscuro, te vamos a pedir uno más claro.</label>
+      <input type="color" id="brand_color" name="brand_color" value="{{ brand_color }}" style="width:72px;height:44px;padding:2px;cursor:pointer">
+    </div>
+    <button type="submit" class="btn-p">Guardar</button>
+  </form>
+  {% if tenant.brand_color %}
+  <form method="POST" action="/panel/settings/brand-color" class="mp-row">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="brand_color" value="">
+    <button type="submit" class="btn-sm">Usar el color de Juturno</button>
+  </form>
+  {% endif %}
+</section>
+
 <section class="form-card" aria-labelledby="h-notice">
   <h2 id="h-notice" style="font-size:18px">Aviso en tu página de reservas</h2>
   <form method="POST" action="/panel/settings/notice" class="mp-row">
