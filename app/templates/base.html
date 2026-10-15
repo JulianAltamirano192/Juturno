@@ -148,6 +148,10 @@
   .stat.cy{background:rgba(34,211,238,.07);border-color:rgba(34,211,238,.25)}.stat.cy span{color:var(--cyan-xl)}
   .stat.pu{background:rgba(168,85,247,.08);border-color:rgba(168,85,247,.28)}.stat.pu span{color:#e9d5ff}
   .stat.gr{background:rgba(74,222,128,.06);border-color:rgba(74,222,128,.22)}.stat.gr span{color:#bbf7d0}
+  .stats.s3{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .stat small{font-size:13px;color:var(--muted-2);overflow-wrap:anywhere}
+  .stat .nw{white-space:nowrap}
+  .sum-t{margin:0 0 10px;font-size:16px}
 
   /* ---------- Acceso (login / registro) ---------- */
   .auth{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);min-height:100vh}
@@ -184,7 +188,8 @@
     .m-top form{margin:0}
     .main{padding:12px 16px calc(var(--tabbar-h) + 28px + env(safe-area-inset-bottom))}
     .tabbar{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:20;padding:4px 6px calc(10px + env(safe-area-inset-bottom));border-top:1px solid rgba(255,255,255,.08);background:rgba(12,12,18,.94);backdrop-filter:blur(12px)}
-    .tab{flex:1 1 0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-height:54px;color:var(--muted-2);font-size:11px;font-weight:500}
+    .tab{flex:1 1 0;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-height:54px;color:var(--muted-2);font-size:10px;font-weight:500;letter-spacing:-.01em}
+    .tab-l{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     .tab svg{width:22px;height:22px}
     .tab.on{color:#fff}
     .tab.on svg{stroke:var(--cyan-l)}
@@ -195,6 +200,7 @@
     .ph .btn-p.fab .fab-label{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}
     .stats{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
     .stat{padding:14px}.stat strong{font-size:22px}
+    .stats.s3{grid-template-columns:minmax(0,1fr)}
     .form-card{padding:18px;border-radius:18px}
     .auth{grid-template-columns:minmax(0,1fr)}
     .auth-visual{display:none}
@@ -217,6 +223,7 @@
 {% set _nav = [
   ("inicio", "Inicio", "/dashboard", _path == "/dashboard"),
   ("agenda", "Agenda", "/panel/agenda", _path.startswith("/panel/agenda")),
+  ("estadisticas", "Estadísticas", "/panel/estadisticas", _path.startswith("/panel/estadisticas")),
   ("servicios", "Servicios", "/panel/services", _path.startswith("/panel/services")),
   ("personal", "Personal", "/panel/staff", _path.startswith("/panel/staff")),
   ("horarios", "Horarios", "/panel/horarios", _path.startswith("/panel/horarios")),
@@ -257,8 +264,9 @@
   </div>
 
   <nav class="tabbar" aria-label="Panel">
+    {# "Estadísticas" no entra en 7 pestañas a 320 px: etiqueta corta solo acá. #}
     {% for key, label, href, active in _nav %}
-    <a class="tab{% if active %} on{% endif %}" href="{{ href }}"{% if active %} aria-current="page"{% endif %}>{{ ui.icon(key) }}{{ label }}</a>
+    <a class="tab{% if active %} on{% endif %}" href="{{ href }}"{% if active %} aria-current="page"{% endif %}>{{ ui.icon(key) }}<span class="tab-l">{{ 'Números' if key == 'estadisticas' else label }}</span></a>
     {% endfor %}
   </nav>
 </div>

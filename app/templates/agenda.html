@@ -23,6 +23,8 @@
   .ag-actions{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end}
   .ag-actions form{margin:0}
   .ag-notes{grid-column:1 / -1;display:flex;flex-direction:column;gap:8px;min-width:0}
+  .ag-money{margin:0;font-size:13px;color:var(--muted-2);overflow-wrap:anywhere}
+  .ag-money .nw{white-space:nowrap}
   .ag-note{margin:0;font-size:13px;color:var(--text-2);white-space:pre-wrap;overflow-wrap:anywhere}
   .ag-notes summary{cursor:pointer;font-size:13px;color:var(--muted-2);min-height:32px;display:inline-flex;align-items:center}
   .ag-notes form{display:flex;flex-direction:column;gap:8px;margin:8px 0 0}
@@ -153,6 +155,10 @@
   <div class="stat pu"><span>Pendientes de pago</span><strong>{{ agenda_items|selectattr("status", "equalto", "pending")|list|length }}</strong></div>
   <div class="stat gr"><span>Completados</span><strong>{{ agenda_items|selectattr("status", "equalto", "completed")|list|length }}</strong></div>
 </div>
+<section id="resumen-dia">
+  <h2 class="sum-t">Resumen del día</h2>
+  {{ ui.money_summary(day_summary) }}
+</section>
 
 <div class="ag-list">
   {% for item in agenda_items %}
@@ -201,6 +207,7 @@
       {% endif %}
     </div>
     <div class="ag-notes">
+      <p class="ag-money"><span class="nw">Seña cobrada {{ item.deposit_paid|money }}</span>{% if item.status in ['confirmed', 'completed'] %} · <span class="nw">A cobrar {{ item.balance_due|money }}</span>{% endif %}</p>
       {% if item.internal_notes %}<p class="ag-note">{{ item.internal_notes }}</p>{% endif %}
       <details>
         <summary>{% if item.internal_notes %}Editar nota{% else %}Agregar nota{% endif %}</summary>

@@ -92,6 +92,7 @@ Ya verifiqué contra el código los hallazgos 2, 3, 4, 5, 7, 8 y 9 (se confirman
 - Avisar al dueño (ayuda o panel) que devolver la seña desde MP cancela el turno solo; si quiere mantenerlo (ej. pagó en efectivo), lo tiene que volver a cargar.
 - El chequeo de "otro pago aprobado cubre el turno" mira solo la DB, no MP: si se perdió el webhook del pago duplicado, el reembolso del otro cancela el turno igual. Arreglo posible: consultar `search_approved_payment_ids` antes de cancelar.
 - Un contracargo que el vendedor gana en disputa queda registrado como `charged_back` (se ignora el `approved` posterior). El turno ya estaba cancelado; solo afecta el registro.
+- Reembolso parcial: MP deja el pago en `approved` (solo cambia `status_detail`) y el webhook no guarda `transaction_amount_refunded`. La agenda (ítem 38) muestra la seña completa como cobrada y un saldo menor al real. Arreglo: guardar el monto reembolsado en `Payment` (migración) y restarlo. Inferido de la documentación de MP, sin probar.
 - Después de restaurar un backup, la secuencia de bookings puede reusar ids: un reembolso tardío de `booking-N` podría pegarle a otro turno del mismo negocio (inferido, sin probar). Ver RUNBOOK.
 
 ### Fase 3 — Quick wins del panel (ideas)
@@ -103,7 +104,7 @@ Ya verifiqué contra el código los hallazgos 2, 3, 4, 5, 7, 8 y 9 (se confirman
 27. ~~Aviso al dueño cuando entra un turno confirmado (WhatsApp o email), reusando la outbox.~~ **Hecho (rama `feat/owner-booking-alert`)**: WhatsApp al número que el negocio carga en el registro o en Ajustes (vacío desactiva los avisos); no se avisa cuando confirma el propio dueño. Tope de 30 avisos por negocio en 24 h (anti-spam, pedido por el `security-auditor`). Email queda afuera. Ver D-036.
 28. ~~Notas internas por turno + exportar turnos a CSV.~~ **Hecho (rama `feat/booking-notes-csv`)**: nota privada de hasta 500 caracteres por turno, editable en cualquier estado desde la agenda, y descarga en CSV de los turnos de un rango de fechas (hasta 366 días) pensada para Excel en es-AR.
 29. ~~QR descargable de `/t/{slug}` (generado en el navegador, sin dependencia nueva en el backend) + vista semanal de la agenda.~~ **Hecho (rama `feat/qr-weekly-agenda`)**: el Inicio muestra el QR del link de reservas con botón "Descargar QR" (PNG con la URL debajo); la agenda tiene vista semanal de solo lectura (`?view=week`), lunes a domingo, con enlace a cada día.
-38. Agenda: seña cobrada y saldo a cobrar por turno (`price_at_booking - deposit_at_booking`) + total del día.
+38. ~~Agenda: seña cobrada y saldo a cobrar por turno + resumen del día y pestaña Estadísticas.~~ **Hecho (rama `feat/agenda-deposit-balance`)**: la vista diaria muestra por turno "Seña cobrada" (suma de pagos aprobados, no el snapshot `deposit_at_booking`) y "A cobrar" (`price_at_booking` menos lo cobrado, mínimo 0; solo en confirmados y completados), más un "Resumen del día" con señas cobradas, cantidad de cancelados / no se presentaron (los vencidos no cuentan) y total a cobrar (seña + resto en el local, de los turnos confirmados y completados). Suma la pestaña "Estadísticas" (`/panel/estadisticas`) con los mismos tres datos por semana o mes y navegación al período anterior y siguiente. La vista semanal de la agenda y el CSV no cambian. Avanza en parte el ítem 18 de la Fase 5 (estadísticas mensuales): falta completados, servicios top y días fuertes/débiles.
 39. Aviso destacado del negocio en la página pública (texto corto, editable en Ajustes, escapado al renderizar).
 40. Panel instalable (PWA): `manifest` + ícono; sin service worker por ahora.
 
@@ -158,4 +159,4 @@ Rama → test que falla → fix → `./scripts/test.sh` + `ruff check app/ tests
 
 Las fases 1-2 cierran los 12 hallazgos. Se chequea revisando que la sección "Hallazgos abiertos" de CLAUDE.md quede vacía.
 
-Siguiente tarea concreta: **Fase 3, ítem 38** (agenda: seña cobrada y saldo a cobrar por turno + total del día). Los ítems 11, 12, 13, 13b, 26, 27, 28 y 29 están hechos; quedan los pendientes listados arriba.
+Siguiente tarea concreta: **Fase 3, ítem 39** (aviso destacado del negocio en la página pública). Los ítems 11, 12, 13, 13b, 26, 27, 28, 29 y 38 están hechos; quedan los pendientes listados arriba.

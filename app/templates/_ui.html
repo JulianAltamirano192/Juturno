@@ -3,6 +3,7 @@
 <svg class="ic" viewBox="0 0 24 24" aria-hidden="true">
 {%- if name == 'inicio' %}<path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>
 {%- elif name == 'agenda' %}<rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18M8 3v4M16 3v4"/>
+{%- elif name == 'estadisticas' %}<path d="M4 20h16M7 16v-5M12 16V6M17 16v-8"/>
 {%- elif name == 'servicios' %}<path d="M3 12V4h8l10 10-8 8z"/><circle cx="7.5" cy="8.5" r="1.5"/>
 {%- elif name == 'personal' %}<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.5 3.4-5.5 6.5-5.5s5.7 2 6.5 5.5M16 4.5a3.5 3.5 0 0 1 0 7M18 14.8c1.8.8 3 2.6 3.5 5.2"/>
 {%- elif name == 'horarios' %}<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>
@@ -21,6 +22,14 @@
 {%- elif name == 'editar' %}<path d="M4 20h4L19 9l-4-4L4 16z"/>
 {%- elif name == 'borrar' %}<path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12"/>
 {%- endif %}</svg>
+{%- endmacro %}
+{# Resumen de plata (s = _summarize_money): agenda del día y estadísticas. #}
+{% macro money_summary(s) -%}
+<div class="stats s3">
+  <div class="stat cy"><span>Señas cobradas</span><strong>{{ s.deposits|money }}</strong></div>
+  <div class="stat"><span>Cancelados / no se presentaron</span><strong>{{ s.lost }} {{ 'persona' if s.lost == 1 else 'personas' }}</strong></div>
+  <div class="stat gr"><span>Total a cobrar</span><strong>{{ s.total|money }}</strong><small><span class="nw">seña {{ s.deposits|money }}</span> + <span class="nw">en el local {{ s.local|money }}</span></small></div>
+</div>
 {%- endmacro %}
 {% macro logo() -%}
 <svg viewBox="6 0 92 92" aria-hidden="true"><defs><linearGradient id="jt-logo-grad" gradientUnits="userSpaceOnUse" x1="10" y1="10" x2="90" y2="90"><stop offset="0" stop-color="#e879f9"/><stop offset=".45" stop-color="#a78bfa"/><stop offset="1" stop-color="#22d3ee"/></linearGradient></defs><path d="M58 30V60C58 78 46 87 35 83C25 79 25 64 36 64C43 64 45 72 40 75C36 77 33 73 36 71" fill="none" stroke="url(#jt-logo-grad)" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/><g transform="rotate(18 58 29)"><g stroke="url(#jt-logo-grad)" stroke-width="3.4" fill="#08080b"><circle cx="45" cy="17" r="5"/><circle cx="71" cy="17" r="5"/><circle cx="58" cy="17" r="11.5"/></g><path d="M54 14.5V18.5M62 14.5V18.5" stroke="#fff" stroke-width="2.6" stroke-linecap="round"/></g></svg>

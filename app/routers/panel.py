@@ -31,6 +31,7 @@ from app.models import (
     DEPOSIT_EXPIRATION_CHOICES,
     Booking,
     BusinessHours,
+    Payment,
     Service,
     Staff,
     Tenant,
@@ -220,6 +221,22 @@ def _parse_business_hours_form(
     return data, errors
 
 
+_MONTH_NAMES = [
+    "enero",
+    "febrero",
+    "marzo",
+    "abril",
+    "mayo",
+    "junio",
+    "julio",
+    "agosto",
+    "septiembre",
+    "octubre",
+    "noviembre",
+    "diciembre",
+]
+
+
 def _format_agenda_day_label(d: date) -> str:
     """Ej: 'lunes 29 de septiembre de 2026'."""
     weekday_names = [
@@ -231,21 +248,7 @@ def _format_agenda_day_label(d: date) -> str:
         "sábado",
         "domingo",
     ]
-    month_names = [
-        "enero",
-        "febrero",
-        "marzo",
-        "abril",
-        "mayo",
-        "junio",
-        "julio",
-        "agosto",
-        "septiembre",
-        "octubre",
-        "noviembre",
-        "diciembre",
-    ]
-    return f"{weekday_names[d.weekday()]} {d.day} de {month_names[d.month - 1]} de {d.year}"
+    return f"{weekday_names[d.weekday()]} {d.day} de {_MONTH_NAMES[d.month - 1]} de {d.year}"
 
 
 async def _load_booking_for_tenant(
@@ -313,6 +316,70 @@ async def _bookings_for_days(
         .order_by(Booking.start_time)
     )
     return [(b, s) for b, s in (await session.execute(stmt)).all()]
+
+
+async def _approved_payments(
+    session: AsyncSession, tenant: Tenant, booking_ids: list[int]
+) -> dict[int, Decimal]:
+    """Suma de pagos aprobados por turno (solo turnos del tenant).
+
+    Seña cobrada = pagos aprobados (no deposit_at_booking: un turno confirmado
+    a mano puede no tener seña, y un reembolso deja el pago refunded).
+    """
+    if not booking_ids:
+        return {}
+    stmt = (
+        select(col(Payment.booking_id), func.sum(Payment.amount))
+        .join(Booking, Payment.booking_id == Booking.id)
+        .where(
+            Booking.tenant_id == tenant.id,
+            Payment.status == "approved",
+            col(Payment.booking_id).in_(booking_ids),
+        )
+        .group_by(Payment.booking_id)
+    )
+    return {booking_id: total for booking_id, total in await session.execute(stmt)}
+
+
+def _summarize_money(
+    tenant: Tenant,
+    rows: list[tuple[Booking, Service]],
+    paid: dict[int, Decimal],
+    first_day: date,
+) -> dict[str, Decimal | int]:
+    """Señas cobradas y total a cobrar de lo vendido (confirmed + completed) y
+    cantidad de cancelados / no se presentaron (expired no: nunca pagó).
+
+    Cada turno cuenta en el día local en que empieza: uno que cruza la
+    medianoche desde el día anterior al período no se cuenta dos veces.
+    """
+    tenant_tz = _tenant_tz(tenant)
+    deposits = local = Decimal(0)
+    lost = 0
+    for b, _ in rows:
+        if b.start_time.astimezone(tenant_tz).date() < first_day:
+            continue
+        if b.status in ("confirmed", "completed"):
+            booking_paid = paid.get(b.id, Decimal(0))
+            deposits += booking_paid
+            local += max(b.price_at_booking - booking_paid, Decimal(0))
+        elif b.status in ("cancelled", "no_show"):
+            lost += 1
+    return {
+        "deposits": deposits,
+        "local": local,
+        "total": deposits + local,
+        "lost": lost,
+    }
+
+
+async def _money_summary(
+    session: AsyncSession, tenant: Tenant, first_day: date, days: int
+) -> dict[str, Decimal | int]:
+    """Resumen de plata de `days` días locales desde `first_day`."""
+    rows = await _bookings_for_days(session, tenant, first_day, days)
+    paid = await _approved_payments(session, tenant, [b.id for b, _ in rows])
+    return _summarize_money(tenant, rows, paid, first_day)
 
 
 async def _tenant_has(
@@ -1303,6 +1370,12 @@ async def panel_agenda(
 
     rows = await _bookings_for_day(session, tenant, target_day)
 
+    paid = await _approved_payments(session, tenant, [b.id for b, _ in rows])
+    due = {
+        b.id: max(b.price_at_booking - paid.get(b.id, Decimal(0)), Decimal(0))
+        for b, _ in rows
+    }
+
     agenda_items = [
         {
             "booking_id": b.id,
@@ -1314,6 +1387,9 @@ async def panel_agenda(
             "status": b.status,
             "status_label": _AGENDA_STATUS_LABELS.get(b.status, b.status),
             "internal_notes": b.internal_notes,
+            "price": b.price_at_booking,
+            "deposit_paid": paid.get(b.id, Decimal(0)),
+            "balance_due": due[b.id],
         }
         for b, s in rows
     ]
@@ -1331,6 +1407,7 @@ async def panel_agenda(
             "next_day": (target_day + timedelta(days=1)).isoformat(),
             "is_today": target_day == today_local,
             "agenda_items": agenda_items,
+            "day_summary": _summarize_money(tenant, rows, paid, target_day),
             # Mensaje fijo: nunca se refleja el valor del query param.
             "notes_too_long": notes == "too_long",
             "notes_invalid": notes == "invalid",
@@ -1402,6 +1479,67 @@ async def _render_week_agenda(
             "is_current_week": is_current,
             # El selector "Día" lleva a hoy si es esta semana; si no, al lunes.
             "day_view_day": (today_local if is_current else monday).isoformat(),
+        },
+    )
+    set_csrf_cookie(response, csrf_token)
+    return response
+
+
+# ---------------------------------------------------------------------------
+# Panel: Estadísticas (resumen de plata por semana o mes)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/panel/estadisticas", response_class=HTMLResponse)
+async def panel_stats(
+    request: Request,
+    period: Annotated[str | None, Query()] = None,
+    day: Annotated[str | None, Query()] = None,
+    tenant: Tenant = Depends(get_current_tenant_from_session),
+    session: AsyncSession = Depends(get_db),
+):
+    """Señas cobradas, cancelados y total a cobrar de la semana (lunes a
+    domingo) o del mes que contiene `day`. Período desconocido = semana."""
+    target_day = datetime.now(_tenant_tz(tenant)).date()
+    if day:
+        try:
+            parsed = date.fromisoformat(day)
+        except ValueError:
+            parsed = None
+        # Fuera de este rango, el período anterior/siguiente desborda `date` (500).
+        if parsed and 2000 <= parsed.year <= 2100:
+            target_day = parsed
+
+    if period == "month":
+        first_day = target_day.replace(day=1)
+        days = monthrange(first_day.year, first_day.month)[1]
+        label = f"{_MONTH_NAMES[first_day.month - 1].capitalize()} {first_day.year}"
+        prev_day = (first_day - timedelta(days=1)).replace(day=1)
+    else:
+        period = "week"
+        first_day = target_day - timedelta(days=target_day.weekday())
+        days = 7
+        last_day = first_day + timedelta(days=6)
+        label = (
+            f"Semana del {first_day.day}/{first_day.month}"
+            f" al {last_day.day}/{last_day.month}"
+        )
+        prev_day = first_day - timedelta(days=7)
+
+    # El layout tiene el formulario de "Cerrar sesión".
+    csrf_token = generate_csrf_token(request)
+    response = templates.TemplateResponse(
+        request,
+        "stats.html",
+        {
+            "tenant": tenant,
+            "csrf_token": csrf_token,
+            "period": period,
+            "period_label": label,
+            "target_day": target_day.isoformat(),
+            "prev_day": prev_day.isoformat(),
+            "next_day": (first_day + timedelta(days=days)).isoformat(),
+            "summary": await _money_summary(session, tenant, first_day, days),
         },
     )
     set_csrf_cookie(response, csrf_token)
