@@ -29,6 +29,7 @@ from app.models import (
     BOOKING_HORIZON_CHOICES,
     BOOKING_NOTES_MAX,
     DEPOSIT_EXPIRATION_CHOICES,
+    PUBLIC_NOTICE_MAX,
     Booking,
     BusinessHours,
     Payment,
@@ -517,6 +518,31 @@ _DEPOSIT_FLASH = {
     "invalid": "Elegí una de las opciones de la lista.",
 }
 
+_NOTICE_FLASH = {
+    "saved": "Guardamos el aviso de tu página de reservas.",
+    "removed": "Sacamos el aviso de tu página de reservas.",
+    "too_long": f"El aviso puede tener hasta {PUBLIC_NOTICE_MAX} caracteres.",
+    "invalid": "El aviso tiene caracteres no permitidos.",
+}
+
+
+def _clean_owner_text(raw: str | None, max_len: int) -> tuple[str | None, str | None]:
+    """Texto libre del dueño (nota de turno, aviso público) → (texto, error).
+
+    Vacío = None. Error "too_long" o "invalid" (caracteres de control).
+    """
+    # El textarea manda CRLF pero su maxlength cuenta cada salto como uno.
+    text = (raw or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not text:
+        return None, None
+    if len(text) > max_len:
+        return None, "too_long"
+    if any(unicodedata.category(c) == "Cc" and c not in "\n\t" for c in text):
+        # Caracteres de control (p. ej. NUL, que Postgres rechaza → 500). Solo
+        # Cc: el zero-width joiner (Cf) de los emoji compuestos se permite.
+        return None, "invalid"
+    return text, None
+
 
 @router.get("/panel/settings", response_class=HTMLResponse)
 async def panel_settings(
@@ -525,6 +551,7 @@ async def panel_settings(
     horizon: str | None = None,
     deposit: str | None = None,
     whatsapp: str | None = None,
+    notice: str | None = None,
     tenant: Tenant = Depends(get_current_tenant_from_session),
 ):
     csrf_token = generate_csrf_token(request)
@@ -535,10 +562,11 @@ async def panel_settings(
         (horizon, _HORIZON_FLASH),
         (deposit, _DEPOSIT_FLASH),
         (whatsapp, _WHATSAPP_FLASH),
+        (notice, _NOTICE_FLASH),
     ):
         flash = messages.get(value or "")
         if flash:
-            flash_error = value in _MP_FLASH_ERRORS or value == "invalid"
+            flash_error = value in _MP_FLASH_ERRORS or value in ("invalid", "too_long")
             break
     response = templates.TemplateResponse(
         request,
@@ -551,6 +579,7 @@ async def panel_settings(
             "flash_error": flash_error,
             "horizon_choices": BOOKING_HORIZON_CHOICES,
             "deposit_choices": DEPOSIT_EXPIRATION_CHOICES,
+            "notice_max": PUBLIC_NOTICE_MAX,
         },
     )
     set_csrf_cookie(response, csrf_token)
@@ -664,6 +693,30 @@ async def panel_deposit_expiration(
     await session.commit()
     return RedirectResponse(
         url="/panel/settings?deposit=saved", status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
+@router.post("/panel/settings/notice")
+async def panel_public_notice(
+    request: Request,
+    public_notice: Annotated[str | None, Form()] = None,
+    tenant: Tenant = Depends(get_current_tenant_from_session),
+    session: AsyncSession = Depends(get_db),
+):
+    """Aviso destacado de la página pública; vacío = sin aviso."""
+    await validate_csrf(request)
+    cleaned, error = _clean_owner_text(public_notice, PUBLIC_NOTICE_MAX)
+    if error:
+        return RedirectResponse(
+            url=f"/panel/settings?notice={error}",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    tenant.public_notice = cleaned
+    session.add(tenant)
+    await session.commit()
+    result = "saved" if cleaned else "removed"
+    return RedirectResponse(
+        url=f"/panel/settings?notice={result}", status_code=status.HTTP_303_SEE_OTHER
     )
 
 
@@ -2004,18 +2057,7 @@ async def panel_agenda_notes(
     """Guarda la nota interna del turno; vacía = sin nota. No cambia el estado."""
     await validate_csrf(request)
     booking = await _load_booking_for_tenant(session, booking_id, tenant)
-    # El textarea manda CRLF pero su maxlength cuenta cada salto como uno.
-    text = (internal_notes or "").replace("\r\n", "\n").replace("\r", "\n").strip()
-    cleaned = text or None
-    error = None
-    if cleaned is not None and len(cleaned) > BOOKING_NOTES_MAX:
-        error = "too_long"
-    elif cleaned is not None and any(
-        unicodedata.category(c) == "Cc" and c not in "\n\t" for c in cleaned
-    ):
-        # Caracteres de control (p. ej. NUL, que Postgres rechaza → 500). Solo
-        # Cc: el zero-width joiner (Cf) de los emoji compuestos se permite.
-        error = "invalid"
+    cleaned, error = _clean_owner_text(internal_notes, BOOKING_NOTES_MAX)
     if error:
         params = {"day": day} if day else {}
         params["notes"] = error

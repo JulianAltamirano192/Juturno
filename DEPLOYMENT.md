@@ -149,6 +149,7 @@ docker compose exec api alembic downgrade -1
 - `btree_gist` se crea en la migración inicial (`1a2b3c4d5e6f`: `CREATE EXTENSION IF NOT EXISTS btree_gist`).
 - Server defaults en migración `4d5e6f7a8b9c` (`NOW()`, `'pending'`, `false`, `0`, `'received'`).
 - Deploy de `4948a27a05b1` (`booking.internal_notes`, notas internas por turno): solo agrega una columna `VARCHAR(500)` nullable, sin default ni backfill (cambio de catálogo, lock instantáneo). Se aplica sola con el entrypoint; el downgrade la elimina (y con ella las notas).
+- Deploy de `82b61531a397` (`tenant.public_notice`, aviso destacado de la página pública): solo agrega una columna `VARCHAR(280)` nullable, sin default ni backfill (cambio de catálogo, lock instantáneo). Se aplica sola con el entrypoint; el downgrade la elimina (y con ella los avisos).
 - Como el entrypoint de prod corre `alembic upgrade head`, una migración que falle deja el contenedor sin arrancar. Ejemplo: `c7d8e9f0a1b2` (`uq_tenant_mp_user_id`) falla si hay `mp_user_id` duplicados; ver el chequeo previo en `RUNBOOK.md` 3.3.
 
 **Cloudflare (defensa extra para el export CSV):** `GET /panel/agenda/export` devuelve datos personales con `Cache-Control: no-store, private` y sin extensión `.csv` (Cloudflare cachea esa extensión por defecto y la URL del mes es igual para todos los negocios). Como segunda barrera, se recomienda una Cache Rule que haga bypass de caché para `/panel*`.

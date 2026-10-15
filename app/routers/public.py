@@ -494,6 +494,7 @@ async def public_booking_page(
         {
             "tenant_name": tenant.name,
             "tenant_id": tenant.id,
+            "public_notice": tenant.public_notice,
             "timezone": tenant.timezone or "America/Argentina/Buenos_Aires",
             "services": services_data,
         },

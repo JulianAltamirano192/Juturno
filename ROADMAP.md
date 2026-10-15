@@ -105,7 +105,7 @@ Ya verifiqué contra el código los hallazgos 2, 3, 4, 5, 7, 8 y 9 (se confirman
 28. ~~Notas internas por turno + exportar turnos a CSV.~~ **Hecho (rama `feat/booking-notes-csv`)**: nota privada de hasta 500 caracteres por turno, editable en cualquier estado desde la agenda, y descarga en CSV de los turnos de un rango de fechas (hasta 366 días) pensada para Excel en es-AR.
 29. ~~QR descargable de `/t/{slug}` (generado en el navegador, sin dependencia nueva en el backend) + vista semanal de la agenda.~~ **Hecho (rama `feat/qr-weekly-agenda`)**: el Inicio muestra el QR del link de reservas con botón "Descargar QR" (PNG con la URL debajo); la agenda tiene vista semanal de solo lectura (`?view=week`), lunes a domingo, con enlace a cada día.
 38. ~~Agenda: seña cobrada y saldo a cobrar por turno + resumen del día y pestaña Estadísticas.~~ **Hecho (rama `feat/agenda-deposit-balance`)**: la vista diaria muestra por turno "Seña cobrada" (suma de pagos aprobados, no el snapshot `deposit_at_booking`) y "A cobrar" (`price_at_booking` menos lo cobrado, mínimo 0; solo en confirmados y completados), más un "Resumen del día" con señas cobradas, cantidad de cancelados / no se presentaron (los vencidos no cuentan) y total a cobrar (seña + resto en el local, de los turnos confirmados y completados). Suma la pestaña "Estadísticas" (`/panel/estadisticas`) con los mismos tres datos por semana o mes y navegación al período anterior y siguiente. La vista semanal de la agenda y el CSV no cambian. Avanza en parte el ítem 18 de la Fase 5 (estadísticas mensuales): falta completados, servicios top y días fuertes/débiles.
-39. Aviso destacado del negocio en la página pública (texto corto, editable en Ajustes, escapado al renderizar).
+39. ~~Aviso destacado del negocio en la página pública (texto corto, editable en Ajustes, escapado al renderizar).~~ **Hecho (rama `feat/public-notice`)**: sección "Aviso en tu página de reservas" en Ajustes (hasta 280 caracteres, vacío lo borra) y se muestra debajo del header de `/t/{slug}`, escapado y con los saltos de línea respetados. Requiere migración `82b61531a397` (`Tenant.public_notice`): correr `alembic upgrade head` en el deploy.
 40. Panel instalable (PWA): `manifest` + ícono; sin service worker por ahora.
 
 ### Fase 4 — Perfil del negocio
@@ -159,4 +159,4 @@ Rama → test que falla → fix → `./scripts/test.sh` + `ruff check app/ tests
 
 Las fases 1-2 cierran los 12 hallazgos. Se chequea revisando que la sección "Hallazgos abiertos" de CLAUDE.md quede vacía.
 
-Siguiente tarea concreta: **Fase 3, ítem 39** (aviso destacado del negocio en la página pública). Los ítems 11, 12, 13, 13b, 26, 27, 28, 29 y 38 están hechos; quedan los pendientes listados arriba.
+Siguiente tarea concreta: **Fase 3, ítem 40** (panel instalable, PWA). Los ítems 11, 12, 13, 13b, 26, 27, 28, 29, 38 y 39 están hechos; quedan los pendientes listados arriba.
