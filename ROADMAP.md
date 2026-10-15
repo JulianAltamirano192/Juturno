@@ -114,10 +114,10 @@ Ya verifiqué contra el código los hallazgos 2, 3, 4, 5, 7, 8 y 9 (se confirman
 41. ~~Color de marca para la página pública (hex validado → variable CSS).~~ **Hecho (rama `feat/brand-color`, D-038)**: sección "Color de tu página" en Ajustes (`POST /panel/settings/brand-color`) con un selector de color y el botón "Usar el color de Juturno" (solo aparece si hay color guardado). El hex se valida (`#RRGGBB`, contraste WCAG >= 3:1 contra el fondo) y de él se derivan las variables CSS del tema en `<style id="brand">` de `/t/{slug}`; vacío o el cian por defecto dejan `NULL` (tema de Juturno, página idéntica a la anterior). Requiere migración `2cf8d49114fa` (`Tenant.brand_color` con CHECK `ck_tenant_brand_color`): correr `alembic upgrade head` en el deploy. Todavía no se expone en la API JSON.
 
 ### Fase 5 — Experiencia del cliente y datos
-30. Horarios por profesional en el panel (`BusinessHours.staff_id` ya existe; hoy el panel solo maneja `staff_id IS NULL`). Prerrequisito de 16.
+30. ~~Horarios por profesional en el panel (`BusinessHours.staff_id` ya existe; hoy el panel solo maneja `staff_id IS NULL`). Prerrequisito de 16.~~ **Hecho (rama `feat/staff-hours`, D-041)**: `/panel/horarios?staff=ID` maneja los horarios de cada profesional (selector "Negocio" + profesionales y link "Horarios" en Personal). Un profesional con al menos una franja reemplaza por completo el horario del negocio y sus días sin franja quedan cerrados. Pueden tener horario partido, como el negocio. Requiere migración `9a9d04b9ff5e` (borra el UNIQUE `uq_business_hours_tenant_staff_day`): correr `alembic upgrade head` en el deploy.
 31. Días bloqueados / feriados / vacaciones por fecha, del negocio o de un profesional. Toca `compute_available_slots`.
 32. Tiempo libre entre turnos por servicio, **opt-in**: el negocio lo activa por servicio y elige los minutos; por defecto no hay tiempo libre. Toca slots y el `EXCLUDE` de `booking`.
-16. El cliente elige el profesional. Antes hace falta UI de horarios por staff, porque hoy el panel solo maneja horarios del negocio.
+16. El cliente elige el profesional. El prerrequisito (horarios por profesional en el panel, ítem 30) ya está hecho; `compute_available_slots` ya recibe `staff_id`.
 17. Historial por teléfono del cliente. Primero una vista agrupando `booking` por `client_phone`; la tabla `Client` solo si hace falta.
 18. Estadísticas mensuales: completados, no presentados, servicios top, días fuertes/débiles (agregaciones SQL sobre `booking`).
 42. Preguntas personalizadas por servicio en el formulario de reserva (respuestas guardadas en el turno).
@@ -159,4 +159,4 @@ Rama → test que falla → fix → `./scripts/test.sh` + `ruff check app/ tests
 
 Las fases 1-2 cierran los 12 hallazgos. Se chequea revisando que la sección "Hallazgos abiertos" de CLAUDE.md quede vacía.
 
-Siguiente tarea concreta: **Fase 5, ítem 30** (horarios por profesional en el panel, prerrequisito del 16). La Fase 4 está completa (ítems 14, 15 y 41). La Fase 3 está completa (ítems 11, 12, 13, 13b, 26, 27, 28, 29, 38, 39 y 40); quedan los pendientes listados arriba.
+Siguiente tarea concreta: **Fase 5, ítem 31** (días bloqueados / feriados / vacaciones por fecha; toca `compute_available_slots`). El ítem 16 (el cliente elige el profesional) ya tiene su prerrequisito, la UI de horarios por staff (ítem 30). La Fase 4 está completa (ítems 14, 15 y 41). La Fase 3 está completa (ítems 11, 12, 13, 13b, 26, 27, 28, 29, 38, 39 y 40); quedan los pendientes listados arriba.

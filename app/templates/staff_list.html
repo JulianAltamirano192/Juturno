@@ -55,6 +55,7 @@
         <button type="submit" class="sw{% if member.is_active %} on{% endif %}" role="switch" aria-checked="{{ 'true' if member.is_active else 'false' }}" aria-label="{{ 'Desactivar a' if member.is_active else 'Activar a' }} {{ member.name }}"></button>
         <span aria-hidden="true">Activo</span>
       </form>
+      <a href="/panel/horarios?staff={{ member.id }}" class="btn-sm">Horarios</a>
       <a href="/panel/staff/{{ member.id }}/edit" class="btn-sm">Editar</a>
     </div>
   </div>

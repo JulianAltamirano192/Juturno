@@ -48,10 +48,10 @@
 {% set day_labels = [('Lunes', 'Lun'), ('Martes', 'Mar'), ('Miércoles', 'Mié'), ('Jueves', 'Jue'), ('Viernes', 'Vie'), ('Sábado', 'Sáb'), ('Domingo', 'Dom')] %}
 {# Create: several days (checkboxes, selected_days); edit: one day (radio). #}
 {% set selected_days = selected_days if selected_days is defined else [form.get('day_of_week', '0')|string] %}
-<a href="/panel/horarios" class="back-link">{{ ui.icon('izq') }}Volver a horarios</a>
-<div class="ph"><h1>{% if bh %}Editar horario{% else %}Nuevo horario{% endif %}</h1></div>
+<a href="{{ hours_url }}" class="back-link">{{ ui.icon('izq') }}Volver a horarios{% if owner %} de {{ owner.name }}{% endif %}</a>
+<div class="ph"><h1>{% if bh %}Editar horario{% else %}Nuevo horario{% endif %}{% if owner %} de {{ owner.name }}{% endif %}</h1></div>
 
-<form method="POST" action="{% if bh %}/panel/horarios/{{ bh.id }}/edit{% else %}/panel/horarios/new{% endif %}" class="form-card hours-form">
+<form method="POST" action="{% if bh %}/panel/horarios/{{ bh.id }}/edit{% else %}/panel/horarios/new{{ staff_q }}{% endif %}" class="form-card hours-form">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
   {% if form_errors %}
