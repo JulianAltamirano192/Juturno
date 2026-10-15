@@ -67,7 +67,7 @@ Ya verifiqué contra el código los hallazgos 2, 3, 4, 5, 7, 8 y 9 (se confirman
 - La rama de actualización del webhook no compara `payment.booking_id` con el booking del `external_reference` (hoy no puede diferir desde el código, solo editando la base a mano).
 
 #### Pendientes de la 2b.0 (revisión del 2026-10-12; endurecimiento, para más adelante)
-- Panel sin `X-Frame-Options: DENY` / `Content-Security-Policy: frame-ancestors 'none'`.
+- ~~Panel sin `X-Frame-Options: DENY` / `Content-Security-Policy: frame-ancestors 'none'`.~~ **Hecho (rama `fix/clickjacking-headers`, D-040)**: middleware con headers de seguridad en toda respuesta.
 - Rechazar `CORS_ORIGINS="*"` en el validador de producción.
 - `GET /public/available-slots` sin rate limit (solo lo tiene `POST /public/bookings`).
 
