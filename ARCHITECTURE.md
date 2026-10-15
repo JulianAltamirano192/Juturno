@@ -482,7 +482,7 @@ Los routers de `mp_connect.py`, `mp_webhooks.py` y `webhooks.py` viven junto a s
 ## Ver también
 
 - [`README.md`](README.md) — Quickstart, env vars, comandos
-- [`DECISIONS.md`](DECISIONS.md) — ADRs (D-001 a D-041)
+- [`DECISIONS.md`](DECISIONS.md) — ADRs (D-001 a D-042)
 - [`DEPLOYMENT.md`](DEPLOYMENT.md) — Deploy, migraciones, backups, CI
 - [`API_REFERENCE.md`](API_REFERENCE.md) — Endpoints con schemas
 - [`RUNBOOK.md`](RUNBOOK.md) — Incidentes y diagnóstico

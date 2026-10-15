@@ -1131,6 +1131,30 @@ Commit: `92a24d9`.
 
 ---
 
+## D-042: Backup automático de la base en cada deploy
+
+**Fecha**: 2026-10-15
+
+**Contexto**: Julián quiso un backup de respaldo en cada PR o en cada migración. Mergear un PR no toca producción (el auto-deploy de Coolify está apagado): las migraciones corren en el deploy, cuando el entrypoint hace `alembic upgrade head`. El cron diario de `backup_db.sh` que describe DEPLOYMENT es solo una recomendación sin evidencia de estar instalado.
+
+**Decisión**: Julián eligió backup en cada deploy. Servicio `backup` de un solo uso en `docker-compose.prod.yml` (`postgres:16-alpine`): dump comprimido y verificado al volumen `db_backups`, rotación a las 20 copias más recientes, y `api` depende de él con `service_completed_successfully`. Con `exclude_from_hc: true` Coolify no lo cuenta en la salud.
+
+**Alternativas**:
+- **Cron diario en el VPS**: protege todos los días, pero no garantiza una copia justo antes de migrar y no queda en el repo.
+- **Backup en el entrypoint de la API**: necesita `pg_dump` 16 en la imagen de Python (repositorio PGDG en el Dockerfile) para una sola tarea.
+- **Solo cuando hay migraciones pendientes**: requiere comparar `alembic current` con `heads` desde un contenedor con el código; un backup por deploy cubre ese caso y es más simple (los deploys son pocos y la base es chica).
+
+**Consecuencias**:
+- **Ventaja** — Probado en un proyecto de compose aislado: el dump sale y se verifica, la rotación deja 20 copias, y con una contraseña incorrecta el servicio sale con error, no deja `.tmp` y la API no arrancaría.
+- **Ventaja** — También probado el restore documentado (recrear el esquema y `psql -v ON_ERROR_STOP=1 --single-transaction`) después de una migración simulada: la base vuelve exacta al estado del backup. Los dumps quedan `-rw-------` (`umask 077`).
+- **Costo** — `exclude_from_hc` no es del Compose Spec: `docker compose` a mano rechaza el archivo, así que los comandos manuales de DEPLOYMENT y RUNBOOK lo filtran con `sed '/exclude_from_hc/d' ... | docker compose -f - ...`.
+- **Riesgo** — Las copias viven en el mismo VPS: no sirven si se pierde el servidor. Deuda: copia fuera del VPS (S3 o `scp` periódico).
+- **Riesgo** — Si el backup falla (disco lleno), la API nueva no arranca hasta resolverlo: es a propósito (sin backup no se migra). Coolify recrea los contenedores al desplegar, así que probablemente el servicio quede caído y no siga el contenedor viejo (inferido, no verificado: confirmarlo en el primer deploy).
+- **Riesgo** — Agrega unos segundos a cada deploy (dump de una base chica).
+- **Pendiente** — Confirmar en el primer deploy que Coolify muestra el servicio `backup` como terminado y no como caído.
+
+---
+
 ## Roadmap de deuda técnica
 
 Ordenado por impacto/urgencia estimada:
