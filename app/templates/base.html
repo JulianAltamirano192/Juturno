@@ -226,6 +226,7 @@
 {% set _nav = [
   ("inicio", "Inicio", "/dashboard", _path == "/dashboard"),
   ("agenda", "Agenda", "/panel/agenda", _path.startswith("/panel/agenda")),
+  ("clientes", "Clientes", "/panel/clientes", _path.startswith("/panel/clientes")),
   ("estadisticas", "Estadísticas", "/panel/estadisticas", _path.startswith("/panel/estadisticas")),
   ("servicios", "Servicios", "/panel/services", _path.startswith("/panel/services")),
   ("personal", "Personal", "/panel/staff", _path.startswith("/panel/staff")),
@@ -268,7 +269,9 @@
 
   <nav class="tabbar" aria-label="Panel">
     {# "Estadísticas" no entra en 7 pestañas a 320 px: etiqueta corta solo acá. #}
-    {% for key, label, href, active in _nav %}
+    {# Clientes no entra como 8.ª pestaña: en celular vive dentro de Agenda. #}
+    {% for key, label, href, active in _nav if key != "clientes" %}
+    {% set active = active or (key == "agenda" and _path.startswith("/panel/clientes")) %}
     <a class="tab{% if active %} on{% endif %}" href="{{ href }}"{% if active %} aria-current="page"{% endif %}>{{ ui.icon(key) }}<span class="tab-l">{{ 'Números' if key == 'estadisticas' else label }}</span></a>
     {% endfor %}
   </nav>
