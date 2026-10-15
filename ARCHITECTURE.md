@@ -411,7 +411,7 @@ app/
 ├── limiter.py           — singleton Limiter de slowapi (separado para evitar imports circulares)
 ├── templates.py         — singleton Jinja2Templates (+ filtro Jinja `money`: "$ 18.000")
 ├── templates/           — plantillas Jinja2 (diseño neón: base.html responsive, landing.html standalone)
-├── static/              — montado en /static (StaticFiles): fonts/ (Sora + DM Sans woff2 + fonts.css), landing/*.webp, vendor/qrcode-1.4.4.js (qrcode-generator 1.4.4, MIT). Público sin auth
+├── static/              — montado en /static (StaticFiles): fonts/ (Sora + DM Sans woff2 + fonts.css), landing/*.webp, vendor/qrcode-1.4.4.js (qrcode-generator 1.4.4, MIT), brand/ (favicons e íconos PWA) y manifest.webmanifest (panel instalable; `base.html` lo enlaza, sin service worker; el MIME `application/manifest+json` se registra en `app/main.py`). Público sin auth
 ├── schemas.py           — schemas Pydantic compartidos: SlotQuery, AvailableSlotsResponse, BookingCreate
 ├── models.py            — modelos SQLModel y constraints
 ├── routers/
