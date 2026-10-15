@@ -32,6 +32,8 @@
   .progress[hidden]{display:none}
   .progress span{flex-grow:1;height:4px;border-radius:2px;background:rgba(255,255,255,.12)}
   .progress span.on{background:linear-gradient(90deg,var(--purple),var(--cyan));box-shadow:0 0 8px rgba(34,211,238,.5)}
+  .notice{margin:14px 0 0;background:rgba(34,211,238,.08);border:1px solid rgba(34,211,238,.4);color:var(--cyan-xl);border-radius:12px;padding:12px 14px;font-size:.92rem;line-height:1.4;white-space:pre-line;overflow-wrap:anywhere}
+  .notice strong{color:var(--text);font-weight:600}
   .banner{margin:14px 0 0;background:rgba(248,113,113,.1);border:1px solid rgba(248,113,113,.45);color:#fecaca;border-radius:12px;padding:12px 14px;font-size:.92rem;line-height:1.4}
   .card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:16px;margin-top:14px}
   .step-title{font-family:var(--display);font-size:1.35rem;font-weight:700;letter-spacing:-.02em;margin-top:18px}
@@ -97,6 +99,7 @@
     </div>
     <div class="progress" id="progress" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
   </header>
+  {% if public_notice %}<p class="notice" role="note"><strong>Aviso de {{ tenant_name }}:</strong> {{ public_notice }}</p>{% endif %}
   <div id="banner" class="banner" hidden></div>
   <main id="app"></main>
   <div class="cta-wrap" id="cta-wrap" hidden>

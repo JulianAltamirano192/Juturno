@@ -29,6 +29,9 @@ DEPOSIT_EXPIRATION_CHOICES = (15, 30, 60, 120, 360, 1440)
 # Largo máximo de la nota interna de un turno (solo la ve el dueño).
 BOOKING_NOTES_MAX = 500
 
+# Largo máximo del aviso destacado de la página pública (ítem 39).
+PUBLIC_NOTICE_MAX = 280
+
 
 class Tenant(SQLModel, table=True):
     """
@@ -69,6 +72,11 @@ class Tenant(SQLModel, table=True):
             "Minutos que tiene el cliente para pagar la seña antes de que "
             "la reserva expire y libere el horario. NULL = sin expiración."
         ),
+    )
+    public_notice: str | None = Field(
+        default=None,
+        sa_column=Column(String(PUBLIC_NOTICE_MAX), nullable=True),
+        description="Aviso destacado de la página pública. NULL = sin aviso.",
     )
     owner_email: str | None = Field(
         default=None,
