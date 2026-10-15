@@ -34,3 +34,35 @@
 {% macro logo() -%}
 <svg viewBox="6 0 92 92" aria-hidden="true"><defs><linearGradient id="jt-logo-grad" gradientUnits="userSpaceOnUse" x1="10" y1="10" x2="90" y2="90"><stop offset="0" stop-color="#e879f9"/><stop offset=".45" stop-color="#a78bfa"/><stop offset="1" stop-color="#22d3ee"/></linearGradient></defs><path d="M58 30V60C58 78 46 87 35 83C25 79 25 64 36 64C43 64 45 72 40 75C36 77 33 73 36 71" fill="none" stroke="url(#jt-logo-grad)" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/><g transform="rotate(18 58 29)"><g stroke="url(#jt-logo-grad)" stroke-width="3.4" fill="#08080b"><circle cx="45" cy="17" r="5"/><circle cx="71" cy="17" r="5"/><circle cx="58" cy="17" r="11.5"/></g><path d="M54 14.5V18.5M62 14.5V18.5" stroke="#fff" stroke-width="2.6" stroke-linecap="round"/></g></svg>
 {%- endmacro %}
+
+{# Rubro del negocio (ítem 14): desplegable + texto libre para "Otro". Lo usan
+   el registro y Ajustes; sin JS el campo de texto queda siempre visible. #}
+{% macro category_fields(selected, other) -%}
+<div class="field">
+  <label for="business_category">Rubro</label>
+  <select id="business_category" name="business_category" required>
+    <option value="" {% if not selected %}selected {% endif %}disabled>Elegí una opción</option>
+    {%- for code, label in business_categories.items() %}
+    <option value="{{ code }}"{% if selected == code %} selected{% endif %}>{{ label }}</option>
+    {%- endfor %}
+  </select>
+</div>
+<div class="field" id="category-other-field">
+  <label for="business_category_other">¿Cuál es tu rubro?</label>
+  <input type="text" id="business_category_other" name="business_category_other" maxlength="{{ business_category_other_max }}" placeholder="Ej: Cerrajería" value="{{ other or '' }}">
+</div>
+<script>
+(() => {
+  const select = document.getElementById("business_category");
+  const field = document.getElementById("category-other-field");
+  const input = document.getElementById("business_category_other");
+  const sync = () => {
+    const isOther = select.value === "otro";
+    field.style.display = isOther ? "" : "none";
+    input.required = isOther;
+  };
+  select.addEventListener("change", sync);
+  sync();
+})();
+</script>
+{%- endmacro %}

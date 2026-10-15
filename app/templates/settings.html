@@ -95,6 +95,17 @@
   </form>
 </section>
 
+<section class="form-card" aria-labelledby="h-category">
+  <h2 id="h-category" style="font-size:18px">Rubro del negocio</h2>
+  <form method="POST" action="/panel/settings/category" class="mp-row">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div style="flex:1 1 100%">
+      {{ ui.category_fields(tenant.business_category, tenant.business_category_other) }}
+    </div>
+    <button type="submit" class="btn-p">Guardar</button>
+  </form>
+</section>
+
 <section class="form-card" aria-labelledby="h-notice">
   <h2 id="h-notice" style="font-size:18px">Aviso en tu página de reservas</h2>
   <form method="POST" action="/panel/settings/notice" class="mp-row">

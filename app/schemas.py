@@ -4,6 +4,12 @@ from datetime import date, datetime
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.models import (
+    BUSINESS_CATEGORIES,
+    BUSINESS_CATEGORY_OTHER,
+    BUSINESS_CATEGORY_OTHER_MAX,
+)
+
 CLIENT_NAME_MAX = 60
 # Links y dominios (spam.com, www.x, https://...): el nombre llega al
 # WhatsApp que manda el negocio. TLDs explícitos para no rechazar "J.Perez".
@@ -28,6 +34,26 @@ def clean_client_name(raw: str) -> str:
     if not any(c.isalpha() for c in name) or _LINK.search(name):
         raise ValueError(name)
     return name
+
+
+def clean_business_category(
+    category: str | None, other: str | None
+) -> tuple[str, str | None]:
+    """Rubro elegido → (clave, texto de "Otro" o None).
+
+    ValueError("category") si la clave no está en la lista; ValueError("other")
+    si eligió "Otro" sin un texto de 2 a 60 caracteres sin caracteres de control.
+    """
+    if category not in BUSINESS_CATEGORIES:
+        raise ValueError("category")
+    if category != BUSINESS_CATEGORY_OTHER:
+        return category, None
+    text = " ".join(unicodedata.normalize("NFKC", other or "").split())
+    if not 2 <= len(text) <= BUSINESS_CATEGORY_OTHER_MAX:
+        raise ValueError("other")
+    if any(unicodedata.category(c)[0] == "C" for c in text):
+        raise ValueError("other")
+    return category, text
 
 
 class SlotQuery(BaseModel):

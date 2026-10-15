@@ -31,6 +31,7 @@ async def test_post_register_success(client: AsyncClient, db_session: AsyncSessi
         "name": "Estudio Central",
         "owner_email": "DuenO@Estudio.COM",
         "password": "supersecretpassword123",
+        "business_category": "peluqueria",
         "whatsapp_number": "1155555555",
         "slug": "estudio-central",
         "csrf_token": csrf_token,
@@ -83,6 +84,7 @@ async def test_post_register_duplicate_email_rejected(
         "name": "Negocio 2",
         "owner_email": "  CONTACTO@NEGOCIO.COM  ",
         "password": "otrapassword123",
+        "business_category": "peluqueria",
         "csrf_token": csrf_token,
     }
 
@@ -117,6 +119,7 @@ async def test_post_register_slug_collision_handled(
         "name": "Servicios Express",
         "owner_email": "segundo@express.com",
         "password": "password12345",
+        "business_category": "peluqueria",
         "csrf_token": csrf_token,
     }
 
@@ -144,6 +147,7 @@ async def test_post_register_short_password_rejected(client: AsyncClient):
         "name": "Negocio Corto",
         "owner_email": "corto@negocio.com",
         "password": "12345",
+        "business_category": "peluqueria",
         "csrf_token": csrf_token,
     }
 
@@ -164,6 +168,7 @@ async def test_post_register_invalid_csrf_rejected(client: AsyncClient):
         "name": "Negocio CSRF",
         "owner_email": "csrf@negocio.com",
         "password": "password12345",
+        "business_category": "peluqueria",
         "csrf_token": "token_formulario",
     }
 

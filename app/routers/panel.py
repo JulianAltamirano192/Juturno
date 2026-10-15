@@ -43,7 +43,11 @@ from app.mp_connect import (
     mp_authorization_redirect,
 )
 from app.phone import InvalidPhoneError, normalize_whatsapp_phone
-from app.schemas import MANUAL_BOOKING_KEY_PREFIX, clean_client_name
+from app.schemas import (
+    MANUAL_BOOKING_KEY_PREFIX,
+    clean_business_category,
+    clean_client_name,
+)
 from app.services import effective_deposit
 from app.templates import templates
 
@@ -518,6 +522,14 @@ _DEPOSIT_FLASH = {
     "invalid": "Elegí una de las opciones de la lista.",
 }
 
+_CATEGORY_FLASH = {
+    "saved": "Guardamos el rubro de tu negocio.",
+    "invalid": (
+        "Elegí un rubro de la lista o, si elegiste Otro, escribí el tuyo "
+        "(entre 2 y 60 caracteres)."
+    ),
+}
+
 _NOTICE_FLASH = {
     "saved": "Guardamos el aviso de tu página de reservas.",
     "removed": "Sacamos el aviso de tu página de reservas.",
@@ -552,6 +564,7 @@ async def panel_settings(
     deposit: str | None = None,
     whatsapp: str | None = None,
     notice: str | None = None,
+    category: str | None = None,
     tenant: Tenant = Depends(get_current_tenant_from_session),
 ):
     csrf_token = generate_csrf_token(request)
@@ -563,6 +576,7 @@ async def panel_settings(
         (deposit, _DEPOSIT_FLASH),
         (whatsapp, _WHATSAPP_FLASH),
         (notice, _NOTICE_FLASH),
+        (category, _CATEGORY_FLASH),
     ):
         flash = messages.get(value or "")
         if flash:
@@ -693,6 +707,34 @@ async def panel_deposit_expiration(
     await session.commit()
     return RedirectResponse(
         url="/panel/settings?deposit=saved", status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
+@router.post("/panel/settings/category")
+async def panel_business_category(
+    request: Request,
+    business_category: Annotated[str | None, Form()] = None,
+    business_category_other: Annotated[str | None, Form()] = None,
+    tenant: Tenant = Depends(get_current_tenant_from_session),
+    session: AsyncSession = Depends(get_db),
+):
+    """Rubro del negocio: uno de la lista o "otro" con texto libre."""
+    await validate_csrf(request)
+    try:
+        category, other = clean_business_category(
+            business_category, business_category_other
+        )
+    except ValueError:
+        return RedirectResponse(
+            url="/panel/settings?category=invalid",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    tenant.business_category = category
+    tenant.business_category_other = other
+    session.add(tenant)
+    await session.commit()
+    return RedirectResponse(
+        url="/panel/settings?category=saved", status_code=status.HTTP_303_SEE_OTHER
     )
 
 

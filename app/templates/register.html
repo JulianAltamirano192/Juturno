@@ -33,6 +33,8 @@
     <p class="field-hint" id="pw-rule">Mínimo 8 caracteres</p>
   </div>
 
+  {{ ui.category_fields(form_data.business_category if form_data else None, form_data.business_category_other if form_data else None) }}
+
   <div class="field">
     <label for="whatsapp_number">WhatsApp del negocio <span class="opt">(opcional)</span></label>
     <p class="field-desc">Te avisamos ahí cuando entra un turno nuevo.</p>
