@@ -623,7 +623,6 @@ async def panel_settings(
     logo: str | None = None,
     brand: str | None = None,
     tenant: Tenant = Depends(get_current_tenant_from_session),
-    session: AsyncSession = Depends(get_db),
 ):
     csrf_token = generate_csrf_token(request)
     # Solo mensajes fijos: nunca se refleja el query param.
@@ -643,11 +642,6 @@ async def panel_settings(
         if flash:
             flash_error = value in _MP_FLASH_ERRORS or value in _FLASH_ERRORS
             break
-    logo_updated_at = (
-        await session.execute(
-            select(col(TenantLogo.updated_at)).where(TenantLogo.tenant_id == tenant.id)
-        )
-    ).scalar_one_or_none()
     response = templates.TemplateResponse(
         request,
         "settings.html",
@@ -660,7 +654,7 @@ async def panel_settings(
             "horizon_choices": BOOKING_HORIZON_CHOICES,
             "deposit_choices": DEPOSIT_EXPIRATION_CHOICES,
             "notice_max": PUBLIC_NOTICE_MAX,
-            "logo_version": logo_version(logo_updated_at),
+            "logo_version": logo_version(tenant.logo_updated_at),
             "logo_max_mb": LOGO_UPLOAD_MAX_BYTES // (1024 * 1024),
             "brand_color": tenant.brand_color or DEFAULT_BRAND_COLOR,
         },
@@ -931,6 +925,8 @@ async def panel_logo_upload(
             index_elements=["tenant_id"], set_={"data": webp, "updated_at": now}
         )
     )
+    tenant.logo_updated_at = now
+    session.add(tenant)
     await session.commit()
     return _logo_redirect("saved")
 
@@ -943,6 +939,8 @@ async def panel_logo_remove(
 ):
     await validate_csrf(request)
     await session.execute(delete(TenantLogo).where(TenantLogo.tenant_id == tenant.id))
+    tenant.logo_updated_at = None
+    session.add(tenant)
     await session.commit()
     return _logo_redirect("removed")
 

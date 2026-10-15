@@ -1027,6 +1027,7 @@ Commit: `92a24d9`.
 **Consecuencias**:
 - **Ventaja** — Sin infraestructura ni secrets nuevos, y el logo entra en los backups de Postgres que ya se suben a S3 (`backup_db.sh`). Lo servido son siempre bytes generados por la app, y se borra el EXIF/GPS.
 - **Riesgo** — Descartar el perfil ICC puede cambiar levemente los colores de fotos en gamut ancho (Display P3).
+- **Desnormalización (agregado 2026-10-15)** — El panel no mostraba el logo (Julián lo notó en prod). `Tenant.logo_updated_at` copia `tenant_logo.updated_at` para que `base.html` lo muestre sin una consulta extra por página (migración `58769fb62c2a`, con backfill). Costo: los dos valores se escriben juntos en los handlers del panel; un escritor nuevo de `tenant_logo` tiene que mantener la columna.
 - **Riesgo** — Decodificar es CPU y RAM en el proceso de la API. Lo acotan dos topes de píxeles (50 MP declarados, 25 MP decodificados), un semáforo de 2 decodificaciones a la vez y rate limit de 10/min por IP en `POST /panel/settings/logo` (security-auditor, MEDIA). `GET /t/{slug}/logo` tiene 120/min por IP y caché de 1 h.
 - **Riesgo** — Cada pedido de `GET /t/{slug}/logo` que no pega en la caché del navegador lee los bytes de la base (hasta unos KB por logo); sin CDN delante de `/t/*/logo` eso es carga en Postgres.
 - **Riesgo** — Pillow es una dependencia nueva que parsea archivos no confiables: hay que mantenerla al día (`pillow>=12.2.0`).

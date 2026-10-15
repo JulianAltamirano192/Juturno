@@ -138,6 +138,14 @@ class Tenant(SQLModel, table=True):
         sa_column=Column(String(FACEBOOK_MAX), nullable=True),
         description='Usuario de Facebook o "profile.php?id=N", sin dominio.',
     )
+    logo_updated_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+        description=(
+            "Cuándo se subió el logo (tenant_logo); NULL = sin logo. Va en Tenant "
+            "para que el panel lo muestre sin consultar la tabla en cada página."
+        ),
+    )
     owner_email: str | None = Field(
         default=None,
         index=True,
@@ -204,6 +212,8 @@ class TenantLogo(SQLModel, table=True):
     """
     Logo del negocio (ítem 15). Tabla aparte para no traer los bytes en cada
     request que lee Tenant. Siempre WebP: lo re-codifica app/logo.py.
+    Quien escriba o borre esta fila tiene que actualizar Tenant.logo_updated_at
+    en la misma transacción (hoy, solo los handlers del panel).
     """
 
     __tablename__ = "tenant_logo"

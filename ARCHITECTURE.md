@@ -144,6 +144,7 @@ El tenant guarda además: `slug` (único), `timezone` (default `America/Argentin
 3. Aplica la rotación EXIF (`exif_transpose`), achica a 512 px de lado (`thumbnail`) y guarda WebP calidad 85 sin EXIF ni perfil ICC. Se borra el EXIF porque en un celular trae la ubicación GPS.
 4. Corre en `run_in_threadpool` (decodificar bloquea) y hace upsert (`INSERT ... ON CONFLICT DO UPDATE`).
 5. `GET /t/{slug}/logo` sirve esos bytes con `image/webp`, `Cache-Control: public, max-age=3600` (un logo quitado deja de verse en una hora), rate limit 120/min por IP, `nosniff` y `Content-Security-Policy: default-src 'none'; sandbox; frame-ancestors 'none'`. La página pública lo pide con `?v=<updated_at en ms>` (`logo_version`) para que un reemplazo no muestre el viejo.
+6. `Tenant.logo_updated_at` copia la fecha de subida (NULL = sin logo) y se escribe en la misma transacción que `tenant_logo` al subir o quitar. Así el header del panel (`ui.tenant_avatar` en `base.html`, barra lateral y header móvil), la página pública y Ajustes saben si hay logo y su versión sin consultar la tabla en cada página. Quien escriba `tenant_logo` tiene que mantener la columna.
 
 Lo servido son siempre bytes generados por la app, nunca los del usuario. El logo entra en los backups de Postgres (y con ellos en S3). Límite conocido: el semáforo de 2 subidas es por proceso (alcanza con una sola réplica).
 
@@ -456,7 +457,7 @@ app/
 - Cookie firmada (`juturno_session`) → `routers/panel.py` o `routers/auth.py`
 - Header `X-Tenant-API-Key` → `routers/api.py`
 
-Los routers de `mp_connect.py`, `mp_webhooks.py` y `webhooks.py` viven junto a su integración. La suite tiene 801 tests en 55 archivos (`tests/`), que corren con `./scripts/test.sh`.
+Los routers de `mp_connect.py`, `mp_webhooks.py` y `webhooks.py` viven junto a su integración. La suite tiene 806 tests en 56 archivos (`tests/`), que corren con `./scripts/test.sh`.
 
 ---
 

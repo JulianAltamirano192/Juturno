@@ -33,7 +33,7 @@ curl http://localhost:8000/health
 
 # 7. Correr tests
 ./scripts/test.sh
-# 801 tests en 55 archivos (./scripts/test.sh --collect-only -q)
+# 806 tests en 56 archivos (./scripts/test.sh --collect-only -q)
 ```
 
 > **Nota clave**: Los tests corren **dentro del contenedor `api`**. `./scripts/test.sh` arma `TEST_DATABASE_URL` leyendo `POSTGRES_PASSWORD` del `.env` y ejecuta `docker compose exec ... api pytest <args>` (sin args corre `-v`). La URL apunta al servicio `db` (no `localhost`). Con `TEST_DATABASE_URL` seteada el scheduler NO arranca y el rate limiter queda deshabilitado.
