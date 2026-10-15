@@ -73,6 +73,12 @@ Tenant (1) ──────< Service
      │       ├── day_of_week (0=Lun..6=Dom)
      │       └── start_time / end_time (Time, sin TZ); varias franjas por día (horario partido), sin UNIQUE (D-041)
      │
+     ├──< BlockedPeriod (D-043)
+     │       ├── staff_id NULL = bloquea al negocio; = ID solo a ese profesional (ON DELETE CASCADE)
+     │       ├── start_date / end_date (Date inclusive, fecha local del tenant)
+     │       ├── reason (opcional, <= 80)
+     │       └── CHECK ck_blocked_period_date_order (end_date >= start_date)
+     │
      ├──< Booking
      │       ├── service_id, staff_id (nullable, ON DELETE SET NULL)
      │       ├── client_name, client_phone (formato 549XXXXXXXXXX)
@@ -204,10 +210,12 @@ Lo servido son siempre bytes generados por la app, nunca los del usuario. El log
 - **Con filas pero sin día**: día **cerrado** (lista vacía).
 - **Reemplazo (D-041)**: si un profesional tiene al menos una franja, sus horarios reemplazan por completo a los del negocio para esa persona y los días sin franja quedan cerrados; sin franjas usa el del negocio. Cargar la primera franja de un profesional cierra todos sus otros días.
 - Sin UNIQUE por día (se borró `uq_business_hours_tenant_staff_day`, migración `9a9d04b9ff5e`): negocio y profesional pueden tener horario partido. Los solapamientos los valida el panel por dueño (`staff_id` o `NULL`); no hay constraint en la DB.
+- **Días bloqueados (D-043)**: tabla `blocked_period` (feriados, vacaciones) que anula el horario de esas fechas; ver 5.2. El panel rechaza bloquear fechas con turnos `pending`/`confirmed` (del negocio, o del profesional si el bloqueo es suyo).
 - El panel (`/panel/horarios?staff=ID`) edita el horario del negocio o el de un profesional; ver `API_REFERENCE.md`.
 
 ### 5.2 `resolve_day_windows(session, tenant_id, day_of_week, day_date, tenant_timezone, staff_id=None)`
 Lógica de prioridad:
+0. Si el día está bloqueado (`BlockedPeriod` con `start_date <= day_date <= end_date` del negocio, `staff_id IS NULL`, o de ese `staff_id`) → `[]` (D-043). Es lo primero que se mira, así que ni `compute_available_slots` ni `is_bookable_start` ofrecen o aceptan turnos esos días. La reserva manual del panel no pasa por acá.
 1. Si `staff_id` → busca `BusinessHours(tenant_id, staff_id, day_of_week)`.
    - Si hay → usa esas ventanas.
    - Si no hay → ¿tiene el staff **alguna** fila en cualquier día?
@@ -458,7 +466,7 @@ app/
 - Cookie firmada (`juturno_session`) → `routers/panel.py` o `routers/auth.py`
 - Header `X-Tenant-API-Key` → `routers/api.py`
 
-Los routers de `mp_connect.py`, `mp_webhooks.py` y `webhooks.py` viven junto a su integración. La suite tiene 815 tests en 57 archivos (`tests/`), que corren con `./scripts/test.sh`.
+Los routers de `mp_connect.py`, `mp_webhooks.py` y `webhooks.py` viven junto a su integración. La suite tiene 838 tests en 58 archivos (`tests/`), que corren con `./scripts/test.sh`.
 
 ---
 
