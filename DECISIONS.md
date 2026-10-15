@@ -1103,7 +1103,8 @@ Commit: `92a24d9`.
 - **Ventaja** — `nosniff` solo afecta scripts y estilos con MIME incorrecto; `.js`/`.css` vienen de la tabla de Python y webp/woff2/webmanifest se registran en `main.py` (test de estáticos).
 - **Riesgo** — Los 500 no manejados no llevan los headers (texto fijo, sin nada que enmarcar).
 - **Riesgo** — `BaseHTTPMiddleware` con versiones de Starlette sin fijar: si aparece ruido de `No response returned.` en Sentry por clientes que cortan, pasar a un middleware ASGI puro.
-- **Deuda** — CSP con `script-src` en el panel; confirmar HSTS en prod (`curl -sI https://juturno.com | grep -i strict`).
+- **Deuda** — CSP con `script-src` en el panel.
+- **HSTS (agregado después, 2026-10-15)** — `curl -sI https://juturno.com` no mostraba `Strict-Transport-Security` (Cloudflare no lo mandaba). Julián eligió sumarlo en la app y no en Cloudflare: queda en el repo y con test. `max-age=31536000` sin `includeSubDomains` (no sabemos qué otros subdominios hay) ni `preload`. No cubre los 500 no manejados, igual que el resto del middleware. **Para revertirlo** no alcanza con sacar el header (los navegadores guardan la política un año): hay que servir `Strict-Transport-Security: max-age=0` por HTTPS hasta que los visitantes vuelvan. El riesgo real es que HTTPS se rompa en `juturno.com` o `api.juturno.com` (por ejemplo, Cloudflare en "DNS only" sin certificado en Traefik): los que ya visitaron el sitio no podrían saltear el aviso del navegador. Si se activa HSTS también en Cloudflare, definirlo en un solo lugar.
 
 ---
 
