@@ -164,6 +164,27 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Para todas las respuestas (D-039): ninguna página se puede meter en un iframe
+# ajeno (clickjacking sobre el panel) y el navegador no adivina tipos de archivo.
+# setdefault: /t/{slug} y el logo traen su propia CSP (con frame-ancestors;
+# si una ruta nueva pone CSP sin él, X-Frame-Options sigue cubriendo). Quedan
+# afuera los 500 no manejados (los arma ServerErrorMiddleware, por fuera de
+# este middleware): son JSON o texto plano, nada útil para enmarcar.
+_SECURITY_HEADERS = {
+    "Content-Security-Policy": "frame-ancestors 'none'; base-uri 'none'; object-src 'none'",
+    "X-Frame-Options": "DENY",  # navegadores que no entienden frame-ancestors
+    "X-Content-Type-Options": "nosniff",
+}
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    for name, value in _SECURITY_HEADERS.items():
+        response.headers.setdefault(name, value)
+    return response
+
+
 # The slim image has no /etc/mime.types, so these would be served as octet-stream.
 mimetypes.add_type("image/webp", ".webp")
 mimetypes.add_type("font/woff2", ".woff2")
