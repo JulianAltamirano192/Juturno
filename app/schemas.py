@@ -8,6 +8,8 @@ from app.models import (
     BUSINESS_CATEGORIES,
     BUSINESS_CATEGORY_OTHER,
     BUSINESS_CATEGORY_OTHER_MAX,
+    FACEBOOK_MAX,
+    LOCALITY_MAX,
 )
 
 CLIENT_NAME_MAX = 60
@@ -54,6 +56,97 @@ def clean_business_category(
     if any(unicodedata.category(c)[0] == "C" for c in text):
         raise ValueError("other")
     return category, text
+
+
+# Usuarios de redes: Instagram admite letras, números, "." y "_" (hasta 30).
+# Facebook: usuario (letras, números, ".") o slug de página sin usuario, que
+# lleva guiones y el id al final ("Peluqueria-Juan-100063123456").
+# El lookahead exige una letra o número: "." o ".." llevarían a la raíz del sitio.
+_INSTAGRAM_USER = re.compile(r"(?=.*[A-Za-z0-9])[A-Za-z0-9._]{1,30}")
+_FACEBOOK_USER = re.compile(rf"(?=.*[A-Za-z0-9])[A-Za-z0-9.-]{{5,{FACEBOOK_MAX}}}")
+# [0-9] y no \d: \d acepta dígitos de otros alfabetos.
+_FACEBOOK_PROFILE_ID = re.compile(
+    r"profile\.php\?id=([0-9]{1,20})(?:&.*)?", re.IGNORECASE
+)
+_FACEBOOK_PEOPLE = re.compile(
+    r"people/[^/?#]+/([0-9]{1,20})/?(?:[?#].*)?", re.IGNORECASE
+)
+_SOCIAL_URL = {
+    "instagram": re.compile(
+        r"(?:https?://)?(?:www\.|m\.)?instagram\.com/", re.IGNORECASE
+    ),
+    "facebook": re.compile(
+        r"(?:https?://)?(?:www\.|m\.|web\.)?(?:facebook|fb)\.com/", re.IGNORECASE
+    ),
+}
+# Secciones de la red: un link a una publicación o a "explorar" no es un perfil.
+_SOCIAL_RESERVED = {
+    "instagram": {"p", "reel", "reels", "explore", "stories", "accounts", "tv"},
+    "facebook": {
+        "people",
+        "pages",
+        "share",
+        "groups",
+        "watch",
+        "events",
+        "photo",
+        "photo.php",
+        "story.php",
+        "marketplace",
+        "profile.php",
+        "permalink.php",
+    },
+}
+
+
+def _clean_social(raw: str | None, network: str) -> str | None:
+    """Usuario o link de la red → usuario a guardar; vacío = None.
+
+    Se guarda solo el usuario y el link lo arma la plantilla: nunca se
+    renderiza una URL escrita por el dueño. ValueError si no es válido.
+    """
+    text = (raw or "").strip()
+    if not text:
+        return None
+    url = _SOCIAL_URL[network].match(text)
+    if url:
+        text = text[url.end() :]
+        if network == "facebook":
+            profile = _FACEBOOK_PROFILE_ID.fullmatch(
+                text
+            ) or _FACEBOOK_PEOPLE.fullmatch(text)
+            if profile:
+                return f"profile.php?id={profile[1]}"
+        # instagram.com/usuario/reels?hl=es → usuario
+        text = re.split(r"[/?#]", text, maxsplit=1)[0]
+    text = text.removeprefix("@")
+    if text.lower() in _SOCIAL_RESERVED[network]:
+        raise ValueError(network)
+    if network == "instagram" and _INSTAGRAM_USER.fullmatch(text):
+        return text.lower()  # Instagram no distingue mayúsculas
+    if network == "facebook" and _FACEBOOK_USER.fullmatch(text):
+        return text
+    raise ValueError(network)
+
+
+def clean_business_profile(
+    locality: str | None, instagram: str | None, facebook: str | None
+) -> tuple[str | None, str | None, str | None]:
+    """Perfil público (ítem 15) → (localidad, instagram, facebook); vacío = None.
+
+    ValueError("locality" | "instagram" | "facebook") con el primer campo inválido.
+    """
+    place = " ".join(unicodedata.normalize("NFKC", locality or "").split()) or None
+    if place is not None and (
+        not 2 <= len(place) <= LOCALITY_MAX
+        or any(unicodedata.category(c)[0] == "C" for c in place)
+    ):
+        raise ValueError("locality")
+    return (
+        place,
+        _clean_social(instagram, "instagram"),
+        _clean_social(facebook, "facebook"),
+    )
 
 
 class SlotQuery(BaseModel):

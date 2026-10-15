@@ -1,5 +1,7 @@
+import asyncio
 import csv
 import io
+import re
 import unicodedata
 from calendar import monthrange
 from datetime import date, datetime, time, timedelta, timezone
@@ -11,10 +13,13 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, delete, func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col
+from starlette.concurrency import run_in_threadpool
+from starlette.datastructures import UploadFile
 
 from app.auth import get_current_tenant_from_session
 from app.booking_actions import (
@@ -25,6 +30,8 @@ from app.booking_actions import (
 from app.config import settings
 from app.csrf import generate_csrf_token, set_csrf_cookie, validate_csrf
 from app.database import get_db
+from app.limiter import limiter
+from app.logo import LOGO_UPLOAD_MAX_BYTES, logo_version, process_logo
 from app.models import (
     BOOKING_HORIZON_CHOICES,
     BOOKING_NOTES_MAX,
@@ -36,6 +43,7 @@ from app.models import (
     Service,
     Staff,
     Tenant,
+    TenantLogo,
 )
 from app.mp_connect import (
     clear_mp_connection,
@@ -46,6 +54,7 @@ from app.phone import InvalidPhoneError, normalize_whatsapp_phone
 from app.schemas import (
     MANUAL_BOOKING_KEY_PREFIX,
     clean_business_category,
+    clean_business_profile,
     clean_client_name,
 )
 from app.services import effective_deposit
@@ -537,6 +546,39 @@ _NOTICE_FLASH = {
     "invalid": "El aviso tiene caracteres no permitidos.",
 }
 
+_PROFILE_FLASH = {
+    "saved": "Guardamos el perfil de tu negocio.",
+    "invalid_locality": "La localidad tiene que tener entre 2 y 60 caracteres.",
+    "invalid_instagram": (
+        "Ese usuario de Instagram no es válido. Escribí solo el usuario "
+        "(por ejemplo @minegocio) o pegá el link de tu perfil."
+    ),
+    "invalid_facebook": (
+        "Esa página de Facebook no es válida. Escribí el usuario o pegá el "
+        "link de tu página."
+    ),
+}
+
+_LOGO_FLASH = {
+    "saved": "Guardamos el logo de tu negocio.",
+    "removed": "Sacamos el logo de tu negocio.",
+    "not_image": "No pudimos leer la imagen. Subí un archivo JPG, PNG o WebP.",
+    "too_big": (
+        f"La imagen pesa más de {LOGO_UPLOAD_MAX_BYTES // (1024 * 1024)} MB. "
+        "Probá con una más liviana."
+    ),
+}
+
+_FLASH_ERRORS = {
+    "invalid",
+    "too_long",
+    "invalid_locality",
+    "invalid_instagram",
+    "invalid_facebook",
+    "not_image",
+    "too_big",
+}
+
 
 def _clean_owner_text(raw: str | None, max_len: int) -> tuple[str | None, str | None]:
     """Texto libre del dueño (nota de turno, aviso público) → (texto, error).
@@ -565,7 +607,10 @@ async def panel_settings(
     whatsapp: str | None = None,
     notice: str | None = None,
     category: str | None = None,
+    profile: str | None = None,
+    logo: str | None = None,
     tenant: Tenant = Depends(get_current_tenant_from_session),
+    session: AsyncSession = Depends(get_db),
 ):
     csrf_token = generate_csrf_token(request)
     # Solo mensajes fijos: nunca se refleja el query param.
@@ -577,11 +622,18 @@ async def panel_settings(
         (whatsapp, _WHATSAPP_FLASH),
         (notice, _NOTICE_FLASH),
         (category, _CATEGORY_FLASH),
+        (profile, _PROFILE_FLASH),
+        (logo, _LOGO_FLASH),
     ):
         flash = messages.get(value or "")
         if flash:
-            flash_error = value in _MP_FLASH_ERRORS or value in ("invalid", "too_long")
+            flash_error = value in _MP_FLASH_ERRORS or value in _FLASH_ERRORS
             break
+    logo_updated_at = (
+        await session.execute(
+            select(col(TenantLogo.updated_at)).where(TenantLogo.tenant_id == tenant.id)
+        )
+    ).scalar_one_or_none()
     response = templates.TemplateResponse(
         request,
         "settings.html",
@@ -594,6 +646,8 @@ async def panel_settings(
             "horizon_choices": BOOKING_HORIZON_CHOICES,
             "deposit_choices": DEPOSIT_EXPIRATION_CHOICES,
             "notice_max": PUBLIC_NOTICE_MAX,
+            "logo_version": logo_version(logo_updated_at),
+            "logo_max_mb": LOGO_UPLOAD_MAX_BYTES // (1024 * 1024),
         },
     )
     set_csrf_cookie(response, csrf_token)
@@ -760,6 +814,95 @@ async def panel_public_notice(
     return RedirectResponse(
         url=f"/panel/settings?notice={result}", status_code=status.HTTP_303_SEE_OTHER
     )
+
+
+@router.post("/panel/settings/profile")
+async def panel_business_profile(
+    request: Request,
+    locality: Annotated[str | None, Form()] = None,
+    instagram: Annotated[str | None, Form()] = None,
+    facebook: Annotated[str | None, Form()] = None,
+    tenant: Tenant = Depends(get_current_tenant_from_session),
+    session: AsyncSession = Depends(get_db),
+):
+    """Localidad y redes de la página pública; vacío = sin dato."""
+    await validate_csrf(request)
+    try:
+        tenant.locality, tenant.instagram, tenant.facebook = clean_business_profile(
+            locality, instagram, facebook
+        )
+    except ValueError as exc:
+        return RedirectResponse(
+            url=f"/panel/settings?profile=invalid_{exc.args[0]}",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    session.add(tenant)
+    await session.commit()
+    return RedirectResponse(
+        url="/panel/settings?profile=saved", status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
+def _logo_redirect(result: str) -> RedirectResponse:
+    return RedirectResponse(
+        url=f"/panel/settings?logo={result}", status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
+# Decodificar imágenes es CPU y RAM: pocas a la vez para no tirar la API.
+_LOGO_SLOTS = asyncio.Semaphore(2)
+
+
+@router.post("/panel/settings/logo")
+@limiter.limit("10/minute")
+async def panel_logo_upload(
+    request: Request,
+    tenant: Tenant = Depends(get_current_tenant_from_session),
+    session: AsyncSession = Depends(get_db),
+):
+    """Sube o reemplaza el logo; se guarda re-codificado (app/logo.py)."""
+    # Antes de leer el body: el form lo bajaría entero a disco. Sin
+    # Content-Length (chunked) no se sabe cuánto es, así que tampoco se acepta.
+    length = request.headers.get("content-length", "")
+    if (
+        not re.fullmatch(r"[0-9]+", length)
+        or int(length) > LOGO_UPLOAD_MAX_BYTES + 64 * 1024
+    ):
+        return _logo_redirect("too_big")
+    await validate_csrf(request)
+    upload = (await request.form()).get("logo")
+    if not isinstance(upload, UploadFile):
+        return _logo_redirect("not_image")
+    raw = await upload.read(LOGO_UPLOAD_MAX_BYTES + 1)
+    if len(raw) > LOGO_UPLOAD_MAX_BYTES:
+        return _logo_redirect("too_big")
+    try:
+        async with _LOGO_SLOTS:
+            webp = await run_in_threadpool(process_logo, raw)
+    except ValueError:
+        return _logo_redirect("not_image")
+    now = datetime.now(timezone.utc)
+    await session.execute(
+        pg_insert(TenantLogo)
+        .values(tenant_id=tenant.id, data=webp, updated_at=now)
+        .on_conflict_do_update(
+            index_elements=["tenant_id"], set_={"data": webp, "updated_at": now}
+        )
+    )
+    await session.commit()
+    return _logo_redirect("saved")
+
+
+@router.post("/panel/settings/logo/remove")
+async def panel_logo_remove(
+    request: Request,
+    tenant: Tenant = Depends(get_current_tenant_from_session),
+    session: AsyncSession = Depends(get_db),
+):
+    await validate_csrf(request)
+    await session.execute(delete(TenantLogo).where(TenantLogo.tenant_id == tenant.id))
+    await session.commit()
+    return _logo_redirect("removed")
 
 
 # ---------------------------------------------------------------------------

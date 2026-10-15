@@ -106,6 +106,53 @@
   </form>
 </section>
 
+<section class="form-card" aria-labelledby="h-profile">
+  <h2 id="h-profile" style="font-size:18px">Perfil de tu negocio</h2>
+  <p style="color:var(--muted);font-size:14px;margin-top:6px">Se muestra en tu página de reservas. Dejá vacío lo que no quieras mostrar.</p>
+  <form method="POST" action="/panel/settings/profile" class="mp-row">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div style="flex:1 1 100%">
+      <div class="field">
+        <label for="locality">Localidad o barrio</label>
+        <input type="text" id="locality" name="locality" maxlength="60" placeholder="Ej: Palermo, CABA" value="{{ tenant.locality or '' }}">
+      </div>
+      <div class="field">
+        <label for="instagram">Instagram (usuario o link)</label>
+        <input type="text" id="instagram" name="instagram" maxlength="200" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="Ej: @minegocio" value="{{ tenant.instagram or '' }}">
+      </div>
+      <div class="field">
+        <label for="facebook">Facebook (usuario o link de la página)</label>
+        <input type="text" id="facebook" name="facebook" maxlength="200" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="Ej: facebook.com/minegocio" value="{{ tenant.facebook or '' }}">
+      </div>
+    </div>
+    <button type="submit" class="btn-p">Guardar</button>
+  </form>
+</section>
+
+<section class="form-card" aria-labelledby="h-logo">
+  <h2 id="h-logo" style="font-size:18px">Logo</h2>
+  <div class="mp-row">
+    {% if logo_version and tenant.slug %}
+    <img src="/t/{{ tenant.slug }}/logo?v={{ logo_version }}" alt="Logo actual" width="64" height="64" style="width:64px;height:64px;border-radius:50%;object-fit:cover;flex-shrink:0">
+    {% endif %}
+    <p>Se muestra en redondo en tu página de reservas: usá una imagen cuadrada, como la foto de perfil de Instagram. JPG, PNG o WebP de hasta {{ logo_max_mb }} MB.</p>
+  </div>
+  <form method="POST" action="/panel/settings/logo" enctype="multipart/form-data" class="mp-row">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="field" style="flex:1 1 auto;min-width:0">
+      <label for="logo">{% if logo_version %}Cambiar logo{% else %}Subir logo{% endif %}</label>
+      <input type="file" id="logo" name="logo" accept="image/jpeg,image/png,image/webp" required>
+    </div>
+    <button type="submit" class="btn-p">Subir</button>
+  </form>
+  {% if logo_version %}
+  <form method="POST" action="/panel/settings/logo/remove" class="mp-row">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button type="submit" class="btn-sm danger">Quitar logo</button>
+  </form>
+  {% endif %}
+</section>
+
 <section class="form-card" aria-labelledby="h-notice">
   <h2 id="h-notice" style="font-size:18px">Aviso en tu página de reservas</h2>
   <form method="POST" action="/panel/settings/notice" class="mp-row">

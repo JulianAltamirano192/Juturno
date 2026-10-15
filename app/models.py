@@ -8,6 +8,7 @@ from sqlalchemy import (
     DateTime,
     Index,
     Integer,
+    LargeBinary,
     Numeric,
     String,
     UniqueConstraint,
@@ -50,6 +51,11 @@ BUSINESS_CATEGORIES = {
 }
 BUSINESS_CATEGORY_OTHER = "otro"
 BUSINESS_CATEGORY_OTHER_MAX = 60
+
+# Perfil público del negocio (ítem 15).
+LOCALITY_MAX = 60
+INSTAGRAM_MAX = 30
+FACEBOOK_MAX = 100
 
 
 class Tenant(SQLModel, table=True):
@@ -106,6 +112,21 @@ class Tenant(SQLModel, table=True):
         default=None,
         sa_column=Column(String(BUSINESS_CATEGORY_OTHER_MAX), nullable=True),
         description='Rubro escrito por el negocio; solo con business_category "otro".',
+    )
+    locality: str | None = Field(
+        default=None,
+        sa_column=Column(String(LOCALITY_MAX), nullable=True),
+        description="Localidad o barrio, texto libre (lo usará el buscador).",
+    )
+    instagram: str | None = Field(
+        default=None,
+        sa_column=Column(String(INSTAGRAM_MAX), nullable=True),
+        description="Usuario de Instagram, sin @ ni URL.",
+    )
+    facebook: str | None = Field(
+        default=None,
+        sa_column=Column(String(FACEBOOK_MAX), nullable=True),
+        description='Usuario de Facebook o "profile.php?id=N", sin dominio.',
     )
     owner_email: str | None = Field(
         default=None,
@@ -166,6 +187,23 @@ class Tenant(SQLModel, table=True):
     api_keys: list["ApiKey"] = Relationship(
         back_populates="tenant",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"},
+    )
+
+
+class TenantLogo(SQLModel, table=True):
+    """
+    Logo del negocio (ítem 15). Tabla aparte para no traer los bytes en cada
+    request que lee Tenant. Siempre WebP: lo re-codifica app/logo.py.
+    """
+
+    __tablename__ = "tenant_logo"
+
+    tenant_id: int = Field(
+        foreign_key="tenant.id", primary_key=True, ondelete="CASCADE"
+    )
+    data: bytes = Field(sa_column=Column(LargeBinary(), nullable=False))
+    updated_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), nullable=False)
     )
 
 
