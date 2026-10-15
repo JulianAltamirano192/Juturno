@@ -1,3 +1,4 @@
+from datetime import date as date_type
 from datetime import datetime, timezone
 from datetime import time as time_type
 from decimal import Decimal
@@ -318,6 +319,39 @@ class BusinessHours(SQLModel, table=True):
         sa_column=Column("end_time", SATime, nullable=False),
         description="Hora de cierre (ej. 18:00).",
     )
+
+
+class BlockedPeriod(SQLModel, table=True):
+    """
+    Días bloqueados (feriados, vacaciones) del negocio o de un profesional,
+    de start_date a end_date inclusive, en fechas locales del tenant.
+
+    - staff_id = NULL → el negocio cierra: nadie atiende esos días.
+    - staff_id = <id>  → solo ese profesional no atiende.
+
+    resolve_day_windows devuelve [] para un día bloqueado, así que no hay
+    turnos ni se puede reservar. El panel no deja bloquear días con turnos
+    pendientes o confirmados (ítem 31).
+    """
+
+    __tablename__ = "blocked_period"
+    __table_args__ = (
+        CheckConstraint("end_date >= start_date", name="ck_blocked_period_date_order"),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    tenant_id: int = Field(foreign_key="tenant.id", index=True, ondelete="CASCADE")
+    staff_id: int | None = Field(
+        default=None,
+        foreign_key="staff.id",
+        index=True,
+        nullable=True,
+        ondelete="CASCADE",
+        description="NULL = bloqueo del negocio; valor = de ese profesional.",
+    )
+    start_date: date_type
+    end_date: date_type
+    reason: str | None = Field(default=None, max_length=80)
 
 
 class Booking(SQLModel, table=True):

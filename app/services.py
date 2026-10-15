@@ -99,6 +99,8 @@ async def resolve_day_windows(
     Devuelve la lista de ventanas (window_start, window_end) para el día dado.
 
     Lógica:
+    0. Si el día está bloqueado (BlockedPeriod del negocio o de ese staff_id)
+       → lista vacía.
     1. Si se pasa staff_id, busca filas de BusinessHours para (tenant_id, staff_id, day_of_week).
        Si hay → usa esas ventanas.
        Si no hay → cae al horario general del negocio (staff_id IS NULL).
@@ -109,9 +111,22 @@ async def resolve_day_windows(
     """
     from datetime import time as time_type
 
-    from sqlalchemy import and_, func, select
+    from sqlalchemy import and_, func, or_, select
 
-    from app.models import BusinessHours
+    from app.models import BlockedPeriod, BusinessHours
+
+    # Día bloqueado del negocio (o de este profesional) → sin ventanas.
+    blocked_owner = BlockedPeriod.staff_id.is_(None)
+    if staff_id is not None:
+        blocked_owner = or_(blocked_owner, BlockedPeriod.staff_id == staff_id)
+    blocked_stmt = select(func.count()).where(
+        BlockedPeriod.tenant_id == tenant_id,
+        BlockedPeriod.start_date <= day_date,
+        BlockedPeriod.end_date >= day_date,
+        blocked_owner,
+    )
+    if (await session.execute(blocked_stmt)).scalar_one():
+        return []
 
     FALLBACK_START = time_type(9, 0)
     FALLBACK_END = time_type(18, 0)

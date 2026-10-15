@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+
+{% block title %}Bloquear días{% if owner %} de {{ owner.name }}{% endif %} - {{ tenant.name }}{% endblock %}
+
+{% block head %}
+<style>
+  .blocked-form{max-width:640px}
+  .dates{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+  @media (max-width:900px){
+    .dates input{height:56px;font-size:18px}
+    .form-actions .btn-p{width:100%;min-height:54px}
+  }
+  @media (max-width:420px){.dates{grid-template-columns:1fr}}
+</style>
+{% endblock %}
+
+{% block dash_content %}
+<a href="{{ hours_url }}" class="back-link">{{ ui.icon('izq') }}Volver a horarios{% if owner %} de {{ owner.name }}{% endif %}</a>
+<div class="ph"><h1>Bloquear días{% if owner %} de {{ owner.name }}{% endif %}</h1></div>
+
+<form method="POST" action="/panel/horarios/bloqueos/new{{ staff_q }}" class="form-card blocked-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+  {% if form_errors %}
+  <div class="banner banner-danger" role="alert">{{ ui.icon('alerta') }}
+    <span>{% for err in form_errors %}{{ err }}{% if not loop.last %}<br>{% endif %}{% endfor %}</span>
+  </div>
+  {% endif %}
+
+  <div class="field dates">
+    <div>
+      <label for="start_date">Desde</label>
+      <input type="date" id="start_date" name="start_date" min="{{ min_date }}" max="{{ max_date }}" value="{{ form.get('start_date', '') }}" required>
+    </div>
+    <div>
+      <label for="end_date">Hasta (inclusive)</label>
+      <input type="date" id="end_date" name="end_date" min="{{ min_date }}" max="{{ max_date }}" value="{{ form.get('end_date', '') }}" required>
+    </div>
+  </div>
+
+  <div class="field">
+    <label for="reason">Motivo <span class="opt">(opcional)</span></label>
+    <input type="text" id="reason" name="reason" maxlength="{{ reason_max }}" autocomplete="off" value="{{ form.get('reason', '') }}" placeholder="Ej: Feriado, vacaciones">
+  </div>
+
+  <p class="field-hint" style="margin:-6px 0 18px">{% if owner %}Esos días tus clientes no van a poder reservar con {{ owner.name }}.{% else %}Esos días el negocio figura cerrado y nadie puede reservar.{% endif %} Si ya hay turnos en esas fechas, primero cancelalos o movelos desde la Agenda.</p>
+  <div class="form-actions">
+    <button type="submit" class="btn-p">Bloquear días</button>
+  </div>
+</form>
+{% endblock %}

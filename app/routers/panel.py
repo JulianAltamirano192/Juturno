@@ -38,6 +38,7 @@ from app.models import (
     BOOKING_NOTES_MAX,
     DEPOSIT_EXPIRATION_CHOICES,
     PUBLIC_NOTICE_MAX,
+    BlockedPeriod,
     Booking,
     BusinessHours,
     Payment,
@@ -1388,6 +1389,22 @@ async def panel_business_hours_list(
         .scalars()
         .all()
     )
+    today = datetime.now(_tenant_tz(tenant)).date()
+    blocked_periods = (
+        (
+            await session.execute(
+                select(BlockedPeriod)
+                .where(
+                    BlockedPeriod.tenant_id == tenant.id,
+                    _blocked_of(staff),
+                    BlockedPeriod.end_date >= today,
+                )
+                .order_by(BlockedPeriod.start_date)
+            )
+        )
+        .scalars()
+        .all()
+    )
 
     response = templates.TemplateResponse(
         request,
@@ -1396,6 +1413,7 @@ async def panel_business_hours_list(
             "tenant": tenant,
             "csrf_token": csrf_token,
             "business_hours": business_hours,
+            "blocked_periods": blocked_periods,
             "day_names": _DAY_NAMES,
             "staff_members": staff_members,
             **_hours_context(owner),
@@ -1654,6 +1672,174 @@ async def panel_business_hours_delete(
 
     await validate_csrf(request)
     await session.delete(bh)
+    await session.commit()
+    return RedirectResponse(
+        url=_hours_context(owner)["hours_url"], status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
+# ---------------------------------------------------------------------------
+# Panel: Días bloqueados (feriados, vacaciones) — ítem 31
+# ---------------------------------------------------------------------------
+
+BLOCKED_REASON_MAX = 80
+BLOCKED_DAYS_AHEAD_MAX = 365
+_BLOCKING_BOOKINGS_SHOWN = 5
+
+
+def _blocked_of(staff_id: int | None):
+    """Filtro de los bloqueos de un dueño: el negocio (NULL) o un profesional."""
+    if staff_id is None:
+        return BlockedPeriod.staff_id.is_(None)
+    return BlockedPeriod.staff_id == staff_id
+
+
+def _parse_blocked_period_form(form: dict, today: date) -> tuple[dict, list[str]]:
+    """Valida el rango de fechas (inclusive) y el motivo. Returns (data, errors)."""
+    try:
+        start = date.fromisoformat(str(form.get("start_date", "")).strip())
+        end = date.fromisoformat(str(form.get("end_date", "")).strip())
+    except ValueError:
+        return {}, ["Elegí una fecha válida."]
+    errors = []
+    if end < start:
+        errors.append("La fecha de fin no puede ser anterior a la de inicio.")
+    if start < today:
+        errors.append("No se pueden bloquear fechas pasadas.")
+    if end > today + timedelta(days=BLOCKED_DAYS_AHEAD_MAX):
+        errors.append("Solo se pueden bloquear fechas del próximo año.")
+    reason = str(form.get("reason", "")).strip()
+    if len(reason) > BLOCKED_REASON_MAX:
+        errors.append(f"El motivo puede tener hasta {BLOCKED_REASON_MAX} caracteres.")
+    return {"start_date": start, "end_date": end, "reason": reason or None}, errors
+
+
+async def _blocking_bookings_error(
+    session: AsyncSession,
+    tenant: Tenant,
+    staff_id: int | None,
+    start: date,
+    end: date,
+) -> str | None:
+    """Mensaje si hay turnos pendientes o confirmados en el rango, o None.
+
+    El bloqueo del negocio mira todos los turnos; el de un profesional, solo
+    los suyos. ponytail: chequeo y alta no son atómicos; una reserva que entra
+    en ese instante queda viva y se ve en la agenda.
+    """
+    tenant_tz = _tenant_tz(tenant)
+    # Desde ahora: los turnos de hoy que ya terminaron no impiden bloquear hoy.
+    range_start = max(
+        datetime.combine(start, time(0), tzinfo=tenant_tz), datetime.now(tenant_tz)
+    )
+    range_end = datetime.combine(end + timedelta(days=1), time(0), tzinfo=tenant_tz)
+    stmt = (
+        select(Booking)
+        .where(
+            Booking.tenant_id == tenant.id,
+            col(Booking.status).in_(["pending", "confirmed"]),
+            Booking.start_time < range_end,
+            Booking.end_time > range_start,
+        )
+        .order_by(Booking.start_time)
+    )
+    if staff_id is not None:
+        stmt = stmt.where(Booking.staff_id == staff_id)
+    bookings = (await session.execute(stmt)).scalars().all()
+    if not bookings:
+        return None
+    shown = [
+        f"{b.start_time.astimezone(tenant_tz).strftime('%d/%m %H:%M')} {b.client_name}"
+        for b in bookings[:_BLOCKING_BOOKINGS_SHOWN]
+    ]
+    rest = len(bookings) - len(shown)
+    more = f" y {rest} más" if rest else ""
+    return (
+        f"Hay turnos en esas fechas: {', '.join(shown)}{more}. "
+        "Cancelalos o movelos desde la Agenda antes de bloquear."
+    )
+
+
+def _render_blocked_form(
+    request: Request,
+    tenant: Tenant,
+    owner: Staff | None,
+    form: dict,
+    form_errors: list[str],
+) -> HTMLResponse:
+    today = datetime.now(_tenant_tz(tenant)).date()
+    csrf_token = generate_csrf_token(request)
+    response = templates.TemplateResponse(
+        request,
+        "blocked_period_form.html",
+        {
+            "tenant": tenant,
+            "csrf_token": csrf_token,
+            "form": form,
+            "form_errors": form_errors,
+            "min_date": today.isoformat(),
+            "max_date": (today + timedelta(days=BLOCKED_DAYS_AHEAD_MAX)).isoformat(),
+            "reason_max": BLOCKED_REASON_MAX,
+            **_hours_context(owner),
+        },
+    )
+    set_csrf_cookie(response, csrf_token)
+    return response
+
+
+@router.get("/panel/horarios/bloqueos/new", response_class=HTMLResponse)
+async def panel_blocked_period_new_form(
+    request: Request,
+    staff: Annotated[int | None, Query()] = None,
+    tenant: Tenant = Depends(get_current_tenant_from_session),
+    session: AsyncSession = Depends(get_db),
+):
+    owner = await _hours_owner(session, tenant, staff)
+    return _render_blocked_form(request, tenant, owner, {}, [])
+
+
+@router.post("/panel/horarios/bloqueos/new", response_class=HTMLResponse)
+async def panel_blocked_period_new_submit(
+    request: Request,
+    staff: Annotated[int | None, Query()] = None,
+    tenant: Tenant = Depends(get_current_tenant_from_session),
+    session: AsyncSession = Depends(get_db),
+):
+    owner = await _hours_owner(session, tenant, staff)
+    await validate_csrf(request)
+    form = dict(await request.form())
+    today = datetime.now(_tenant_tz(tenant)).date()
+    data, errors = _parse_blocked_period_form(form, today)
+    if not errors:
+        busy = await _blocking_bookings_error(
+            session, tenant, staff, data["start_date"], data["end_date"]
+        )
+        if busy:
+            errors.append(busy)
+    if errors:
+        return _render_blocked_form(request, tenant, owner, form, errors)
+
+    session.add(BlockedPeriod(tenant_id=tenant.id, staff_id=staff, **data))
+    await session.commit()
+    return RedirectResponse(
+        url=_hours_context(owner)["hours_url"], status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
+@router.post("/panel/horarios/bloqueos/{block_id}/delete", response_class=HTMLResponse)
+async def panel_blocked_period_delete(
+    request: Request,
+    block_id: int,
+    tenant: Tenant = Depends(get_current_tenant_from_session),
+    session: AsyncSession = Depends(get_db),
+):
+    block = await session.get(BlockedPeriod, block_id)
+    if not block or block.tenant_id != tenant.id:
+        raise HTTPException(status_code=404, detail="Bloqueo no encontrado")
+    owner = await _hours_owner(session, tenant, block.staff_id)
+
+    await validate_csrf(request)
+    await session.delete(block)
     await session.commit()
     return RedirectResponse(
         url=_hours_context(owner)["hours_url"], status_code=status.HTTP_303_SEE_OTHER

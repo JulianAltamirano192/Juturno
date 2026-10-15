@@ -1155,6 +1155,32 @@ Commit: `92a24d9`.
 
 ---
 
+## D-043: Días bloqueados (feriados y vacaciones)
+
+**Fecha**: 2026-10-15
+
+**Contexto**: el negocio no tenía forma de cerrar un día puntual (feriado, vacaciones) ni de sacar a un profesional por un tiempo: `BusinessHours` es semanal y solo se podía borrar el horario del día de la semana entero (Fase 5, ítem 31).
+
+**Decisión**: tabla nueva `blocked_period` (migración `f4e2a9d38afb`, no toca datos) con `tenant_id`, `staff_id` (NULL = bloquea al negocio entero; valor = solo ese profesional), `start_date` / `end_date` inclusive en fecha local del tenant, `reason` opcional (hasta 80 caracteres) y CHECK `ck_blocked_period_date_order` (`end_date >= start_date`). `resolve_day_windows` devuelve `[]` si el día está bloqueado por el negocio o por ese profesional; como todo pasa por ahí, no hay slots en `/public/available-slots` ni `GET /bookings/available-slots`, y `is_bookable_start` rechaza la reserva (`POST /public/bookings` y `POST /bookings` → 422). El panel suma la sección "Días bloqueados" en `/panel/horarios` (y `?staff=ID`). Validaciones: fecha válida, fin >= inicio, inicio >= hoy (fecha local), fin <= hoy + 365 días y motivo <= 80.
+
+Por decisión de Julián, si en el rango hay turnos `pending` o `confirmed` (todos los del negocio para un bloqueo del negocio; solo los del profesional para uno de profesional) el bloqueo se **rechaza** y se listan hasta 5: "Hay turnos en esas fechas: ... Cancelalos o movelos desde la Agenda antes de bloquear." Los turnos de hoy que ya terminaron no cuentan.
+
+**Alternativas**:
+- **Bloquear igual y dejar los turnos vivos**: más simple, pero el dueño tendría turnos en días que dijo que no atiende y sin aviso. Descartada por Julián.
+- **Cancelar los turnos automáticamente**: toca pagos, señas y avisos al cliente. Fuera de alcance.
+- **Reusar `BusinessHours` con una marca de excepción**: mezcla horario semanal con fechas puntuales y complica la lógica de reemplazo de D-041.
+
+**Consecuencias**:
+- **Ventaja** — Un solo punto de chequeo (`resolve_day_windows`): slots y validación de reserva quedan consistentes sin tocar `compute_available_slots`.
+- **Ventaja** — Tabla nueva y vacía: migración sin riesgo sobre datos existentes.
+- **Riesgo** — El chequeo de turnos y el alta no son atómicos (TOCTOU): una reserva que entra en ese instante queda viva y se ve en la agenda. Aceptado.
+- **Riesgo** — La reserva manual del panel (ítem 26) no respeta los bloqueos a propósito (la carga el dueño), y la agenda no marca el día como bloqueado.
+- **Riesgo** — Un bloqueo de profesional no impide turnos "sin preferencia" asignados a otro, y no se revisan solapamientos entre bloqueos (son inofensivos: el día queda bloqueado igual).
+- **Riesgo** — `resolve_day_windows` suma una consulta por cálculo de slots.
+- **Deuda** — No hay edición de bloqueos (se borra y se crea de nuevo) ni aviso en la agenda.
+
+---
+
 ## Roadmap de deuda técnica
 
 Ordenado por impacto/urgencia estimada:
