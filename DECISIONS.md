@@ -1011,6 +1011,31 @@ Commit: `92a24d9`.
 
 ---
 
+## D-037: Logo en Postgres, re-codificado con Pillow
+
+**Fecha**: 2026-10-14
+
+**Contexto**: El ítem 15 del ROADMAP pedía un logo por negocio y había que decidir dónde guardar la imagen (la hoja decía "volumen local o S3"). Además, una imagen subida por un usuario es entrada no confiable: puede ser un SVG con scripts, un archivo políglota, una "bomba" de píxeles o una foto de celular con la ubicación GPS en el EXIF.
+
+**Decisión**: Julián eligió guardar el logo en Postgres. Tabla aparte `tenant_logo` (`tenant_id` PK/FK `ON DELETE CASCADE`, `data` `bytea`, `updated_at`) para no traer los bytes en cada query de `Tenant`. Toda subida se re-codifica con Pillow (`app/logo.py`): solo JPEG/PNG/WebP, tope de 25 MP, rotación EXIF aplicada, reducción a 512 px de lado y WebP sin EXIF ni perfil ICC; se hace upsert. Chequeo de `Content-Length` (8 MB + 64 KB; sin el header se rechaza) antes de parsear el body. `GET /t/{slug}/logo` es público y responde `image/webp` con `Cache-Control: public, max-age=86400`, `X-Content-Type-Options: nosniff` y `Content-Security-Policy: default-src 'none'; sandbox`; la página pública agrega `?v=<updated_at en ms>` para invalidar la caché. Redes: se guarda solo el usuario y la plantilla arma el link. Tests en `tests/test_business_profile.py`.
+
+**Alternativas**:
+- **Volumen local del contenedor**: simple, pero hay que montar y respaldar el volumen aparte, y atarse a un solo host.
+- **S3 (o compatible)**: escala mejor para muchas imágenes, pero exige un bucket, credenciales y variables nuevas, URLs firmadas o públicas, y un segundo lugar que respaldar.
+- **Servir los bytes subidos sin re-codificar**: menos código, pero se sirven bytes del usuario (SVG/HTML, políglotas) y se conserva el GPS del EXIF.
+
+**Consecuencias**:
+- **Ventaja** — Sin infraestructura ni secrets nuevos, y el logo entra en los backups de Postgres que ya se suben a S3 (`backup_db.sh`). Lo servido son siempre bytes generados por la app, y se borra el EXIF/GPS.
+- **Riesgo** — Descartar el perfil ICC puede cambiar levemente los colores de fotos en gamut ancho (Display P3).
+- **Riesgo** — Decodificar es CPU y RAM en el proceso de la API. Lo acotan dos topes de píxeles (50 MP declarados, 25 MP decodificados), un semáforo de 2 decodificaciones a la vez y rate limit de 10/min por IP en `POST /panel/settings/logo` (security-auditor, MEDIA). `GET /t/{slug}/logo` tiene 120/min por IP y caché de 1 h.
+- **Riesgo** — Cada pedido de `GET /t/{slug}/logo` que no pega en la caché del navegador lee los bytes de la base (hasta unos KB por logo); sin CDN delante de `/t/*/logo` eso es carga en Postgres.
+- **Riesgo** — Pillow es una dependencia nueva que parsea archivos no confiables: hay que mantenerla al día (`pillow>=12.2.0`).
+- **Deuda** — La galería de trabajos (ítem 47) comparte este problema pero con muchas más imágenes: habrá que replantearla (probablemente S3), y no conviene heredar esta decisión sin revisarla. El logo no se expone todavía en la API JSON.
+
+**Implementación**: `app/logo.py`, `app/models.py` (`TenantLogo`), `app/routers/panel.py` (`panel_logo_upload`, `panel_logo_remove`, `panel_business_profile`), `app/routers/public.py` (`public_logo`), `app/schemas.py` (`clean_business_profile`), `app/templates/settings.html`, `app/templates/public_booking.html`, migración `a12e6a5a2a92`.
+
+---
+
 ## Roadmap de deuda técnica
 
 Ordenado por impacto/urgencia estimada:

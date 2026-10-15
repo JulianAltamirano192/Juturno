@@ -25,7 +25,11 @@
   .back{display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;flex-shrink:0;border-radius:12px;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:1.4rem;line-height:1;cursor:pointer}
   .back[hidden]{display:none}
   .biz-avatar{width:44px;height:44px;flex-shrink:0;border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:var(--display);font-weight:700;font-size:18px;color:#fff;background:linear-gradient(135deg,#a855f7,#22d3ee);box-shadow:0 0 16px rgba(168,85,247,.45)}
+  img.biz-avatar{object-fit:cover;background:var(--card)}
   .head-txt{min-width:0}
+  .biz-meta{display:flex;flex-wrap:wrap;gap:2px 10px;color:var(--muted);font-size:.8rem;margin-top:3px}
+  .biz-meta a{color:var(--cyan-xl);text-decoration:none}
+  .biz-meta a:hover{text-decoration:underline}
   h1{font-family:var(--display);font-size:1.15rem;font-weight:700;line-height:1.2;letter-spacing:-.01em}
   .sub{color:var(--muted);font-size:.85rem;margin-top:2px}
   .progress{display:flex;gap:6px;margin-top:14px}
@@ -91,10 +95,17 @@
   <header>
     <div class="head-row">
       <button id="back-btn" class="back" type="button" aria-label="Volver" hidden>&#8249;</button>
-      <span class="biz-avatar" aria-hidden="true">{{ tenant_name[:1]|upper }}</span>
+      {% if logo_version %}<img class="biz-avatar" src="/t/{{ slug }}/logo?v={{ logo_version }}" alt="" width="44" height="44">{% else %}<span class="biz-avatar" aria-hidden="true">{{ tenant_name[:1]|upper }}</span>{% endif %}
       <div class="head-txt">
         <h1>{{ tenant_name }}</h1>
         <p class="sub" id="subtitle">Reservá tu turno online</p>
+        {% if locality or instagram or facebook %}
+        <p class="biz-meta">
+          {% if locality %}<span>{{ locality }}</span>{% endif %}
+          {% if instagram %}<a href="https://www.instagram.com/{{ instagram }}/" target="_blank" rel="noopener noreferrer">Instagram</a>{% endif %}
+          {% if facebook %}<a href="https://www.facebook.com/{{ facebook }}" target="_blank" rel="noopener noreferrer">Facebook</a>{% endif %}
+        </p>
+        {% endif %}
       </div>
     </div>
     <div class="progress" id="progress" aria-hidden="true"><span></span><span></span><span></span><span></span></div>

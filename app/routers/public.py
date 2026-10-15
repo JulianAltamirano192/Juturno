@@ -6,17 +6,19 @@ from zoneinfo import ZoneInfo
 
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, Field, field_serializer
 from sqlalchemy import and_, func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import col
 
 from app.booking_actions import transition_booking_status
 from app.config import settings
 from app.database import get_db
 from app.limiter import limiter
-from app.models import Booking, Payment, Service, Staff, Tenant
+from app.logo import logo_version
+from app.models import Booking, Payment, Service, Staff, Tenant, TenantLogo
 from app.mp_connect import ERR_PAGO_NO_CONFIGURADO, resolve_mp_access_token
 from app.mp_crypto import MPTokenCryptoError
 from app.mp_webhooks import create_mp_preference
@@ -487,6 +489,11 @@ async def public_booking_page(
         }
         for s in services
     ]
+    logo_updated_at = (
+        await session.execute(
+            select(col(TenantLogo.updated_at)).where(TenantLogo.tenant_id == tenant.id)
+        )
+    ).scalar_one_or_none()
 
     return templates.TemplateResponse(
         request,
@@ -495,7 +502,40 @@ async def public_booking_page(
             "tenant_name": tenant.name,
             "tenant_id": tenant.id,
             "public_notice": tenant.public_notice,
+            "slug": tenant.slug,
+            "locality": tenant.locality,
+            "instagram": tenant.instagram,
+            "facebook": tenant.facebook,
+            "logo_version": logo_version(logo_updated_at),
             "timezone": tenant.timezone or "America/Argentina/Buenos_Aires",
             "services": services_data,
+        },
+    )
+
+
+@router.get("/t/{slug}/logo")
+@limiter.limit("120/minute")
+async def public_logo(
+    slug: str, request: Request, session: AsyncSession = Depends(get_db)
+):
+    """Logo del negocio: siempre un WebP que re-codificamos nosotros (app/logo.py)."""
+    data = (
+        await session.execute(
+            select(col(TenantLogo.data))
+            .join(Tenant, Tenant.id == TenantLogo.tenant_id)
+            .where(Tenant.slug == slug)
+        )
+    ).scalar_one_or_none()
+    if data is None:
+        raise HTTPException(status_code=404, detail="Logo not found")
+    return Response(
+        content=data,
+        media_type="image/webp",
+        headers={
+            # Corto: un logo quitado deja de verse en una hora.
+            "Cache-Control": "public, max-age=3600",
+            "X-Content-Type-Options": "nosniff",
+            # Abierto directo en el navegador no puede ejecutar nada.
+            "Content-Security-Policy": "default-src 'none'; sandbox",
         },
     )

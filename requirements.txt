@@ -11,5 +11,6 @@ apscheduler>=3.10.4
 pydantic-settings>=2.1.0
 cryptography>=42.0.0
 sentry-sdk[fastapi]==2.69.2
-python-multipart>=0.0.9
+python-multipart>=0.0.18
 slowapi>=0.1.9
+pillow>=12.2.0

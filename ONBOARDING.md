@@ -33,7 +33,7 @@ curl http://localhost:8000/health
 
 # 7. Correr tests
 ./scripts/test.sh
-# 683 tests en 51 archivos (./scripts/test.sh --collect-only -q)
+# 745 tests en 52 archivos (./scripts/test.sh --collect-only -q)
 ```
 
 > **Nota clave**: Los tests corren **dentro del contenedor `api`**. `./scripts/test.sh` arma `TEST_DATABASE_URL` leyendo `POSTGRES_PASSWORD` del `.env` y ejecuta `docker compose exec ... api pytest <args>` (sin args corre `-v`). La URL apunta al servicio `db` (no `localhost`). Con `TEST_DATABASE_URL` seteada el scheduler NO arranca y el rate limiter queda deshabilitado.
@@ -159,7 +159,7 @@ async def mi_endpoint(
 
 Para el **panel** (formularios POST): llamá `await validate_csrf(request)` al principio (403 si falla), obtené el token con `generate_csrf_token(request)` (reusa el de la cookie) + `set_csrf_cookie(response, token)` en los GET/re-renders, y respondé con `RedirectResponse(..., status_code=303)`. Filtrá por `tenant.id` y devolvé 404 si el recurso no es del tenant.
 
-Para **rate limiting**: `@limiter.limit("N/minute")` (de `app.limiter`) debajo de `@router.post(...)`, y el handler tiene que recibir `request: Request`. Hoy solo lo usan `/login`, `/register` y `/public/bookings`.
+Para **rate limiting**: `@limiter.limit("N/minute")` (de `app.limiter`) debajo de `@router.post(...)`, y el handler tiene que recibir `request: Request`. Hoy lo usan `/login`, `/register`, `/public/bookings`, `POST /panel/settings/logo` y `GET /t/{slug}/logo`.
 
 `app/main.py` ya registra todos los routers con `app.include_router(...)`. No hace falta tocarlo para agregar handlers dentro de un router existente. Si creás un router nuevo, registralo ahí.
 

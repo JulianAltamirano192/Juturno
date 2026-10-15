@@ -110,7 +110,7 @@ Ya verifiqué contra el código los hallazgos 2, 3, 4, 5, 7, 8 y 9 (se confirman
 
 ### Fase 4 — Perfil del negocio
 14. ~~Rubro al registrarse: una lista genérica + "otro" con texto libre.~~ **Hecho (rama `feat/business-category`)**: `POST /register` exige `business_category` (12 rubros genéricos; con "otro", `business_category_other` de 2 a 60 caracteres) y Ajustes tiene la sección "Rubro del negocio" (`POST /panel/settings/category`). Los negocios anteriores quedan con rubro `NULL`. Todavía no se muestra en la página pública ni en la API: lo usará el buscador del ítem 23. Requiere migración `dcb3cce62e10`: correr `alembic upgrade head` en el deploy.
-15. Localidad, redes sociales (Instagram/Facebook) y logo (decidir dónde guardar la imagen: volumen local o S3).
+15. ~~Localidad, redes sociales (Instagram/Facebook) y logo (decidir dónde guardar la imagen: volumen local o S3).~~ **Hecho (rama `feat/business-profile`, D-037)**: sección "Perfil de tu negocio" en Ajustes (`POST /panel/settings/profile`: localidad hasta 60 caracteres, usuario de Instagram y de Facebook; se guarda solo el usuario y la plantilla arma el link) y logo (`POST /panel/settings/logo`, `/logo/remove`, `GET /t/{slug}/logo`) guardado en Postgres, re-codificado a WebP de 512 px con Pillow. `/t/{slug}` muestra el logo en lugar de la inicial y una línea con localidad y redes. Todavía no se expone en la API JSON; la localidad la usará el buscador del ítem 23. Requiere migración `a12e6a5a2a92` (`Tenant.locality/instagram/facebook` y tabla `tenant_logo`): correr `alembic upgrade head` en el deploy. Dependencia nueva: `pillow>=12.2.0`. La galería (ítem 47) ya no comparte decisión de almacenamiento resuelta: hay que replantearla (D-037).
 41. Color de marca para la página pública (hex validado → variable CSS).
 
 ### Fase 5 — Experiencia del cliente y datos
@@ -149,7 +149,7 @@ Ya verifiqué contra el código los hallazgos 2, 3, 4, 5, 7, 8 y 9 (se confirman
 46. Recordatorio de regreso: intervalo opcional por servicio; un job del scheduler manda un WhatsApp para volver a reservar. Requiere plantilla de Meta.
 
 ### Sin fase (en duda)
-47. Galería de trabajos en la página pública. Comparte la decisión de almacenamiento de imágenes con el logo (15).
+47. Galería de trabajos en la página pública. El logo (15) se guardó en Postgres (D-037); replantear si la galería, con muchas más imágenes, aguanta el mismo criterio o necesita S3.
 
 ## Cómo se ejecuta cada tarea
 
@@ -159,4 +159,4 @@ Rama → test que falla → fix → `./scripts/test.sh` + `ruff check app/ tests
 
 Las fases 1-2 cierran los 12 hallazgos. Se chequea revisando que la sección "Hallazgos abiertos" de CLAUDE.md quede vacía.
 
-Siguiente tarea concreta: **Fase 4, ítem 15** (localidad, redes sociales y logo). El ítem 14 (rubro) está hecho. La Fase 3 está completa (ítems 11, 12, 13, 13b, 26, 27, 28, 29, 38, 39 y 40); quedan los pendientes listados arriba.
+Siguiente tarea concreta: **Fase 4, ítem 41** (color de marca para la página pública). Los ítems 14 (rubro) y 15 (perfil y logo) están hechos. La Fase 3 está completa (ítems 11, 12, 13, 13b, 26, 27, 28, 29, 38, 39 y 40); quedan los pendientes listados arriba.

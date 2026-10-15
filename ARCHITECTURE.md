@@ -99,6 +99,8 @@ Tenant (1) ──────< Service
      │       ├── key_hash (SHA-256, unique), label
      │       ├── last_used_at (throttle 5min), revoked_at
      │
+     ├──1 TenantLogo (tabla `tenant_logo`: data bytea WebP, updated_at; CASCADE)
+     │
      ├──< NotificationOutbox
      │       ├── notification_type: confirmation | reminder | owner_new_booking
      │       ├── status: pending | sent | failed | cancelled
@@ -110,7 +112,7 @@ Tenant (1) ──────< Service
              └── received_at, processed_at
 ```
 
-El tenant guarda además: `slug` (único), `timezone` (default `America/Argentina/Buenos_Aires`; no se puede cambiar desde el panel), `booking_horizon_days` (15/30/60/90, default 90, CHECK `ck_tenant_booking_horizon_days`; se edita en `/panel/settings`, no por `PATCH /tenants/me`; D-034), `deposit_expiration_minutes` (default 15, `NULL` = sin expiración; en `/panel/settings` se elige entre 15 min y 24 h sin opción `NULL`, por `PATCH /tenants/me` acepta cualquier valor ≥ 1 o `NULL`), `public_notice` (VARCHAR(280), `NULL` = sin aviso; constante `PUBLIC_NOTICE_MAX`, migración `82b61531a397`; texto corto que el dueño edita en `/panel/settings` con `POST /panel/settings/notice` y `GET /t/{slug}` muestra debajo del header en `<p class="notice">` con el prefijo "Aviso de {negocio}:" (para que no parezca un mensaje de Juturno), con autoescape de Jinja y saltos de línea respetados por CSS; el helper `_clean_owner_text` de `app/routers/panel.py` lo valida igual que las notas de turno: vacío = `NULL`, más de 280 o caracteres de control = rechazado), `business_category` (VARCHAR(20), clave de `BUSINESS_CATEGORIES` en `app/models.py`: peluqueria, estetica, tatuajes, masajes, salud, deporte, clases, lavadero, mascotas, fotografia, reparaciones u otro; `NULL` = negocio anterior al ítem 14; sin CHECK a propósito, la lista crece sin migraciones; migración `dcb3cce62e10`) y `business_category_other` (VARCHAR(60), solo cuando el rubro es "otro"; ambos se piden en `POST /register` y se editan en `/panel/settings` con `POST /panel/settings/category`; validador compartido `clean_business_category` en `app/schemas.py`, macro Jinja `category_fields` y global de Jinja `BUSINESS_CATEGORIES`; hoy no se muestra en la página pública ni en la API, lo usará el buscador del ítem 23), `owner_email` (único) + `password_hash` (PBKDF2), `session_version` y las credenciales MP (`mp_user_id`, `mp_alias`, `mp_public_key`, `mp_access_token_enc`, `mp_refresh_token_enc`, `mp_token_expires_at`; los tokens van cifrados con Fernet).
+El tenant guarda además: `slug` (único), `timezone` (default `America/Argentina/Buenos_Aires`; no se puede cambiar desde el panel), `booking_horizon_days` (15/30/60/90, default 90, CHECK `ck_tenant_booking_horizon_days`; se edita en `/panel/settings`, no por `PATCH /tenants/me`; D-034), `deposit_expiration_minutes` (default 15, `NULL` = sin expiración; en `/panel/settings` se elige entre 15 min y 24 h sin opción `NULL`, por `PATCH /tenants/me` acepta cualquier valor ≥ 1 o `NULL`), `public_notice` (VARCHAR(280), `NULL` = sin aviso; constante `PUBLIC_NOTICE_MAX`, migración `82b61531a397`; texto corto que el dueño edita en `/panel/settings` con `POST /panel/settings/notice` y `GET /t/{slug}` muestra debajo del header en `<p class="notice">` con el prefijo "Aviso de {negocio}:" (para que no parezca un mensaje de Juturno), con autoescape de Jinja y saltos de línea respetados por CSS; el helper `_clean_owner_text` de `app/routers/panel.py` lo valida igual que las notas de turno: vacío = `NULL`, más de 280 o caracteres de control = rechazado), `business_category` (VARCHAR(20), clave de `BUSINESS_CATEGORIES` en `app/models.py`: peluqueria, estetica, tatuajes, masajes, salud, deporte, clases, lavadero, mascotas, fotografia, reparaciones u otro; `NULL` = negocio anterior al ítem 14; sin CHECK a propósito, la lista crece sin migraciones; migración `dcb3cce62e10`) y `business_category_other` (VARCHAR(60), solo cuando el rubro es "otro"; ambos se piden en `POST /register` y se editan en `/panel/settings` con `POST /panel/settings/category`; validador compartido `clean_business_category` en `app/schemas.py`, macro Jinja `category_fields` y global de Jinja `BUSINESS_CATEGORIES`; hoy no se muestra en la página pública ni en la API, lo usará el buscador del ítem 23), `locality` (VARCHAR(60), texto libre, `NULL` = sin dato; la usará el buscador del ítem 23), `instagram` (VARCHAR(30), solo el usuario, en minúsculas) y `facebook` (VARCHAR(100), usuario, slug de página o `profile.php?id=N`), todos de la migración `a12e6a5a2a92` (ítem 15); se editan en `/panel/settings` con `POST /panel/settings/profile`, los valida `clean_business_profile` (`app/schemas.py`) y la plantilla arma el link, así que nunca se renderiza una URL escrita por el dueño; `owner_email` (único) + `password_hash` (PBKDF2), `session_version` y las credenciales MP (`mp_user_id`, `mp_alias`, `mp_public_key`, `mp_access_token_enc`, `mp_refresh_token_enc`, `mp_token_expires_at`; los tokens van cifrados con Fernet).
 
 **Constraints críticas:**
 - `ExcludeConstraint excl_overlapping_bookings` en `booking`:
@@ -129,6 +131,17 @@ El tenant guarda además: `slug` (único), `timezone` (default `America/Argentin
 - `uq_tenant_mp_user_id`: índice único **parcial** sobre `tenant(mp_user_id) WHERE mp_user_id IS NOT NULL` (migración `c7d8e9f0a1b2`). Una cuenta MP pertenece a un solo negocio; los `NULL` conviven (D-021).
 - `uq_payment_mp_payment_id` sobre `payment(mp_payment_id)`: red de seguridad contra dos webhooks concurrentes que inserten el mismo pago (migración `be7d31a422d8`).
 - `ck_booking_deposit_at_booking_non_negative` y `ck_service_deposit_amount_non_negative`: la seña nunca es negativa (migraciones `55526fb8c0f9` y `346cd2b92a65`).
+
+
+**Logo del negocio (`TenantLogo`, tabla `tenant_logo`, ítem 15, D-037)**: `tenant_id` (PK y FK a `tenant.id` con `ON DELETE CASCADE`), `data` (`bytea`) y `updated_at`. Va en una tabla aparte para que los bytes no viajen en cada query de `Tenant`. Pipeline (`app/logo.py`, `process_logo`):
+
+1. `POST /panel/settings/logo` rechaza antes de parsear el body si falta `Content-Length` o supera 8 MB + 64 KB (`LOGO_UPLOAD_MAX_BYTES`), y vuelve a topar el archivo leído en 8 MB.
+2. Pillow abre solo JPEG/PNG/WebP (`formats=[...]`; SVG y el resto dan `not_image`), con dos topes contra imágenes "bomba": 50 MP declarados en el header (`_MAX_DECLARED_PIXELS`; un JPEG progresivo carga todo aunque se achique) y 25 MP a decodificar después de `draft()`, que decodifica JPEG a escala menor. Como mucho 2 decodificaciones a la vez (`_LOGO_SLOTS`) y rate limit de 10/min por IP en la subida.
+3. Aplica la rotación EXIF (`exif_transpose`), achica a 512 px de lado (`thumbnail`) y guarda WebP calidad 85 sin EXIF ni perfil ICC. Se borra el EXIF porque en un celular trae la ubicación GPS.
+4. Corre en `run_in_threadpool` (decodificar bloquea) y hace upsert (`INSERT ... ON CONFLICT DO UPDATE`).
+5. `GET /t/{slug}/logo` sirve esos bytes con `image/webp`, `Cache-Control: public, max-age=3600` (un logo quitado deja de verse en una hora), rate limit 120/min por IP, `nosniff` y `Content-Security-Policy: default-src 'none'; sandbox`. La página pública lo pide con `?v=<updated_at en ms>` (`logo_version`) para que un reemplazo no muestre el viejo.
+
+Lo servido son siempre bytes generados por la app, nunca los del usuario. El logo entra en los backups de Postgres (y con ellos en S3). Límite conocido: el semáforo de 2 subidas es por proceso (alcanza con una sola réplica).
 
 ---
 
@@ -415,7 +428,7 @@ app/
 ├── schemas.py           — schemas Pydantic compartidos: SlotQuery, AvailableSlotsResponse, BookingCreate
 ├── models.py            — modelos SQLModel y constraints
 ├── routers/
-│   ├── public.py        — sin auth: GET /, GET /health, GET /public/*, POST /public/bookings, GET /t/{slug}
+│   ├── public.py        — sin auth: GET /, GET /health, GET /public/*, POST /public/bookings, GET /t/{slug}, GET /t/{slug}/logo
 │   ├── auth.py          — formularios/cookies: GET+POST /register, GET+POST /login, POST /logout
 │   ├── api.py           — API Key (X-Tenant-API-Key): /bookings/available-slots, POST /bookings, PATCH /tenants/me
 │   └── panel.py         — cookie auth: GET /dashboard (resumen del día, próximos turnos, checklist; todo por tenant_id), GET+POST /panel/* (settings + MP, servicios, staff, horarios, agenda)
@@ -439,7 +452,7 @@ app/
 - Cookie firmada (`juturno_session`) → `routers/panel.py` o `routers/auth.py`
 - Header `X-Tenant-API-Key` → `routers/api.py`
 
-Los routers de `mp_connect.py`, `mp_webhooks.py` y `webhooks.py` viven junto a su integración. La suite tiene 683 tests en 51 archivos (`tests/`), que corren con `./scripts/test.sh`.
+Los routers de `mp_connect.py`, `mp_webhooks.py` y `webhooks.py` viven junto a su integración. La suite tiene 745 tests en 52 archivos (`tests/`), que corren con `./scripts/test.sh`.
 
 ---
 
