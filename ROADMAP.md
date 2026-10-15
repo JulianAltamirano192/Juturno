@@ -109,7 +109,7 @@ Ya verifiqué contra el código los hallazgos 2, 3, 4, 5, 7, 8 y 9 (se confirman
 40. ~~Panel instalable (PWA): `manifest` + ícono; sin service worker por ahora.~~ **Hecho (rama `feat/pwa-manifest`)**: `app/static/manifest.webmanifest` (abre en `/dashboard`, scope `/` para que login y registro queden dentro de la app, modo standalone) con íconos de 192 y 512 px y uno "maskable" para Android, enlazado desde `base.html`. Sin service worker: sin conexión el panel no abre.
 
 ### Fase 4 — Perfil del negocio
-14. Rubro al registrarse: una lista genérica + "otro" con texto libre.
+14. ~~Rubro al registrarse: una lista genérica + "otro" con texto libre.~~ **Hecho (rama `feat/business-category`)**: `POST /register` exige `business_category` (12 rubros genéricos; con "otro", `business_category_other` de 2 a 60 caracteres) y Ajustes tiene la sección "Rubro del negocio" (`POST /panel/settings/category`). Los negocios anteriores quedan con rubro `NULL`. Todavía no se muestra en la página pública ni en la API: lo usará el buscador del ítem 23. Requiere migración `dcb3cce62e10`: correr `alembic upgrade head` en el deploy.
 15. Localidad, redes sociales (Instagram/Facebook) y logo (decidir dónde guardar la imagen: volumen local o S3).
 41. Color de marca para la página pública (hex validado → variable CSS).
 
@@ -159,4 +159,4 @@ Rama → test que falla → fix → `./scripts/test.sh` + `ruff check app/ tests
 
 Las fases 1-2 cierran los 12 hallazgos. Se chequea revisando que la sección "Hallazgos abiertos" de CLAUDE.md quede vacía.
 
-Siguiente tarea concreta: **Fase 4, ítem 14** (rubro al registrarse). La Fase 3 está completa (ítems 11, 12, 13, 13b, 26, 27, 28, 29, 38, 39 y 40); quedan los pendientes listados arriba.
+Siguiente tarea concreta: **Fase 4, ítem 15** (localidad, redes sociales y logo). El ítem 14 (rubro) está hecho. La Fase 3 está completa (ítems 11, 12, 13, 13b, 26, 27, 28, 29, 38, 39 y 40); quedan los pendientes listados arriba.
