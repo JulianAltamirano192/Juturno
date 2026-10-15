@@ -281,8 +281,9 @@ class BusinessHours(SQLModel, table=True):
 
     - staff_id = NULL → horario general del negocio (aplica a todos los días
       que no tengan una fila de staff específica).
-    - staff_id = <id>  → horario de ese profesional puntual (prioridad sobre
-      el horario del negocio).
+    - staff_id = <id>  → horario de ese profesional: si tiene al menos una fila,
+      reemplaza por completo al del negocio para él (sus días sin filas quedan
+      cerrados); sin filas, usa el del negocio. Se carga en el panel (ítem 30).
 
     Un negocio sin NINGUNA fila en esta tabla → el endpoint cae al fallback
     estático 09-18 para no romper la página pública.
@@ -290,15 +291,8 @@ class BusinessHours(SQLModel, table=True):
     """
 
     __tablename__ = "business_hours"
-
-    __table_args__ = (
-        UniqueConstraint(
-            "tenant_id",
-            "staff_id",
-            "day_of_week",
-            name="uq_business_hours_tenant_staff_day",
-        ),
-    )
+    # Sin UNIQUE por día: negocio y profesionales pueden tener horario partido
+    # (varias franjas el mismo día). Los solapamientos los valida el panel.
 
     id: int | None = Field(default=None, primary_key=True)
     tenant_id: int = Field(foreign_key="tenant.id", index=True, ondelete="CASCADE")

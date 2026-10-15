@@ -1335,24 +1335,59 @@ async def panel_staff_toggle(
 # ---------------------------------------------------------------------------
 
 
+async def _hours_owner(
+    session: AsyncSession, tenant: Tenant, staff_id: int | None
+) -> Staff | None:
+    """Profesional dueño de los horarios (None = el negocio); 404 si es ajeno."""
+    if staff_id is None:
+        return None
+    staff = await session.get(Staff, staff_id)
+    if not staff or staff.tenant_id != tenant.id:
+        raise HTTPException(status_code=404, detail="Miembro no encontrado")
+    return staff
+
+
+def _hours_of(staff_id: int | None):
+    """Filtro de las filas de un dueño: el negocio (NULL) o un profesional."""
+    if staff_id is None:
+        return BusinessHours.staff_id.is_(None)
+    return BusinessHours.staff_id == staff_id
+
+
+def _hours_context(owner: Staff | None) -> dict:
+    """URLs y nombre del dueño para las plantillas de horarios."""
+    query = f"?staff={owner.id}" if owner else ""
+    return {
+        "owner": owner,
+        "staff_q": query,
+        "hours_url": f"/panel/horarios{query}",
+    }
+
+
 @router.get("/panel/horarios", response_class=HTMLResponse)
 async def panel_business_hours_list(
     request: Request,
+    staff: Annotated[int | None, Query()] = None,
     tenant: Tenant = Depends(get_current_tenant_from_session),
     session: AsyncSession = Depends(get_db),
 ):
+    owner = await _hours_owner(session, tenant, staff)
     csrf_token = generate_csrf_token(request)
     stmt = (
         select(BusinessHours)
-        .where(
-            and_(
-                BusinessHours.tenant_id == tenant.id,
-                BusinessHours.staff_id.is_(None),
-            )
-        )
+        .where(and_(BusinessHours.tenant_id == tenant.id, _hours_of(staff)))
         .order_by(BusinessHours.day_of_week, BusinessHours.start_time)
     )
     business_hours = (await session.execute(stmt)).scalars().all()
+    staff_members = (
+        (
+            await session.execute(
+                select(Staff).where(Staff.tenant_id == tenant.id).order_by(Staff.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
 
     response = templates.TemplateResponse(
         request,
@@ -1362,6 +1397,8 @@ async def panel_business_hours_list(
             "csrf_token": csrf_token,
             "business_hours": business_hours,
             "day_names": _DAY_NAMES,
+            "staff_members": staff_members,
+            **_hours_context(owner),
         },
     )
     set_csrf_cookie(response, csrf_token)
@@ -1371,8 +1408,11 @@ async def panel_business_hours_list(
 @router.get("/panel/horarios/new", response_class=HTMLResponse)
 async def panel_business_hours_new_form(
     request: Request,
+    staff: Annotated[int | None, Query()] = None,
     tenant: Tenant = Depends(get_current_tenant_from_session),
+    session: AsyncSession = Depends(get_db),
 ):
+    owner = await _hours_owner(session, tenant, staff)
     csrf_token = generate_csrf_token(request)
     response = templates.TemplateResponse(
         request,
@@ -1385,6 +1425,7 @@ async def panel_business_hours_new_form(
             "selected_days": ["0"],
             "errors": {},
             "form_errors": [],
+            **_hours_context(owner),
         },
     )
     set_csrf_cookie(response, csrf_token)
@@ -1394,9 +1435,11 @@ async def panel_business_hours_new_form(
 @router.post("/panel/horarios/new", response_class=HTMLResponse)
 async def panel_business_hours_new_submit(
     request: Request,
+    staff: Annotated[int | None, Query()] = None,
     tenant: Tenant = Depends(get_current_tenant_from_session),
     session: AsyncSession = Depends(get_db),
 ):
+    owner = await _hours_owner(session, tenant, staff)
     await validate_csrf(request)
     form_data = await request.form()
     form = dict(form_data)
@@ -1410,7 +1453,7 @@ async def panel_business_hours_new_submit(
             .where(
                 and_(
                     BusinessHours.tenant_id == tenant.id,
-                    BusinessHours.staff_id.is_(None),
+                    _hours_of(staff),
                     BusinessHours.day_of_week.in_(data["days"]),
                 )
             )
@@ -1445,6 +1488,7 @@ async def panel_business_hours_new_submit(
                 "selected_days": selected_days,
                 "errors": errors,
                 "form_errors": list(errors.values()),
+                **_hours_context(owner),
             },
         )
         set_csrf_cookie(response, csrf_token)
@@ -1457,7 +1501,7 @@ async def panel_business_hours_new_submit(
         session.add(
             BusinessHours(
                 tenant_id=tenant.id,
-                staff_id=None,
+                staff_id=staff,
                 day_of_week=dow,
                 start_time=data["start_time"],
                 end_time=data["end_time"],
@@ -1471,7 +1515,7 @@ async def panel_business_hours_new_submit(
         return render_with_errors()
 
     return RedirectResponse(
-        url="/panel/horarios", status_code=status.HTTP_303_SEE_OTHER
+        url=_hours_context(owner)["hours_url"], status_code=status.HTTP_303_SEE_OTHER
     )
 
 
@@ -1483,8 +1527,9 @@ async def panel_business_hours_edit_form(
     session: AsyncSession = Depends(get_db),
 ):
     bh = await session.get(BusinessHours, bh_id)
-    if not bh or bh.tenant_id != tenant.id or bh.staff_id is not None:
+    if not bh or bh.tenant_id != tenant.id:
         raise HTTPException(status_code=404, detail="Horario no encontrado")
+    owner = await _hours_owner(session, tenant, bh.staff_id)
 
     csrf_token = generate_csrf_token(request)
     form = {
@@ -1502,6 +1547,7 @@ async def panel_business_hours_edit_form(
             "form": form,
             "errors": {},
             "form_errors": [],
+            **_hours_context(owner),
         },
     )
     set_csrf_cookie(response, csrf_token)
@@ -1516,8 +1562,9 @@ async def panel_business_hours_edit_submit(
     session: AsyncSession = Depends(get_db),
 ):
     bh = await session.get(BusinessHours, bh_id)
-    if not bh or bh.tenant_id != tenant.id or bh.staff_id is not None:
+    if not bh or bh.tenant_id != tenant.id:
         raise HTTPException(status_code=404, detail="Horario no encontrado")
+    owner = await _hours_owner(session, tenant, bh.staff_id)
 
     await validate_csrf(request)
     form = dict(await request.form())
@@ -1527,7 +1574,7 @@ async def panel_business_hours_edit_submit(
         stmt = select(BusinessHours).where(
             and_(
                 BusinessHours.tenant_id == tenant.id,
-                BusinessHours.staff_id.is_(None),
+                _hours_of(bh.staff_id),
                 BusinessHours.day_of_week == data["day_of_week"],
                 BusinessHours.id != bh.id,
             )
@@ -1557,6 +1604,7 @@ async def panel_business_hours_edit_submit(
                 "form": form,
                 "errors": errors,
                 "form_errors": list(errors.values()),
+                **_hours_context(owner),
             },
         )
         set_csrf_cookie(response, csrf_token)
@@ -1581,13 +1629,14 @@ async def panel_business_hours_edit_submit(
                 "form": form,
                 "errors": errors,
                 "form_errors": list(errors.values()),
+                **_hours_context(owner),
             },
         )
         set_csrf_cookie(response, csrf_token)
         return response
 
     return RedirectResponse(
-        url="/panel/horarios", status_code=status.HTTP_303_SEE_OTHER
+        url=_hours_context(owner)["hours_url"], status_code=status.HTTP_303_SEE_OTHER
     )
 
 
@@ -1599,14 +1648,15 @@ async def panel_business_hours_delete(
     session: AsyncSession = Depends(get_db),
 ):
     bh = await session.get(BusinessHours, bh_id)
-    if not bh or bh.tenant_id != tenant.id or bh.staff_id is not None:
+    if not bh or bh.tenant_id != tenant.id:
         raise HTTPException(status_code=404, detail="Horario no encontrado")
+    owner = await _hours_owner(session, tenant, bh.staff_id)
 
     await validate_csrf(request)
     await session.delete(bh)
     await session.commit()
     return RedirectResponse(
-        url="/panel/horarios", status_code=status.HTTP_303_SEE_OTHER
+        url=_hours_context(owner)["hours_url"], status_code=status.HTTP_303_SEE_OTHER
     )
 
 

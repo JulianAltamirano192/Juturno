@@ -1,10 +1,13 @@
 {% extends "base.html" %}
 {% import "_ui.html" as ui %}
 
-{% block title %}Horarios de atención - {{ tenant.name }}{% endblock %}
+{% block title %}{% if owner %}Horarios de {{ owner.name }}{% else %}Horarios de atención{% endif %} - {{ tenant.name }}{% endblock %}
 
 {% block head %}
 <style>
+  .owners{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 16px}
+  .owners a{display:inline-flex;align-items:center;min-height:40px;padding:0 14px;border-radius:999px;border:1px solid rgba(255,255,255,.14);color:var(--muted);font-size:14px;font-weight:600}
+  .owners a[aria-current]{color:#cffafe;background:rgba(34,211,238,.1);border-color:rgba(103,232,249,.45)}
   .wk{display:flex;flex-direction:column;gap:8px}
   .dr{display:grid;grid-template-columns:120px minmax(0,1fr) minmax(0,340px);gap:18px;align-items:center;padding:14px 18px;border-radius:16px;background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.08)}
   .dr.scale{background:none;border-color:transparent;padding-top:0;padding-bottom:0}
@@ -35,14 +38,27 @@
 {% block dash_content %}
 <div class="ph">
   <div>
-    <h1>Horarios de atención</h1>
-    <p>Tus clientes solo pueden reservar dentro de estos horarios.</p>
+    <h1>{% if owner %}Horarios de {{ owner.name }}{% else %}Horarios de atención{% endif %}</h1>
+    <p>{% if owner %}Cuándo atiende {{ owner.name }}: tus clientes solo pueden reservar con esta persona dentro de estos horarios.{% else %}Tus clientes solo pueden reservar dentro de estos horarios.{% endif %}</p>
   </div>
-  <a href="/panel/horarios/new" class="btn-p fab" aria-label="Agregar horario">{{ ui.icon('mas') }}<span class="fab-label">Agregar horario</span></a>
+  <a href="/panel/horarios/new{{ staff_q }}" class="btn-p fab" aria-label="Agregar horario">{{ ui.icon('mas') }}<span class="fab-label">Agregar horario</span></a>
 </div>
 
+{% if staff_members %}
+<nav class="owners" aria-label="De quién son los horarios">
+  <a href="/panel/horarios"{% if not owner %} aria-current="page"{% endif %}>Negocio</a>
+  {% for member in staff_members %}
+  <a href="/panel/horarios?staff={{ member.id }}"{% if owner and owner.id == member.id %} aria-current="page"{% endif %}>{{ member.name }}{% if not member.is_active %} (inactivo){% endif %}</a>
+  {% endfor %}
+</nav>
+{% endif %}
+
 <div class="banner banner-info">{{ ui.icon('info') }}
+  {% if owner %}
+  <span>{% if business_hours %}Estos horarios <strong>reemplazan</strong> a los del negocio para {{ owner.name }}: los días sin horario no atiende.{% else %}{{ owner.name }} todavía no tiene horarios propios: usa los horarios del negocio. Si le cargás alguno, reemplazan a los del negocio para esta persona.{% endif %}</span>
+  {% else %}
   <span>{% if business_hours %}Los días sin horario figuran como <strong>cerrados</strong>.{% else %}Todavía no cargaste horarios: mientras tanto se usa de <strong>09:00 a 18:00</strong> todos los días.{% endif %}</span>
+  {% endif %}
 </div>
 
 {% if business_hours %}
@@ -80,9 +96,9 @@
 </div>
 {% else %}
 <div class="empty-state">
-  <h2>No hay horarios configurados</h2>
-  <p>Definí qué días y en qué horario atendés.</p>
-  <a href="/panel/horarios/new" class="btn-p">{{ ui.icon('mas') }}Agregá el primero</a>
+  <h2>{% if owner %}{{ owner.name }} no tiene horarios propios{% else %}No hay horarios configurados{% endif %}</h2>
+  <p>{% if owner %}Cargalos solo si atiende en otros días u horarios que el negocio.{% else %}Definí qué días y en qué horario atendés.{% endif %}</p>
+  <a href="/panel/horarios/new{{ staff_q }}" class="btn-p">{{ ui.icon('mas') }}Agregá el primero</a>
 </div>
 {% endif %}
 {% endblock %}
