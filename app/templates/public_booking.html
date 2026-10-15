@@ -123,7 +123,7 @@
   </div>
 </div>
 <noscript><p style="text-align:center;padding:24px">Para reservar necesitás tener JavaScript activado. Si no podés, contactate con el negocio por WhatsApp.</p></noscript>
-<script>
+<script nonce="{{ csp_nonce }}">
 const APP = {
   tenantId: {{ tenant_id }},
   tenantName: {{ tenant_name | tojson }},
@@ -200,7 +200,7 @@ function renderService() {
     return;
   }
   APP.services.forEach((s, i) => {
-    html += '<button type="button" class="service-row" onclick="selectService(' + i + ')">'
+    html += '<button type="button" class="service-row" data-act="service" data-arg="' + i + '">'
       + '<span><span class="service-name">' + esc(s.name) + '</span>'
       + '<span class="service-dep">' + depLabel(s) + "</span></span>"
       + '<span class="service-price"><span class="price">' + fmtMoney(s.price) + "</span>"
@@ -216,7 +216,7 @@ function renderDay() {
   for (let i = 0; i < 14; i++) {
     const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() + i);
     const wd = i === 0 ? "Hoy" : i === 1 ? "Mañ" : d.toLocaleDateString("es-AR", { weekday: "short" }).replace(".", "");
-    html += '<button type="button" class="day' + (state.day === localISO(d) ? " sel" : "") + '" onclick="selectDay(\'' + localISO(d) + '\')">'
+    html += '<button type="button" class="day' + (state.day === localISO(d) ? " sel" : "") + '" data-act="day" data-arg="' + localISO(d) + '">'
       + '<span class="wd">' + wd + '</span><span class="dn">' + d.getDate() + "</span>"
       + '<span class="mo">' + d.toLocaleDateString("es-AR", { month: "short" }).replace(".", "") + "</span></button>";
   }
@@ -230,13 +230,13 @@ function renderSlot() {
     html += '<div class="pulse">Buscando horarios disponibles…</div>';
   } else if (state.slots === "error") {
     html += '<div class="muted-box">No pudimos cargar los horarios.<br>Revisá tu conexión.</div>'
-      + '<button type="button" class="mini" onclick="loadSlots()">Reintentar</button>';
+      + '<button type="button" class="mini" data-act="retry">Reintentar</button>';
   } else if (!state.slots.length) {
     html += '<div class="muted-box">No quedan horarios libres este día.<br>Elegí otro día, por favor.</div>';
   } else {
     html += '<div class="slots">';
     state.slots.forEach((t) => {
-      html += '<button type="button" class="slot' + (state.slot === t ? " sel" : "") + '" onclick="selectSlot(\'' + t + '\')">' + t + "</button>";
+      html += '<button type="button" class="slot' + (state.slot === t ? " sel" : "") + '" data-act="slot" data-arg="' + esc(t) + '">' + esc(t) + "</button>";
     });
     html += "</div>";
   }
@@ -248,7 +248,7 @@ function renderForm() {
   app.innerHTML =
     '<div class="card summary">'
     + '<div class="row"><span>' + esc(state.service.name) + "</span><span>" + fmtMoney(state.service.price) + "</span></div>"
-    + '<div class="row"><span>' + fmtDateLong(state.day) + "</span><span>" + state.slot + " hs</span></div>"
+    + '<div class="row"><span>' + fmtDateLong(state.day) + "</span><span>" + esc(state.slot) + " hs</span></div>"
     + (noDeposit(state.service) ? ""
       : '<div class="row"><span>Seña online</span><span>' + fmtMoney(state.service.deposit_amount) + "</span></div>")
     + "</div>"
@@ -413,10 +413,24 @@ function showResult(kind, bookingId) {
   app.innerHTML = '<div class="card result">'
     + '<div class="icon ' + icon + '">' + icons[icon] + "</div>"
     + "<h2>" + title + "</h2><p>" + text + "</p>"
-    + '<button type="button" class="cta" onclick="startOver()">' + btn + "</button></div>";
+    + '<button type="button" class="cta" data-act="restart">' + btn + "</button></div>";
 }
 
 function startOver() { location.replace(location.pathname); }
+
+// Sin manejadores de eventos en atributos del HTML: la CSP solo deja correr
+// este script (nonce), así que los botones usan data-act.
+const ACTIONS = {
+  service: (arg) => selectService(Number(arg)),
+  day: selectDay,
+  retry: loadSlots,
+  slot: selectSlot,
+  restart: startOver,
+};
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-act]");
+  if (btn && Object.hasOwn(ACTIONS, btn.dataset.act)) ACTIONS[btn.dataset.act](btn.dataset.arg);
+});
 
 // ---------- init ----------
 backBtn.addEventListener("click", goBack);

@@ -1,4 +1,5 @@
 import logging
+import secrets
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Annotated
@@ -445,6 +446,22 @@ async def create_public_booking(
     )
 
 
+def _public_page_csp(nonce: str | None = None) -> str:
+    """CSP de la página pública: solo recursos propios y nuestro <script> (nonce).
+
+    Si algo llegara a inyectarse (HTML o CSS), no puede cargar ni mandar nada a
+    otro sitio, ni correr otro script, ni meter la página en un iframe ajeno.
+    El estilo inline queda permitido: la página y el color de marca lo usan.
+    """
+    script = f"'nonce-{nonce}'" if nonce else "'none'"
+    return (
+        f"default-src 'none'; script-src {script}; "
+        "style-src 'self' 'unsafe-inline'; img-src 'self'; font-src 'self'; "
+        "connect-src 'self'; base-uri 'none'; form-action 'none'; "
+        "frame-ancestors 'none'; object-src 'none'"
+    )
+
+
 @router.get("/t/{slug}", response_class=HTMLResponse)
 async def public_booking_page(
     slug: str,
@@ -466,6 +483,10 @@ async def public_booking_page(
             "<p style='color:#6b7280'>Revisá el enlace o contactá al negocio directamente.</p>"
             "</body></html>",
             status_code=404,
+            headers={
+                "Content-Security-Policy": _public_page_csp(),
+                "Cache-Control": "no-store",
+            },
         )
 
     services = (
@@ -496,10 +517,12 @@ async def public_booking_page(
         )
     ).scalar_one_or_none()
 
-    return templates.TemplateResponse(
+    nonce = secrets.token_urlsafe(16)
+    response = templates.TemplateResponse(
         request,
         "public_booking.html",
         {
+            "csp_nonce": nonce,
             "tenant_name": tenant.name,
             "tenant_id": tenant.id,
             "public_notice": tenant.public_notice,
@@ -513,6 +536,11 @@ async def public_booking_page(
             "services": services_data,
         },
     )
+    response.headers["Content-Security-Policy"] = _public_page_csp(nonce)
+    # Ninguna caché compartida puede guardarla: repetiría el nonce para todos
+    # (y mostraría servicios o avisos viejos).
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @router.get("/t/{slug}/logo")
