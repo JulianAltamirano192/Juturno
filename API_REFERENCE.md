@@ -82,11 +82,11 @@
 | POST | `/panel/mp/connect/start` | Guarda el state en Redis, setea la cookie `mp_oauth_state` (HttpOnly) y responde 302 a MP. 503 si falta `MP_MARKETPLACE_CLIENT_ID` | Cookie + CSRF |
 | POST | `/panel/mp/disconnect` | Borra localmente tokens y metadata MP → 302 `/panel/settings?mp=disconnected`. Bloqueado con 302 `?mp=pending` si hay un turno `pending` con `Payment.mp_preference_id` y plazo de seña vigente (`created_at + deposit_expiration_minutes`; minutos `NULL` = siempre bloquea). No revoca la autorización en MP | Cookie + CSRF |
 | GET | `/dashboard` | Vista principal: resumen del día, próximos turnos, checklist de configuración y link público de reserva con su QR descargable (oculto si el tenant no tiene slug; el QR se genera en el navegador, el backend no interviene). Todo filtrado por `tenant_id` | Cookie |
-| GET | `/panel/services` | Listar servicios (activos/inactivos) con seña efectiva | Cookie |
+| GET | `/panel/services` | Listar servicios (activos/inactivos) con seña efectiva y "+N min libres" si tienen tiempo libre | Cookie |
 | GET | `/panel/services/new` | Formulario nuevo servicio | Cookie |
-| POST | `/panel/services/new` | Crear servicio. Form: `name` (obligatorio), `duration_minutes` (entero ≥ 1), `price` (`Decimal` entre 0.01 y 99999999.99), `charge_deposit?` (checkbox "Cobrar seña al reservar"; el form nuevo lo trae tildado), `deposit_amount?` (`Decimal` entre 0 y el precio; vacío = 30% del precio). Sin `charge_deposit` se guarda `deposit_amount = 0` (sin seña) y el monto se ignora; con `charge_deposit` y seña efectiva 0 (0 tipeado, redondeo a 0 o 30% de 0.01) es error de form. Ambos se redondean a 2 decimales antes de validar; `Infinity`/`NaN` se rechazan. Error de validación: 200 con form re-renderizado. Éxito: 303 `/panel/services` | Cookie + CSRF |
+| POST | `/panel/services/new` | Crear servicio. Form: `name` (obligatorio), `duration_minutes` (entero ≥ 1), `price` (`Decimal` entre 0.01 y 99999999.99), `charge_deposit?` (checkbox "Cobrar seña al reservar"; el form nuevo lo trae tildado), `deposit_amount?` (`Decimal` entre 0 y el precio; vacío = 30% del precio), `buffer_minutes?` (select "Tiempo libre después del turno"; uno de 0, 5, 10, 15, 20, 30, 45, 60, default 0 "Sin tiempo libre"; otro valor es error de form "Elegí un tiempo libre de la lista."; si el campo no viene, el alta queda en 0 y la edición conserva el valor guardado; D-044). Sin `charge_deposit` se guarda `deposit_amount = 0` (sin seña) y el monto se ignora; con `charge_deposit` y seña efectiva 0 (0 tipeado, redondeo a 0 o 30% de 0.01) es error de form. Ambos se redondean a 2 decimales antes de validar; `Infinity`/`NaN` se rechazan. Error de validación: 200 con form re-renderizado. Éxito: 303 `/panel/services` | Cookie + CSRF |
 | GET | `/panel/services/{service_id}/edit` | Formulario editar servicio (404 "Servicio no encontrado" si no es del tenant) | Cookie |
-| POST | `/panel/services/{service_id}/edit` | Actualizar servicio (mismas validaciones; 404 si no es del tenant, se chequea antes que el CSRF) | Cookie + CSRF |
+| POST | `/panel/services/{service_id}/edit` | Actualizar servicio (mismas validaciones, incluido `buffer_minutes`; 404 si no es del tenant, se chequea antes que el CSRF) | Cookie + CSRF |
 | POST | `/panel/services/{service_id}/toggle` | Activar/desactivar servicio (404 si no es del tenant) | Cookie + CSRF |
 | GET | `/panel/staff` | Listar staff | Cookie |
 | GET | `/panel/staff/new` | Formulario nuevo staff | Cookie |
@@ -164,6 +164,8 @@
 
 Un día bloqueado por el negocio o por el profesional pedido (`blocked_period`, D-043) responde 200 con `slots: []`.
 
+Los slots respetan el tiempo libre (`Service.buffer_minutes`, D-044): un horario solo se ofrece si el turno más su tiempo libre no pisa al turno siguiente.
+
 **Response 200:**
 ```json
 {
@@ -190,7 +192,7 @@ Un día bloqueado por el negocio o por el profesional pedido (`blocked_period`, 
   "idempotency_key": "uuid-v4-del-cliente"
 }
 ```
-- `end_time` es opcional en el schema pero **se ignora**: siempre se calcula como `start_time + service.duration_minutes`.
+- `end_time` es opcional en el schema pero **se ignora**: siempre se calcula como `start_time + service.duration_minutes + service.buffer_minutes` (D-044). La respuesta no expone `end_time`, así que el contrato no cambia; la detección de solapamientos (EXCLUDE, 409) cuenta el tiempo libre.
 - El precio y la seña se toman del servicio (`price_at_booking = service.price`, `deposit_at_booking = effective_deposit(...)`, snapshot al crear); no hay campos de monto en el request.
 - Teléfono normalizado a `549XXXXXXXXXX` (`phone.py`). Se valida primero (422 antes que cualquier 404).
 - `client_name` (`clean_client_name`): normalizado NFKC, espacios y saltos de línea colapsados; 2 a 60 caracteres, al menos una letra, sin caracteres invisibles/de control y sin links ni dominios (`://`, `www.`, `algo.com` con TLDs comunes), si no 422 con `detail` de texto (más de 200 caracteres: 422 de validación del schema). Llega al WhatsApp del negocio y al pagador de MP. Lo mismo en `POST /bookings` (API key).
@@ -250,7 +252,7 @@ Igual que el público (incluidos los días bloqueados, que devuelven `slots: []`
 ### 5.2 `POST /bookings`
 
 **Request (`BookingCreate`):** igual que el público pero sin MP (no genera preferencia ni `Payment`).
-- `end_time` se deriva de `service.duration_minutes` (el campo del request se ignora).
+- `end_time` se deriva de `service.duration_minutes + service.buffer_minutes` (el campo del request se ignora; D-044).
 - Status inicial: `pending`.
 - Mismas reglas que el público para `start_time` y para servicio/profesional activos.
 

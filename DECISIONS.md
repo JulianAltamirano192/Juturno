@@ -1181,6 +1181,29 @@ Por decisión de Julián, si en el rango hay turnos `pending` o `confirmed` (tod
 
 ---
 
+## D-044: Tiempo libre entre turnos por servicio (opt-in)
+
+**Fecha**: 2026-10-15
+
+**Contexto**: algunos negocios necesitan un margen después de cada turno (limpieza, preparación) y hoy los slots se pegan uno con otro (Fase 5, ítem 32). Tiene que ser opt-in: los servicios existentes no pueden cambiar de comportamiento.
+
+**Decisión**: columna `service.buffer_minutes` INTEGER NOT NULL DEFAULT 0 con CHECK `ck_service_buffer_minutes` (valores de `SERVICE_BUFFER_CHOICES`: 0, 5, 10, 15, 20, 30, 45, 60), migración `e7a8de2da19a` (los servicios existentes quedan en 0). El tiempo libre se guarda **dentro de `booking.end_time`** = inicio + duración + tiempo libre, en los tres lugares que crean turnos (`POST /public/bookings`, `POST /bookings` y la reserva manual del panel). Por eso el `EXCLUDE excl_overlapping_bookings` y el chequeo de turno libre de `mp_webhooks` lo respetan sin cambios, y cambiar el tiempo libre de un servicio no modifica turnos ya tomados. Las respuestas de reserva devuelven `booking_id` y no exponen `end_time`, así que el contrato de la API no cambia.
+
+En `compute_available_slots` se corre hacia atrás el inicio de cada turno existente según el tiempo libre del servicio NUEVO (el de los existentes ya está en su `end_time`), y la consulta se amplía a `start_time < day_end + buffer`. El último turno de una franja no necesita que su tiempo libre entre antes del cierre. `is_bookable_start` no cambia (el 409 lo da el EXCLUDE). En el panel, el formulario de servicio suma el select "Tiempo libre después del turno" (default "Sin tiempo libre"; valor inválido → "Elegí un tiempo libre de la lista.") y la lista muestra "+N min libres".
+
+**Alternativas**:
+- **Columna aparte en `booking` y cambiar el EXCLUDE** para que use `end_time + buffer`: es más explícito, pero obliga a migrar un constraint gist en producción, un cambio de alto riesgo, y a tocar también el chequeo de `mp_webhooks`. Descartada.
+
+**Consecuencias**:
+- **Ventaja** — Sin cambios en el EXCLUDE ni en `mp_webhooks`; migración chica (columna con default 0 y un CHECK).
+- **Ventaja** — Cambiar el tiempo libre de un servicio no afecta turnos ya tomados.
+- **Riesgo** — La agenda muestra "hasta" con el tiempo libre incluido, y el resumen del inicio puede mostrar como próximo un turno que está en su tiempo libre. Aceptado.
+- **Riesgo** — No se puede distinguir la duración real del tiempo libre en un turno ya guardado (`end_time` es la suma); si hiciera falta, habría que migrar datos.
+- **Riesgo** — El downgrade borra los tiempos libres configurados (hay backup en cada deploy).
+- **Deuda** — Los valores permitidos son una lista fija en código; sumar uno es un cambio de CHECK con migración.
+
+---
+
 ## Roadmap de deuda técnica
 
 Ordenado por impacto/urgencia estimada:
