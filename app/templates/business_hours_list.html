@@ -24,6 +24,16 @@
   .bar{position:relative;height:12px;border-radius:6px;background:rgba(255,255,255,.06)}
   .bar span{position:absolute;top:0;bottom:0;border-radius:6px;background:linear-gradient(90deg,var(--purple),var(--cyan));box-shadow:0 0 10px rgba(34,211,238,.45)}
   .scale-lbl{display:flex;justify-content:space-between;font-size:11px;color:#8f95a3}
+  .blocked{margin-top:32px}
+  .blocked-head{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px}
+  .blocked-head h2{margin:0;font-family:var(--font-display);font-size:18px}
+  .blocked-hint{margin:6px 0 14px;color:var(--muted);font-size:14px}
+  .blocked-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+  .blocked-list li{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:6px 6px 6px 18px;border-radius:16px;background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.08);font-size:14px;overflow-wrap:anywhere}
+  .blocked-list form{margin:0}
+  .blocked-list button{width:44px;height:44px;border:0;background:none;color:var(--muted);cursor:pointer;display:inline-flex;align-items:center;justify-content:center}
+  .blocked-list button:hover{color:#fca5a5}
+  .blocked-list button svg{width:16px;height:16px}
   @media (max-width:1050px){.dr{grid-template-columns:100px minmax(0,1fr)}.dr .bar,.dr.scale{display:none}}
   @media (max-width:900px){
     .dr{grid-template-columns:minmax(0,1fr) 140px;gap:10px;padding:12px 14px}
@@ -101,4 +111,28 @@
   <a href="/panel/horarios/new{{ staff_q }}" class="btn-p">{{ ui.icon('mas') }}Agregá el primero</a>
 </div>
 {% endif %}
+
+<section class="blocked" aria-labelledby="blocked-title">
+  <div class="blocked-head">
+    <h2 id="blocked-title">Días bloqueados</h2>
+    <a href="/panel/horarios/bloqueos/new{{ staff_q }}" class="btn-o">{{ ui.icon('mas') }}Bloquear días</a>
+  </div>
+  <p class="blocked-hint">{% if owner %}Vacaciones o licencias de {{ owner.name }}. Los días bloqueados del negocio también le aplican.{% else %}Feriados o vacaciones: esos días nadie puede reservar.{% endif %}</p>
+  {% if blocked_periods %}
+  <ul class="blocked-list">
+    {% for bp in blocked_periods %}
+    {% set label = bp.start_date.strftime('%d/%m/%Y') if bp.start_date == bp.end_date else bp.start_date.strftime('%d/%m/%Y') ~ ' – ' ~ bp.end_date.strftime('%d/%m/%Y') %}
+    <li>
+      <span><strong>{{ label }}</strong>{% if bp.reason %} · {{ bp.reason }}{% endif %}</span>
+      <form method="POST" action="/panel/horarios/bloqueos/{{ bp.id }}/delete">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit" aria-label="Desbloquear {{ label }}">{{ ui.icon('borrar') }}</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="closed">No hay días bloqueados.</p>
+  {% endif %}
+</section>
 {% endblock %}
