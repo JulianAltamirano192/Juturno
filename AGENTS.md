@@ -155,7 +155,7 @@ templates/           # Jinja2 (panel + página pública /t/{slug})
 
 ## Tests
 
-- **745 tests** en 52 archivos (`tests/test_*.py`), contados con `./scripts/test.sh --collect-only -q`.
+- **783 tests** en 53 archivos (`tests/test_*.py`), contados con `./scripts/test.sh --collect-only -q`.
 - Fixtures en `tests/conftest.py`: `setup_db` (crea/borra tablas + `btree_gist`), `db_session`, `client` (httpx.ASGITransport).
 - Scheduler deshabilitado automáticamente con `TEST_DATABASE_URL`.
 - CI: GitHub Actions (`.github/workflows/ci.yml`) corre ruff, mypy y pytest en push y PR a `main`. Branch protection sin confirmar.

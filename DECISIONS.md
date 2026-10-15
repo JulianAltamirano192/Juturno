@@ -1036,6 +1036,32 @@ Commit: `92a24d9`.
 
 ---
 
+## D-038: Color de marca: hex libre con chequeo de contraste
+
+**Fecha**: 2026-10-15
+
+**Contexto**: El ítem 41 del ROADMAP pedía que cada negocio pueda poner el color de su página pública. El color se escribe dentro de un `<style>`, así que es una entrada que termina en CSS, y la página tiene un fondo oscuro fijo (`#08080b`) sobre el que el acento tiene que leerse.
+
+**Decisión**: Julián eligió entre tres opciones (paleta fija, hex libre con ajuste, hex libre sin ajuste) y optó por el hex libre con chequeo de contraste. `Tenant.brand_color` es `VARCHAR(7)` nullable; `NULL` es el tema de Juturno. `clean_brand_color` (`app/brand.py`) acepta solo `#RRGGBB` y rechaza lo que quede por debajo de 3:1 de contraste WCAG contra el fondo (umbral de WCAG para elementos de interfaz y texto grande); no ajusta el color, le pide al dueño que elija otro (`?brand=too_dark`). Vacío o el cian por defecto `#22d3ee` guardan `NULL`, porque `<input type=color>` siempre envía un valor. `brand_theme` deriva las variables CSS (`--cyan`, `--purple`, `-rgb`, `-l`, `-xl`, `--glow-rgb`, `--grad`) y elige `--cta-text` (blanco o `#08080b`) según el peor contraste de las dos puntas del degradé del botón. Defensa en capas: validación al guardar, CHECK `ck_tenant_brand_color` en la DB y revalidación en `brand_theme` al leer; todo lo emitido al `<style>` sale de enteros. Sin color, la página queda idéntica píxel por píxel a la anterior (verificado). Tests en `tests/test_brand_color.py`.
+
+**Alternativas**:
+- **Paleta fija**: sin riesgo de contraste ni de inyección, pero limita la identidad del negocio y hay que mantener la lista.
+- **Hex libre con ajuste automático**: el resultado siempre se lee, pero el color en pantalla no es el que el dueño eligió, lo que confunde.
+- **Hex libre sin ajuste**: máxima libertad, pero permite páginas ilegibles (por ejemplo negro sobre negro).
+
+**Consecuencias**:
+- **Ventaja** — El dueño usa su color real y no puede dejar la página ilegible; sin color nada cambia para los negocios existentes.
+- **Ventaja** — Aunque falle la validación de la app, el CHECK y la revalidación en `brand_theme` impiden que algo que no sea `#rrggbb` llegue al `<style>`.
+- **Riesgo** — 3:1 es el piso para elementos de interfaz y texto grande, no para texto normal. Para colores de luminancia media, el texto del botón (bold de 16 px) puede quedar cerca de 4.4:1, apenas por debajo de 4.5:1 (AA para texto normal).
+- **Riesgo** — La página pública no tiene Content-Security-Policy. El security-auditor lo marcó como BAJA; queda como tarea aparte, y mientras tanto la defensa contra inyección en el `<style>` son las tres capas de arriba.
+- **Deuda** — Decidir si se sube el umbral a 4.5:1 para el texto del botón o se elige el color del texto con más margen.
+- **Deuda** — Agregar CSP a `/t/{slug}` (y evaluar el resto de las páginas públicas).
+- **Deuda** — El color no se expone todavía en la API JSON.
+
+**Implementación**: `app/brand.py` (`clean_brand_color`, `brand_theme`), `app/models.py` (`Tenant.brand_color`, `ck_tenant_brand_color`), `app/routers/panel.py` (`panel_brand_color`), `app/routers/public.py`, `app/templates/settings.html`, `app/templates/public_booking.html`, migración `2cf8d49114fa`.
+
+---
+
 ## Roadmap de deuda técnica
 
 Ordenado por impacto/urgencia estimada:
