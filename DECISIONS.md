@@ -1053,12 +1053,35 @@ Commit: `92a24d9`.
 - **Ventaja** — El dueño usa su color real y no puede dejar la página ilegible; sin color nada cambia para los negocios existentes.
 - **Ventaja** — Aunque falle la validación de la app, el CHECK y la revalidación en `brand_theme` impiden que algo que no sea `#rrggbb` llegue al `<style>`.
 - **Riesgo** — 3:1 es el piso para elementos de interfaz y texto grande, no para texto normal. Para colores de luminancia media, el texto del botón (bold de 16 px) puede quedar cerca de 4.4:1, apenas por debajo de 4.5:1 (AA para texto normal).
-- **Riesgo** — La página pública no tiene Content-Security-Policy. El security-auditor lo marcó como BAJA; queda como tarea aparte, y mientras tanto la defensa contra inyección en el `<style>` son las tres capas de arriba.
+- **Riesgo** — La página pública no tenía Content-Security-Policy (BAJA del security-auditor). **Resuelto en D-039.**
 - **Deuda** — Decidir si se sube el umbral a 4.5:1 para el texto del botón o se elige el color del texto con más margen.
-- **Deuda** — Agregar CSP a `/t/{slug}` (y evaluar el resto de las páginas públicas).
+- ~~**Deuda** — Agregar CSP a `/t/{slug}`.~~ Hecho en D-039; el resto de las páginas queda en D-039.
 - **Deuda** — El color no se expone todavía en la API JSON.
 
 **Implementación**: `app/brand.py` (`clean_brand_color`, `brand_theme`), `app/models.py` (`Tenant.brand_color`, `ck_tenant_brand_color`), `app/routers/panel.py` (`panel_brand_color`), `app/routers/public.py`, `app/templates/settings.html`, `app/templates/public_booking.html`, migración `2cf8d49114fa`.
+
+---
+
+## D-039: Content-Security-Policy con nonce en la página pública
+
+**Fecha**: 2026-10-15
+
+**Contexto**: el security-auditor del ítem 41 marcó como BAJA que `/t/{slug}`, la única página que ven los clientes de los negocios, no mandaba Content-Security-Policy. Si algo llegara a inyectarse (HTML o CSS), nada limitaba cargar recursos de terceros o mandar datos afuera.
+
+**Decisión**: `_public_page_csp` en `app/routers/public.py` arma, por request, `default-src 'none'; script-src 'nonce-<token_urlsafe(16)>'; style-src 'self' 'unsafe-inline'; img-src 'self'; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'`. El único `<script>` de `public_booking.html` lleva el nonce. Los `onclick` que armaba el JS pasaron a `data-act`/`data-arg` con un listener delegado, porque un nonce no habilita manejadores inline. La 404 de slug inexistente usa `script-src 'none'`. Las dos respuestas van con `Cache-Control: no-store`: una caché compartida repetiría el nonce para todos los visitantes.
+
+**Alternativas**:
+- **`script-src 'unsafe-inline'`**: sin refactor del JS, pero no frena scripts inyectados.
+- **Nonce también en `style-src`** (y `style-src-attr 'unsafe-inline'`): ganancia marginal, porque con `img-src` y `font-src` en `'self'` una inyección de CSS no puede sacar datos del sitio.
+- **`report-uri`/`report-to`**: sin endpoint propio por ahora (sería otra ruta pública para spam y rate limit).
+
+**Consecuencias**:
+- **Ventaja** — Verificado en Chrome por DevTools: el flujo completo de reserva anda sin violaciones, y una imagen externa, un `fetch` a otro dominio y un `onclick` inyectados quedan bloqueados.
+- **Ventaja** — `frame-ancestors 'none'`: nadie puede meter la página de reservas en un iframe.
+- **Riesgo** — Si un negocio quisiera embeber su página de reservas en su propio sitio, habría que abrir `frame-ancestors` a ese dominio.
+- **Riesgo** — `'unsafe-inline'` en `style-src` permite inyectar CSS (sin poder sacar datos del sitio).
+- **Deuda** — El panel, el login, el registro y la landing no mandan `frame-ancestors` ni `X-Frame-Options` (clickjacking: MEDIA del security-auditor). Primer paso barato: un middleware con `setdefault` de `frame-ancestors 'none'`, `base-uri 'none'`, `object-src 'none'` y `nosniff` en respuestas `text/html`. Una CSP con nonce en el panel requiere sacar los `onsubmit` inline de `agenda.html` y `business_hours_list.html`.
+- **Límite** — La CSP no controla la navegación: la redirección a Mercado Pago (`location.href`) queda afuera, pero la URL viene del servidor (`init_point`).
 
 ---
 
