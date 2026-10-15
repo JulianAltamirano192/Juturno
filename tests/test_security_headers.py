@@ -19,6 +19,8 @@ def _assert_base_headers(res):
     assert res.headers["content-security-policy"] == BASE_CSP, res.headers
     assert res.headers["x-frame-options"] == "DENY"
     assert res.headers["x-content-type-options"] == "nosniff"
+    # HTTPS siempre (el navegador lo ignora si llega por HTTP, como en local).
+    assert res.headers["strict-transport-security"] == "max-age=31536000"
 
 
 @pytest.mark.parametrize("path", ["/", "/login", "/register", "/health"])

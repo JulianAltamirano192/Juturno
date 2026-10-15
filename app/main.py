@@ -174,6 +174,9 @@ _SECURITY_HEADERS = {
     "Content-Security-Policy": "frame-ancestors 'none'; base-uri 'none'; object-src 'none'",
     "X-Frame-Options": "DENY",  # navegadores que no entienden frame-ancestors
     "X-Content-Type-Options": "nosniff",
+    # Solo HTTPS por un año. Sin includeSubDomains: no sabemos qué otros
+    # subdominios hay. El navegador lo ignora si llega por HTTP (local).
+    "Strict-Transport-Security": "max-age=31536000",
 }
 
 
