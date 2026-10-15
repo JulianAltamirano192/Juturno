@@ -210,7 +210,7 @@ async def compute_available_slots(
     """Lógica compartida de cálculo de slots. El caller valida auth y tenant."""
     from datetime import time
 
-    from sqlalchemy import and_, select
+    from sqlalchemy import and_, or_, select
 
     from app.models import Booking
 
@@ -244,7 +244,10 @@ async def compute_available_slots(
         )
     )
     if staff_id:
-        stmt = stmt.where(Booking.staff_id == staff_id)
+        # Un turno sin profesional ocupa a todos: el EXCLUDE no lo compara con
+        # los asignados (COALESCE(staff_id, -1)); al crear lo frena
+        # has_overlapping_booking.
+        stmt = stmt.where(or_(Booking.staff_id == staff_id, Booking.staff_id.is_(None)))
 
     bookings_db = (await session.execute(stmt)).scalars().all()
 
@@ -317,3 +320,101 @@ async def is_bookable_start(
         granularity_min=30,
     )
     return local.strftime("%H:%M") in slots
+
+
+async def active_staff(session, tenant_id: int) -> list:
+    """Profesionales activos del negocio, en orden de alta."""
+    from sqlalchemy import select
+
+    from app.models import Staff
+
+    stmt = (
+        select(Staff)
+        .where(Staff.tenant_id == tenant_id, Staff.is_active.is_(True))
+        .order_by(Staff.id)
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def compute_any_staff_slots(*, staff_ids: list[int], **kwargs) -> list[str]:
+    """ "Sin preferencia": unión de los turnos libres de cada profesional."""
+    slots: set[str] = set()
+    for staff_id in staff_ids:
+        slots.update(await compute_available_slots(staff_id=staff_id, **kwargs))
+    return sorted(slots)
+
+
+async def free_staff_for(
+    *,
+    session,
+    tenant_id: int,
+    start_time: datetime,
+    end_time: datetime,
+    staff: list,
+    tenant_timezone,
+) -> list:
+    """De `staff`, los que no tienen turno en [start_time, end_time), primero el
+    de menos turnos ese día (desempata el más antiguo). Vacío si un turno sin
+    profesional pisa el horario, porque ocupa a todos. No mira horarios: eso
+    lo valida is_bookable_start antes."""
+    from sqlalchemy import func, select
+    from sqlmodel import col
+
+    from app.models import Booking
+
+    active = Booking.status.in_(["pending", "confirmed"])
+    overlapping = select(col(Booking.staff_id)).where(
+        Booking.tenant_id == tenant_id,
+        active,
+        Booking.start_time < end_time,
+        Booking.end_time > start_time,
+    )
+    busy = set((await session.execute(overlapping)).scalars().all())
+    if None in busy:
+        return []
+    candidates = [member for member in staff if member.id not in busy]
+    if len(candidates) < 2:
+        return candidates
+
+    local_day = start_time.astimezone(tenant_timezone).date()
+    day_start = datetime.combine(local_day, datetime.min.time(), tenant_timezone)
+    load_stmt = (
+        select(col(Booking.staff_id), func.count())
+        .where(
+            Booking.tenant_id == tenant_id,
+            active,
+            col(Booking.staff_id).in_([m.id for m in candidates]),
+            Booking.start_time >= day_start,
+            Booking.start_time < day_start + timedelta(days=1),
+        )
+        .group_by(Booking.staff_id)
+    )
+    load = dict((await session.execute(load_stmt)).all())
+    return sorted(candidates, key=lambda m: (load.get(m.id, 0), m.id))
+
+
+async def has_overlapping_booking(
+    *, session, tenant_id: int, start_time: datetime, end_time: datetime, staff_id
+) -> bool:
+    """True si [start_time, end_time) pisa un turno activo que lo ocupa.
+
+    Un turno sin profesional ocupa a todos y uno asignado ocupa a su
+    profesional. El EXCLUDE (COALESCE(staff_id, -1)) no compara asignados con
+    sin asignar, así que este chequeo cubre ese hueco al crear.
+    ponytail: chequeo y INSERT no son atómicos; un turno sin profesional y uno
+    asignado creados a la vez pueden encimarse. Arreglo de fondo: asignar
+    siempre un profesional (o lock por tenant) si llega a pasar.
+    """
+    from sqlalchemy import func, or_, select
+
+    from app.models import Booking
+
+    stmt = select(func.count()).where(
+        Booking.tenant_id == tenant_id,
+        Booking.status.in_(["pending", "confirmed"]),
+        Booking.start_time < end_time,
+        Booking.end_time > start_time,
+    )
+    if staff_id is not None:
+        stmt = stmt.where(or_(Booking.staff_id == staff_id, Booking.staff_id.is_(None)))
+    return (await session.execute(stmt)).scalar_one() > 0

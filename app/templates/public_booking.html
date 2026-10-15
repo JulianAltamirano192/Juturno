@@ -111,7 +111,7 @@
         {% endif %}
       </div>
     </div>
-    <div class="progress" id="progress" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+    <div class="progress" id="progress" aria-hidden="true"><span></span><span></span><span></span><span></span>{% if staff %}<span></span>{% endif %}</div>
   </header>
   {% if public_notice %}<p class="notice" role="note"><strong>Aviso de {{ tenant_name }}:</strong> {{ public_notice }}</p>{% endif %}
   <div id="banner" class="banner" hidden></div>
@@ -128,9 +128,10 @@ const APP = {
   tenantId: {{ tenant_id }},
   tenantName: {{ tenant_name | tojson }},
   services: {{ services | tojson }},
+  staff: {{ staff | tojson }},
 };
 
-const state = { step: "service", service: null, day: null, slot: null, slots: null };
+const state = { step: "service", service: null, staff: null, day: null, slot: null, slots: null };
 
 const app = document.getElementById("app");
 const backBtn = document.getElementById("back-btn");
@@ -139,7 +140,9 @@ const banner = document.getElementById("banner");
 const ctaWrap = document.getElementById("cta-wrap");
 const cta = document.getElementById("cta");
 const progress = document.getElementById("progress");
-const STEPS = ["service", "day", "slot", "form"];
+// El paso "staff" solo existe si el negocio tiene 2 o más profesionales.
+const STEPS = APP.staff.length ? ["service", "staff", "day", "slot", "form"] : ["service", "day", "slot", "form"];
+function stepLabel(step, text) { return "Paso " + (STEPS.indexOf(step) + 1) + " de " + STEPS.length + " · " + text; }
 
 function setProgress(step) {
   const idx = STEPS.indexOf(step);
@@ -178,6 +181,7 @@ function setBusy(on, label) {
 function render() {
   hideBanner();
   if (state.step === "service") renderService();
+  else if (state.step === "staff") renderStaff();
   else if (state.step === "day") renderDay();
   else if (state.step === "slot") renderSlot();
   else if (state.step === "form") renderForm();
@@ -188,7 +192,8 @@ function render() {
 }
 
 function serviceChip() {
-  return '<div class="chip">' + esc(state.service.name) + " · " + state.service.duration_minutes + " min</div>";
+  const who = state.staff ? " · con " + esc(state.staff.name) : "";
+  return '<div class="chip">' + esc(state.service.name) + " · " + state.service.duration_minutes + " min" + who + "</div>";
 }
 
 function renderService() {
@@ -209,8 +214,21 @@ function renderService() {
   app.innerHTML = html;
 }
 
+function renderStaff() {
+  subtitle.textContent = stepLabel("staff", "Elegí con quién");
+  let html = '<p class="step-title">¿Con quién querés atenderte?</p>' + serviceChip();
+  html += '<button type="button" class="service-row" data-act="staff" data-arg="">'
+    + '<span><span class="service-name">Sin preferencia</span>'
+    + '<span class="service-dep">Te asignamos a quien esté libre</span></span></button>';
+  APP.staff.forEach((m, i) => {
+    html += '<button type="button" class="service-row" data-act="staff" data-arg="' + i + '">'
+      + '<span class="service-name">' + esc(m.name) + "</span></button>";
+  });
+  app.innerHTML = html;
+}
+
 function renderDay() {
-  subtitle.textContent = "Paso 2 de 4 · Elegí el día";
+  subtitle.textContent = stepLabel("day", "Elegí el día");
   const today = new Date();
   let html = '<p class="step-title">¿Qué día te queda mejor?</p>' + serviceChip() + '<div class="days">';
   for (let i = 0; i < 14; i++) {
@@ -224,7 +242,7 @@ function renderDay() {
 }
 
 function renderSlot() {
-  subtitle.textContent = "Paso 3 de 4 · Elegí el horario";
+  subtitle.textContent = stepLabel("slot", "Elegí el horario");
   let html = '<p class="step-title">' + fmtDateLong(state.day) + "</p>" + serviceChip();
   if (state.slots === null) {
     html += '<div class="pulse">Buscando horarios disponibles…</div>';
@@ -244,11 +262,12 @@ function renderSlot() {
 }
 
 function renderForm() {
-  subtitle.textContent = "Paso 4 de 4 · Tus datos";
+  subtitle.textContent = stepLabel("form", "Tus datos");
   app.innerHTML =
     '<div class="card summary">'
     + '<div class="row"><span>' + esc(state.service.name) + "</span><span>" + fmtMoney(state.service.price) + "</span></div>"
     + '<div class="row"><span>' + fmtDateLong(state.day) + "</span><span>" + esc(state.slot) + " hs</span></div>"
+    + (APP.staff.length ? '<div class="row"><span>Te atiende</span><span>' + (state.staff ? esc(state.staff.name) : "Quien esté libre") + "</span></div>" : "")
     + (noDeposit(state.service) ? ""
       : '<div class="row"><span>Seña online</span><span>' + fmtMoney(state.service.deposit_amount) + "</span></div>")
     + "</div>"
@@ -281,6 +300,13 @@ function validateForm() {
 function selectService(i) {
   state.service = APP.services[i];
   state.day = null;
+  state.step = APP.staff.length ? "staff" : "day";
+  render();
+}
+
+function selectStaff(arg) {
+  state.staff = arg === "" ? null : APP.staff[Number(arg)];
+  state.day = null;
   state.step = "day";
   render();
 }
@@ -308,6 +334,7 @@ async function loadSlots() {
       service_id: state.service.id,
       day: state.day,
     });
+    if (state.staff) params.set("staff_id", state.staff.id);
     const res = await fetch("/public/available-slots?" + params);
     if (!res.ok) throw new Error("http " + res.status);
     const data = await res.json();
@@ -324,7 +351,7 @@ async function submitBooking() {
   if (name.length < 2 || phone.length < 8) return;
 
   // Clave idempotente: un mismo turno reintentado nunca genera dos reservas
-  const key = "juturno:booking:" + APP.tenantId + ":" + state.service.id + ":" + state.day + ":" + state.slot;
+  const key = "juturno:booking:" + APP.tenantId + ":" + state.service.id + ":" + (state.staff ? state.staff.id : "any") + ":" + state.day + ":" + state.slot;
   let idem = sessionStorage.getItem(key);
   if (!idem) { idem = uuid(); sessionStorage.setItem(key, idem); }
 
@@ -339,6 +366,7 @@ async function submitBooking() {
         client_name: name,
         client_phone: phone,
         start_time: state.day + "T" + state.slot + ":00",
+        staff_id: state.staff ? state.staff.id : null,
         idempotency_key: idem,
       }),
     });
@@ -349,7 +377,7 @@ async function submitBooking() {
       return;
     }
     if ((res.status === 201 || res.status === 200) && data.status === "confirmed") {
-      showResult("confirmed", data.booking_id);
+      showResult("confirmed", data.booking_id, data.staff_name);
       return;
     }
     setBusy();
@@ -375,14 +403,15 @@ async function submitBooking() {
 }
 
 function goBack() {
-  if (state.step === "day") state.step = "service";
+  if (state.step === "staff") state.step = "service";
+  else if (state.step === "day") state.step = APP.staff.length ? "staff" : "service";
   else if (state.step === "slot") state.step = "day";
   else if (state.step === "form") state.step = "slot";
   render();
 }
 
 // ---------- pantallas post-pago (estáticas, sin consultar la API) ----------
-function showResult(kind, bookingId) {
+function showResult(kind, bookingId, staffName) {
   backBtn.hidden = true;
   ctaWrap.hidden = true;
   setProgress(null);
@@ -402,7 +431,7 @@ function showResult(kind, bookingId) {
     btn = "Entendido";
   } else if (kind === "confirmed") {
     icon = "ok"; title = "Turno confirmado";
-    text = "Te enviamos la confirmación por WhatsApp.";
+    text = (staffName ? "Te atiende " + esc(staffName) + ". " : "") + "Te enviamos la confirmación por WhatsApp.";
     btn = "Hacer otra reserva";
   } else {
     icon = "ok"; title = "Reserva registrada";
@@ -422,6 +451,7 @@ function startOver() { location.replace(location.pathname); }
 // este script (nonce), así que los botones usan data-act.
 const ACTIONS = {
   service: (arg) => selectService(Number(arg)),
+  staff: selectStaff,
   day: selectDay,
   retry: loadSlots,
   slot: selectSlot,
