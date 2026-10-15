@@ -511,12 +511,6 @@ async def public_booking_page(
         }
         for s in services
     ]
-    logo_updated_at = (
-        await session.execute(
-            select(col(TenantLogo.updated_at)).where(TenantLogo.tenant_id == tenant.id)
-        )
-    ).scalar_one_or_none()
-
     nonce = secrets.token_urlsafe(16)
     response = templates.TemplateResponse(
         request,
@@ -530,7 +524,7 @@ async def public_booking_page(
             "locality": tenant.locality,
             "instagram": tenant.instagram,
             "facebook": tenant.facebook,
-            "logo_version": logo_version(logo_updated_at),
+            "logo_version": logo_version(tenant.logo_updated_at),
             "brand_theme": brand_theme(tenant.brand_color),
             "timezone": tenant.timezone or "America/Argentina/Buenos_Aires",
             "services": services_data,
