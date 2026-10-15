@@ -566,6 +566,7 @@ async def public_logo(
             "Cache-Control": "public, max-age=3600",
             "X-Content-Type-Options": "nosniff",
             # Abierto directo en el navegador no puede ejecutar nada.
-            "Content-Security-Policy": "default-src 'none'; sandbox",
+            # frame-ancestors no lo cubre default-src: va explícito.
+            "Content-Security-Policy": "default-src 'none'; sandbox; frame-ancestors 'none'",
         },
     )

@@ -1080,8 +1080,30 @@ Commit: `92a24d9`.
 - **Ventaja** — `frame-ancestors 'none'`: nadie puede meter la página de reservas en un iframe.
 - **Riesgo** — Si un negocio quisiera embeber su página de reservas en su propio sitio, habría que abrir `frame-ancestors` a ese dominio.
 - **Riesgo** — `'unsafe-inline'` en `style-src` permite inyectar CSS (sin poder sacar datos del sitio).
-- **Deuda** — El panel, el login, el registro y la landing no mandan `frame-ancestors` ni `X-Frame-Options` (clickjacking: MEDIA del security-auditor). Primer paso barato: un middleware con `setdefault` de `frame-ancestors 'none'`, `base-uri 'none'`, `object-src 'none'` y `nosniff` en respuestas `text/html`. Una CSP con nonce en el panel requiere sacar los `onsubmit` inline de `agenda.html` y `business_hours_list.html`.
+- **Deuda** — ~~El panel, el login, el registro y la landing no mandan `frame-ancestors` ni `X-Frame-Options` (clickjacking: MEDIA del security-auditor).~~ Resuelto en D-040. Primer paso barato: un middleware con `setdefault` de `frame-ancestors 'none'`, `base-uri 'none'`, `object-src 'none'` y `nosniff` en respuestas `text/html`. Una CSP con nonce en el panel requiere sacar los `onsubmit` inline de `agenda.html` y `business_hours_list.html`.
 - **Límite** — La CSP no controla la navegación: la redirección a Mercado Pago (`location.href`) queda afuera, pero la URL viene del servidor (`init_point`).
+
+---
+
+## D-040: Headers de seguridad en todas las respuestas (anti-clickjacking)
+
+**Fecha**: 2026-10-15
+
+**Contexto**: el security-auditor de D-039 marcó como MEDIA que el panel, el login, el registro y la landing no mandaban `frame-ancestors` ni `X-Frame-Options`. Un sitio ajeno podía meter `/panel/agenda` en un iframe transparente y hacer que el dueño logueado cancelara un turno o desconectara MP con un clic señuelo. El token CSRF no lo frena: el formulario es el legítimo.
+
+**Decisión**: un `@app.middleware("http")` en `app/main.py` (`security_headers`) agrega con `setdefault` a toda respuesta: `Content-Security-Policy: frame-ancestors 'none'; base-uri 'none'; object-src 'none'`, `X-Frame-Options: DENY` (navegadores sin `frame-ancestors` y rutas con CSP propia sin esa directiva) y `X-Content-Type-Options: nosniff`. `setdefault` conserva la CSP propia de `/t/{slug}` y del logo; el logo suma `frame-ancestors 'none'` explícito porque `default-src` no la cubre.
+
+**Alternativas**:
+- **CSP completa con nonce en el panel**: más protección, pero requiere sacar los `onsubmit` inline y poner nonce en 8 templates. Queda como deuda.
+- **Middleware ASGI puro**: cubriría también los 500 de `ServerErrorMiddleware`, pero es más código para respuestas de texto fijo que no se pueden clickjackear.
+- **HSTS y Referrer-Policy en el mismo cambio**: HSTS depende de si Cloudflare ya lo manda (verificar en prod antes de sumarlo); Referrer-Policy aporta poco sobre el default `strict-origin-when-cross-origin`.
+
+**Consecuencias**:
+- **Ventaja** — Verificado en Chrome: desde otro origen, los iframes de `/login`, `/panel/settings` y `/t/{slug}` quedan bloqueados y un iframe de control sin headers carga; el panel (QR incluido) y la reserva pública siguen andando.
+- **Ventaja** — `nosniff` solo afecta scripts y estilos con MIME incorrecto; `.js`/`.css` vienen de la tabla de Python y webp/woff2/webmanifest se registran en `main.py` (test de estáticos).
+- **Riesgo** — Los 500 no manejados no llevan los headers (texto fijo, sin nada que enmarcar).
+- **Riesgo** — `BaseHTTPMiddleware` con versiones de Starlette sin fijar: si aparece ruido de `No response returned.` en Sentry por clientes que cortan, pasar a un middleware ASGI puro.
+- **Deuda** — CSP con `script-src` en el panel; confirmar HSTS en prod (`curl -sI https://juturno.com | grep -i strict`).
 
 ---
 
