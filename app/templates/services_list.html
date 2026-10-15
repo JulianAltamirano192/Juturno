@@ -12,6 +12,7 @@
   .s-name{font-weight:700}
   .s-dep{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
   .s-auto{font-size:12px;color:var(--cyan-xl);padding:3px 8px;border-radius:999px;background:rgba(34,211,238,.1)}
+  .s-dur .s-auto{display:table;margin-top:4px;white-space:nowrap}
   .s-meta{display:none}
   .s-edit{text-align:right}
   @media (max-width:1000px){.srow{grid-template-columns:minmax(0,1.5fr) 110px minmax(0,1.4fr) 60px 80px}.s-dur{display:none}}
@@ -45,8 +46,8 @@
   </div>
   {% for service, deposit in services_with_deposit %}
   <div class="srow{% if not service.is_active %} off{% endif %}" role="row">
-    <div role="cell" class="s-name">{{ service.name }}<span class="s-meta">{{ service.duration_minutes }} min · {{ service.price|money }}</span></div>
-    <span role="cell" class="s-dur">{{ service.duration_minutes }} min</span>
+    <div role="cell" class="s-name">{{ service.name }}<span class="s-meta">{{ service.duration_minutes }} min{% if service.buffer_minutes %} (+{{ service.buffer_minutes }} min libres){% endif %} · {{ service.price|money }}</span></div>
+    <span role="cell" class="s-dur">{{ service.duration_minutes }} min{% if service.buffer_minutes %}<span class="s-auto">+{{ service.buffer_minutes }} min libres</span>{% endif %}</span>
     <span role="cell" class="s-price">{{ service.price|money }}</span>
     <span role="cell" class="s-dep">Seña {{ deposit|money }}{% if service.deposit_amount is none %}<span class="s-auto">30% automático</span>{% endif %}</span>
     <span role="cell" class="s-active">

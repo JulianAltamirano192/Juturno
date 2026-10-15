@@ -58,6 +58,18 @@
     </div>
 
     <div class="field">
+      <label for="buffer_minutes">Tiempo libre después del turno <span class="opt">(opcional)</span></label>
+      {%- set current_buffer = form.get('buffer_minutes', '0')|string %}
+      <select id="buffer_minutes" name="buffer_minutes"{% if errors.buffer_minutes %} class="has-error"{% endif %}>
+        {%- for m in service_buffer_choices %}
+        <option value="{{ m }}"{% if current_buffer == m|string %} selected{% endif %}>{% if m %}{{ m }} min{% else %}Sin tiempo libre{% endif %}</option>
+        {%- endfor %}
+      </select>
+      <div class="field-hint">Para limpiar o preparar: el turno siguiente se puede reservar recién después de este tiempo.</div>
+      {% if errors.buffer_minutes %}<div class="field-error">{{ errors.buffer_minutes }}</div>{% endif %}
+    </div>
+
+    <div class="field">
       <label for="price">Precio total</label>
       <div class="input-prefix"><span>$</span><input type="text" id="price" name="price" inputmode="decimal" value="{{ form.get('price', '') }}" placeholder="5000.00" class="{% if errors.price %}has-error{% endif %}"></div>
       <div class="field-hint">Usá punto como separador decimal (ej: 5000.00).</div>

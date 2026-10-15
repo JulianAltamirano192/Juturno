@@ -292,7 +292,9 @@ async def create_public_booking(
             detail="Ese horario no está disponible. Elegí uno de los turnos ofrecidos.",
         )
 
-    end_time = start_time + timedelta(minutes=service.duration_minutes)
+    end_time = start_time + timedelta(
+        minutes=service.duration_minutes + service.buffer_minutes
+    )
 
     deposit_decimal = effective_deposit(service.price, service.deposit_amount)
 

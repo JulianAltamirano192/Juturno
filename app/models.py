@@ -28,6 +28,9 @@ BOOKING_HORIZON_CHOICES = (15, 30, 60, 90)
 # Sin "sin vencimiento": el link de pago vence a las 48 h igual (D-031).
 DEPOSIT_EXPIRATION_CHOICES = (15, 30, 60, 120, 360, 1440)
 
+# Minutos libres después de cada turno de un servicio (ítem 32, opt-in).
+SERVICE_BUFFER_CHOICES = (0, 5, 10, 15, 20, 30, 45, 60)
+
 # Largo máximo de la nota interna de un turno (solo la ve el dueño).
 BOOKING_NOTES_MAX = 500
 
@@ -239,6 +242,10 @@ class Service(SQLModel, table=True):
             "deposit_amount IS NULL OR deposit_amount >= 0",
             name="ck_service_deposit_amount_non_negative",
         ),
+        CheckConstraint(
+            f"buffer_minutes IN {SERVICE_BUFFER_CHOICES}",
+            name="ck_service_buffer_minutes",
+        ),
     )
 
     id: int | None = Field(default=None, primary_key=True)
@@ -250,6 +257,11 @@ class Service(SQLModel, table=True):
         default=None,
         sa_column=Column(Numeric(10, 2), nullable=True),
         description="Monto de seña. Si es None, se usa el 30% del precio total.",
+    )
+    buffer_minutes: int = Field(
+        default=0,
+        sa_column_kwargs={"server_default": text("0")},
+        description="Minutos libres después de cada turno; se suman al end_time.",
     )
     is_active: bool = Field(default=True, index=True)
 

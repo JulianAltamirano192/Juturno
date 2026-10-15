@@ -38,6 +38,7 @@ from app.models import (
     BOOKING_NOTES_MAX,
     DEPOSIT_EXPIRATION_CHOICES,
     PUBLIC_NOTICE_MAX,
+    SERVICE_BUFFER_CHOICES,
     BlockedPeriod,
     Booking,
     BusinessHours,
@@ -114,6 +115,17 @@ def _parse_service_form(form: dict) -> tuple[dict, dict]:
         data["duration_minutes"] = duration_minutes
     except (ValueError, TypeError):
         errors["duration_minutes"] = "La duración debe ser un número entero mayor a 0."
+
+    # Opt-in: sin el campo, el alta queda sin tiempo libre y la edición
+    # conserva el valor guardado (formularios viejos no lo pisan).
+    if "buffer_minutes" in form:
+        try:
+            buffer_minutes = int(form["buffer_minutes"] or 0)
+            if buffer_minutes not in SERVICE_BUFFER_CHOICES:
+                raise ValueError
+            data["buffer_minutes"] = buffer_minutes
+        except (ValueError, TypeError):
+            errors["buffer_minutes"] = "Elegí un tiempo libre de la lista."
 
     try:
         price = _parse_amount(form.get("price", ""))
@@ -1033,6 +1045,7 @@ async def panel_services_new_submit(
         tenant_id=tenant.id,
         name=data["name"],
         duration_minutes=data["duration_minutes"],
+        buffer_minutes=data.get("buffer_minutes", 0),
         price=data["price"],
         deposit_amount=data.get("deposit_amount"),
         is_active=True,
@@ -1060,6 +1073,7 @@ async def panel_services_edit_form(
     form = {
         "name": service.name,
         "duration_minutes": str(service.duration_minutes),
+        "buffer_minutes": str(service.buffer_minutes),
         "price": str(service.price),
         "deposit_amount": (
             str(service.deposit_amount) if service.deposit_amount else ""
@@ -1119,6 +1133,7 @@ async def panel_services_edit_submit(
 
     service.name = data["name"]
     service.duration_minutes = data["duration_minutes"]
+    service.buffer_minutes = data.get("buffer_minutes", service.buffer_minutes)
     service.price = data["price"]
     service.deposit_amount = data.get("deposit_amount")
     session.add(service)
@@ -2340,7 +2355,9 @@ async def panel_agenda_new_submit(
                 local_day, local_time, tzinfo=_tenant_tz(tenant)
             ).astimezone(timezone.utc)
             if service is not None:
-                end_time = start_time + timedelta(minutes=service.duration_minutes)
+                end_time = start_time + timedelta(
+                    minutes=service.duration_minutes + service.buffer_minutes
+                )
         except OverflowError:
             start_time = None
             errors["date"] = "Ingresá una fecha válida."
