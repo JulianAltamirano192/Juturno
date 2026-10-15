@@ -25,6 +25,7 @@ async def _register(client, email: str, whatsapp: str):
             "name": "Negocio WhatsApp",
             "owner_email": email,
             "password": "supersecretpassword123",
+            "business_category": "peluqueria",
             "whatsapp_number": whatsapp,
             "csrf_token": csrf,
         },

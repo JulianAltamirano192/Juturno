@@ -32,6 +32,25 @@ BOOKING_NOTES_MAX = 500
 # Largo máximo del aviso destacado de la página pública (ítem 39).
 PUBLIC_NOTICE_MAX = 280
 
+# Rubros del negocio (ítem 14), en el orden en que se muestran. La clave se
+# guarda en la DB (la usará el buscador por rubro); "otro" va con texto libre.
+BUSINESS_CATEGORIES = {
+    "peluqueria": "Peluquería y barbería",
+    "estetica": "Estética y belleza (uñas, cejas, pestañas)",
+    "tatuajes": "Tatuajes y piercing",
+    "masajes": "Masajes y spa",
+    "salud": "Salud (kinesiología, nutrición, psicología, odontología)",
+    "deporte": "Entrenamiento y deporte",
+    "clases": "Clases y tutorías",
+    "lavadero": "Lavadero de autos",
+    "mascotas": "Mascotas (peluquería canina, veterinaria)",
+    "fotografia": "Fotografía",
+    "reparaciones": "Reparaciones y servicio técnico",
+    "otro": "Otro",
+}
+BUSINESS_CATEGORY_OTHER = "otro"
+BUSINESS_CATEGORY_OTHER_MAX = 60
+
 
 class Tenant(SQLModel, table=True):
     """
@@ -77,6 +96,16 @@ class Tenant(SQLModel, table=True):
         default=None,
         sa_column=Column(String(PUBLIC_NOTICE_MAX), nullable=True),
         description="Aviso destacado de la página pública. NULL = sin aviso.",
+    )
+    business_category: str | None = Field(
+        default=None,
+        sa_column=Column(String(20), nullable=True),
+        description="Clave de BUSINESS_CATEGORIES. NULL = negocio anterior al ítem 14.",
+    )
+    business_category_other: str | None = Field(
+        default=None,
+        sa_column=Column(String(BUSINESS_CATEGORY_OTHER_MAX), nullable=True),
+        description='Rubro escrito por el negocio; solo con business_category "otro".',
     )
     owner_email: str | None = Field(
         default=None,

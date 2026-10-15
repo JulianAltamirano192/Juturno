@@ -17,6 +17,7 @@ from app.limiter import limiter
 from app.models import Tenant
 from app.password import hash_password, verify_password
 from app.phone import InvalidPhoneError, normalize_whatsapp_phone
+from app.schemas import clean_business_category
 from app.session import (
     SESSION_COOKIE_NAME,
     delete_session_cookie,
@@ -55,6 +56,8 @@ async def register_submit(
     owner_email: Annotated[str, Form()],
     password: Annotated[str, Form()],
     whatsapp_number: Annotated[str | None, Form()] = None,
+    business_category: Annotated[str | None, Form()] = None,
+    business_category_other: Annotated[str | None, Form()] = None,
     slug: Annotated[str | None, Form()] = None,
     csrf_token: Annotated[str | None, Form()] = None,
     session: AsyncSession = Depends(get_db),
@@ -68,6 +71,8 @@ async def register_submit(
         "name": name,
         "owner_email": owner_email,
         "whatsapp_number": whatsapp_number or "",
+        "business_category": business_category or "",
+        "business_category_other": business_category_other or "",
         "slug": slug or "",
     }
 
@@ -96,6 +101,29 @@ async def register_submit(
                 "csrf_token": new_csrf,
                 "form_data": form_data,
                 "error_message": "La contraseña debe tener al menos 8 caracteres.",
+            },
+            status_code=400,
+        )
+        set_csrf_cookie(response, new_csrf)
+        return response
+
+    try:
+        category, category_other = clean_business_category(
+            business_category, business_category_other
+        )
+    except ValueError as exc:
+        new_csrf = generate_csrf_token(request)
+        response = templates.TemplateResponse(
+            request,
+            "register.html",
+            {
+                "csrf_token": new_csrf,
+                "form_data": form_data,
+                "error_message": (
+                    "Escribí el rubro de tu negocio (entre 2 y 60 caracteres)."
+                    if exc.args[0] == "other"
+                    else "Elegí el rubro de tu negocio."
+                ),
             },
             status_code=400,
         )
@@ -156,6 +184,8 @@ async def register_submit(
         owner_email=normalized_email,
         password_hash=pwd_hash,
         whatsapp_number=clean_whatsapp,
+        business_category=category,
+        business_category_other=category_other,
     )
     session.add(new_tenant)
     await session.commit()
