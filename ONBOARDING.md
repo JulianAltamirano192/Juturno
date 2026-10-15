@@ -33,7 +33,7 @@ curl http://localhost:8000/health
 
 # 7. Correr tests
 ./scripts/test.sh
-# 783 tests en 53 archivos (./scripts/test.sh --collect-only -q)
+# 788 tests en 54 archivos (./scripts/test.sh --collect-only -q)
 ```
 
 > **Nota clave**: Los tests corren **dentro del contenedor `api`**. `./scripts/test.sh` arma `TEST_DATABASE_URL` leyendo `POSTGRES_PASSWORD` del `.env` y ejecuta `docker compose exec ... api pytest <args>` (sin args corre `-v`). La URL apunta al servicio `db` (no `localhost`). Con `TEST_DATABASE_URL` seteada el scheduler NO arranca y el rate limiter queda deshabilitado.
@@ -305,7 +305,7 @@ curl https://api.juturno.com/health
 |-----|----------|
 | [`README.md`](README.md) | Quickstart, env vars tabla completa, comandos |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | Modelos, flujos, auth, slots, outbox, scheduler, MP, WhatsApp |
-| [`DECISIONS.md`](DECISIONS.md) | 38 ADRs (D-001 a D-038) — por qué se hizo así |
+| [`DECISIONS.md`](DECISIONS.md) | 39 ADRs (D-001 a D-039) — por qué se hizo así |
 | [`DEPLOYMENT.md`](DEPLOYMENT.md) | Deploy, migraciones, rollback, backups, CI, secrets |
 | [`API_REFERENCE.md`](API_REFERENCE.md) | 47 rutas con schemas, auth, rate limits, códigos de error |
 | [`RUNBOOK.md`](RUNBOOK.md) | Incidentes: síntomas, diagnóstico, mitigación, fix |
