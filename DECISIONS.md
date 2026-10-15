@@ -1234,6 +1234,35 @@ En `compute_available_slots` se corre hacia atrás el inicio de cada turno exist
 
 ---
 
+## D-046: Historial de clientes agrupando `booking` por teléfono (sin tabla `Client`)
+
+**Fecha**: 2026-10-15
+
+**Contexto**: Fase 5, ítem 17. El dueño quiere ver quién es cada cliente y cuántas veces vino o faltó. El pedido original decía "primero una vista agrupando `booking` por `client_phone`; la tabla `Client` solo si hace falta". Julián decidió además dónde va la pantalla en el celular.
+
+**Decisión**:
+- **Sin tabla `Client` ni migración**: `GET /panel/clientes` agrupa `booking` por `client_phone` (en DB siempre `549XXXXXXXXXX`) y `GET /panel/clientes/{phone}` lista los turnos de ese teléfono, siempre filtrando `tenant_id`. El ítem 45 (seña obligatoria por `no_show` previo) puede reusar la misma agrupación.
+- **Qué muestra la lista**: un cliente por teléfono, el de turno más reciente primero, con el nombre del turno más reciente (el cliente puede escribirlo distinto cada vez), cantidad de turnos, ausencias (`no_show`) y fecha del último. `q` (hasta 60 caracteres, sin NUL) busca por nombre (`ILIKE` con comodines escapados) o por los dígitos del teléfono.
+- **Se excluyen los `expired`**: son reservas abandonadas sin pagar, no clientes. En el detalle se listan pero no se cuentan (contadores de completados, no se presentó y cancelados).
+- **Topes**: 50 clientes en la lista (con nota que invita a usar el buscador) y 200 turnos en el detalle. Evitan páginas enormes sin paginar.
+- **Detalle**: 404 si no hay turnos o si el teléfono no son solo dígitos ASCII. En la agenda diaria el nombre del cliente linkea al historial.
+- **Navegación**: "Clientes" es pestaña de la barra lateral de escritorio. En la barra inferior de celular (≤900 px) no aparece: con 8 pestañas las etiquetas se cortaban a 320 px (verificado con capturas). Ahí vive dentro de Agenda: la pestaña Agenda queda activa en `/panel/clientes*` y el selector "Día | Semana" suma "Clientes" solo en celular.
+
+**Alternativas**:
+- **Tabla `Client`** (con nombre, notas, etc.): permitiría editar datos del cliente y deduplicar nombres, pero exige migración, backfill y mantener sincronizada la fuente de verdad con `booking`. Descartada por ahora; se reconsidera si hace falta guardar datos propios del cliente.
+- **Contar también los `expired`**: inflaría la cantidad de turnos con reservas que nunca se pagaron. Descartada.
+- **Pestaña propia en la barra de celular**: 8 pestañas no entran a 320 px. Descartada por Julián.
+
+**Consecuencias**:
+- **Ventaja** — Sin migración ni cambios en la API JSON; los datos salen siempre de `booking`, sin riesgo de desincronizarse.
+- **Ventaja** — Reusable por el ítem 45.
+- **Riesgo** — El cliente es el teléfono: dos personas que comparten número se mezclan, y quien cambia de número aparece como otro cliente.
+- **Riesgo** — La agrupación y el `ILIKE` leen `booking` entero del tenant en cada consulta; sin índice por `(tenant_id, client_phone)` puede ponerse lento con muchos turnos (no medido).
+- **Deuda** — Sin paginación: más de 50 clientes o 200 turnos solo se alcanzan buscando (en el detalle, los más viejos no se ven).
+- **Deuda** — En celular "Clientes" queda menos descubrible (dentro de Agenda). Y la lista no tiene export ni filtros por ausencias.
+
+---
+
 ## Roadmap de deuda técnica
 
 Ordenado por impacto/urgencia estimada:

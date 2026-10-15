@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+
+{% block title %}Clientes - {{ tenant.name }}{% endblock %}
+
+{% block head %}
+<style>
+  .cl-search{display:flex;gap:10px;margin-bottom:18px}
+  .cl-search input{flex:1 1 auto;min-width:0}
+  .cl-search .btn-sm{min-height:50px}
+  .cl-list{display:flex;flex-direction:column;gap:10px}
+  .cl-row{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px 18px;border-radius:16px;background:var(--surface);border:1px solid rgba(255,255,255,.09);color:var(--text)}
+  .cl-row:hover{background:var(--surface-2)}
+  .cl-who{display:flex;flex-direction:column;gap:3px;min-width:0}
+  .cl-who strong{font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .cl-who span{font-size:13px;color:var(--muted-2)}
+  .cl-meta{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:4px 12px;font-size:13px;color:var(--text-2);text-align:right}
+  .cl-ns{color:#fed7aa}
+  .cl-note{margin-top:14px;font-size:13px;color:var(--muted-2)}
+  /* Solo en celular: ahí Clientes vive dentro de la pestaña Agenda. */
+  .view-tg{display:none}
+  @media (max-width:900px){
+    .ph{flex-direction:column;align-items:stretch}
+    .view-tg{display:flex;padding:3px;border-radius:12px;border:1px solid var(--border);background:var(--surface)}
+    .view-tg a{display:inline-flex;flex:1 1 0;align-items:center;justify-content:center;min-height:38px;border-radius:9px;font-size:14px;font-weight:600;color:var(--text-2)}
+    .view-tg a.on{background:var(--surface-2);color:var(--text)}
+    .cl-row{flex-direction:column;align-items:flex-start;gap:6px;padding:12px 14px}
+    .cl-meta{justify-content:flex-start;text-align:left}
+  }
+</style>
+{% endblock %}
+
+{% block dash_content %}
+<div class="ph">
+  <div>
+    <h1>Clientes</h1>
+    <p>Cada persona que reservó, agrupada por teléfono.</p>
+  </div>
+  <nav class="view-tg" aria-label="Vista de la agenda">
+    <a href="/panel/agenda">Día</a>
+    <a href="/panel/agenda?view=week">Semana</a>
+    <a class="on" href="/panel/clientes" aria-current="page">Clientes</a>
+  </nav>
+</div>
+
+<form class="cl-search" method="GET" action="/panel/clientes" role="search">
+  <input type="search" name="q" value="{{ q }}" maxlength="60" placeholder="Nombre o teléfono" aria-label="Buscar por nombre o teléfono">
+  <button type="submit" class="btn-sm">Buscar</button>
+</form>
+
+{% if clients %}
+<div class="cl-list">
+  {% for c in clients %}
+  <a class="cl-row" href="/panel/clientes/{{ c.phone|urlencode }}">
+    <span class="cl-who"><strong>{{ c.name }}</strong><span>{{ c.phone }}</span></span>
+    <span class="cl-meta">
+      <span>{{ c.bookings }} turno{{ 's' if c.bookings != 1 }}</span>
+      {% if c.no_shows %}<span class="cl-ns">{{ c.no_shows }} ausencia{{ 's' if c.no_shows != 1 }}</span>{% endif %}
+      <span>Último: {{ c.last_day }}</span>
+    </span>
+  </a>
+  {% endfor %}
+</div>
+{% if is_capped %}<p class="cl-note">Se muestran los {{ clients|length }} clientes con turnos más recientes. Usá el buscador para encontrar a otros.</p>{% endif %}
+{% elif q %}
+<div class="empty-state">
+  <h2>Ningún cliente coincide</h2>
+  <p>Probá con otra parte del nombre o del teléfono.</p>
+  <a href="/panel/clientes" class="btn-sm">Ver todos</a>
+</div>
+{% else %}
+<div class="empty-state">
+  <h2>Todavía no hay clientes</h2>
+  <p>Cuando alguien reserve un turno, va a aparecer acá con su historial.</p>
+</div>
+{% endif %}
+{% endblock %}

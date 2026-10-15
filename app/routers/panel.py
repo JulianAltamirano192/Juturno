@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from sqlalchemy import and_, delete, func, select
+from sqlalchemy.dialects.postgresql import aggregate_order_by, array_agg
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -2069,6 +2070,147 @@ async def panel_stats(
             "prev_day": prev_day.isoformat(),
             "next_day": (first_day + timedelta(days=days)).isoformat(),
             "summary": await _money_summary(session, tenant, first_day, days),
+        },
+    )
+    set_csrf_cookie(response, csrf_token)
+    return response
+
+
+# ---------------------------------------------------------------------------
+# Panel: Clientes (historial agrupado por teléfono, sin tabla Client)
+# ---------------------------------------------------------------------------
+
+_CLIENTS_LIST_MAX = 50
+_CLIENT_HISTORY_MAX = 200
+_CLIENT_SEARCH_MAX = 60
+
+
+@router.get("/panel/clientes", response_class=HTMLResponse)
+async def panel_clients(
+    request: Request,
+    q: Annotated[str | None, Query()] = None,
+    tenant: Tenant = Depends(get_current_tenant_from_session),
+    session: AsyncSession = Depends(get_db),
+):
+    """Un cliente por teléfono, el de turno más reciente primero. `q` busca por
+    nombre o por los dígitos del teléfono. Los turnos vencidos sin pagar no
+    cuentan: son reservas abandonadas."""
+    # Postgres rechaza el byte NUL en un texto (500): se descarta.
+    search = (q or "").replace("\x00", "").strip()[:_CLIENT_SEARCH_MAX]
+    filters = [Booking.tenant_id == tenant.id, Booking.status != "expired"]
+    if search:
+        digits = re.sub(r"\D", "", search)
+        match = col(Booking.client_name).icontains(search, autoescape=True)
+        if digits:
+            match = match | col(Booking.client_phone).contains(digits)
+        filters.append(match)
+
+    last_start = func.max(Booking.start_time)
+    stmt = (
+        select(
+            col(Booking.client_phone),
+            # Nombre del turno más reciente: el cliente puede escribirlo distinto.
+            array_agg(
+                aggregate_order_by(
+                    col(Booking.client_name), col(Booking.start_time).desc()
+                )
+            )[1],
+            func.count(),
+            func.count().filter(col(Booking.status) == "no_show"),
+            last_start,
+        )
+        .where(*filters)
+        .group_by(col(Booking.client_phone))
+        .order_by(last_start.desc())
+        .limit(_CLIENTS_LIST_MAX)
+    )
+    tenant_tz = _tenant_tz(tenant)
+    clients = [
+        {
+            "phone": phone,
+            "name": name,
+            "bookings": bookings,
+            "no_shows": no_shows,
+            "last_day": last.astimezone(tenant_tz).strftime("%d/%m/%Y"),
+        }
+        for phone, name, bookings, no_shows, last in await session.execute(stmt)
+    ]
+
+    # El layout tiene el formulario de "Cerrar sesión".
+    csrf_token = generate_csrf_token(request)
+    response = templates.TemplateResponse(
+        request,
+        "clients.html",
+        {
+            "tenant": tenant,
+            "csrf_token": csrf_token,
+            "q": search,
+            "clients": clients,
+            "is_capped": len(clients) == _CLIENTS_LIST_MAX,
+        },
+    )
+    set_csrf_cookie(response, csrf_token)
+    return response
+
+
+@router.get("/panel/clientes/{phone}", response_class=HTMLResponse)
+async def panel_client_detail(
+    request: Request,
+    phone: str,
+    tenant: Tenant = Depends(get_current_tenant_from_session),
+    session: AsyncSession = Depends(get_db),
+):
+    """Todos los turnos del tenant con ese teléfono, el más reciente primero."""
+    # Los teléfonos se guardan normalizados (solo dígitos); otra cosa no existe
+    # y un byte NUL haría fallar la query con 500.
+    if not (phone.isascii() and phone.isdigit()):
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    stmt = (
+        select(Booking, Service, Staff)
+        .join(Service, Booking.service_id == Service.id)
+        .outerjoin(Staff, Booking.staff_id == Staff.id)
+        .where(Booking.tenant_id == tenant.id, Booking.client_phone == phone)
+        .order_by(col(Booking.start_time).desc())
+        .limit(_CLIENT_HISTORY_MAX)
+    )
+    rows = (await session.execute(stmt)).all()
+    if not rows:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+    tenant_tz = _tenant_tz(tenant)
+    history = []
+    for b, s, st in rows:
+        start_local = b.start_time.astimezone(tenant_tz)
+        history.append(
+            {
+                "day": start_local.date().isoformat(),
+                "day_label": start_local.strftime("%d/%m/%Y"),
+                "time_label": start_local.strftime("%H:%M"),
+                "service_name": s.name,
+                "staff_name": st.name if st else None,
+                "status": b.status,
+                "status_label": _AGENDA_STATUS_LABELS.get(b.status, b.status),
+                "price": b.price_at_booking,
+                "internal_notes": b.internal_notes,
+            }
+        )
+    counts = {key: 0 for key in ("completed", "no_show", "cancelled")}
+    for b, _, _ in rows:
+        if b.status in counts:
+            counts[b.status] += 1
+
+    csrf_token = generate_csrf_token(request)
+    response = templates.TemplateResponse(
+        request,
+        "client_detail.html",
+        {
+            "tenant": tenant,
+            "csrf_token": csrf_token,
+            "client_name": rows[0][0].client_name,
+            "client_phone": phone,
+            "history": history,
+            "counts": counts,
+            "is_capped": len(rows) == _CLIENT_HISTORY_MAX,
         },
     )
     set_csrf_cookie(response, csrf_token)

@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+
+{% block title %}{{ client_name }} - {{ tenant.name }}{% endblock %}
+
+{% block head %}
+<style>
+  .cd-wa{display:inline-flex;align-items:center;gap:6px;margin-top:6px;font-size:14px;color:var(--green)}
+  .cd-wa svg{width:16px;height:16px}
+  .cd-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:18px}
+  .cd-list{display:flex;flex-direction:column;gap:10px}
+  .cd-row{display:grid;grid-template-columns:110px minmax(0,1fr) auto;align-items:center;gap:6px 14px;padding:14px 18px;border-radius:16px;background:var(--surface);border:1px solid rgba(255,255,255,.09)}
+  .cd-row.dim{opacity:.6}
+  .cd-when{display:flex;flex-direction:column;gap:2px;color:var(--text)}
+  .cd-when span{font-size:13px;color:var(--muted-2)}
+  .cd-what{display:flex;flex-direction:column;gap:2px;min-width:0}
+  .cd-what span{font-size:13px;color:var(--muted-2)}
+  .cd-note{grid-column:1 / -1;font-size:13px;color:var(--text-2);white-space:pre-line;overflow-wrap:anywhere}
+  .cd-cap{margin-top:14px;font-size:13px;color:var(--muted-2)}
+  @media (max-width:900px){
+    .cd-row{grid-template-columns:minmax(0,1fr) auto;padding:12px 14px}
+    .cd-what{grid-column:1 / -1;grid-row:2}
+  }
+</style>
+{% endblock %}
+
+{% block dash_content %}
+<div class="ph">
+  <div>
+    <a href="/panel/clientes" class="back-link">{{ ui.icon('izq') }}Clientes</a>
+    <h1>{{ client_name }}</h1>
+    <a class="cd-wa" href="https://wa.me/{{ client_phone|urlencode }}" target="_blank" rel="noopener" aria-label="Escribirle a {{ client_name }} por WhatsApp">{{ ui.icon('whatsapp') }}{{ client_phone }}</a>
+  </div>
+</div>
+
+<div class="cd-stats">
+  <div class="stat gr"><span>Completados</span><strong>{{ counts.completed }}</strong></div>
+  <div class="stat"><span>No se presentó</span><strong>{{ counts.no_show }}</strong></div>
+  <div class="stat"><span>Cancelados</span><strong>{{ counts.cancelled }}</strong></div>
+</div>
+
+<div class="cd-list">
+  {% for item in history %}
+  <div class="cd-row{% if item.status in ['cancelled', 'expired'] %} dim{% endif %}">
+    <a class="cd-when" href="/panel/agenda?day={{ item.day }}" aria-label="Ver la agenda del {{ item.day_label }}"><strong>{{ item.day_label }}</strong><span>{{ item.time_label }} h</span></a>
+    <div class="cd-what">
+      <strong>{{ item.service_name }}</strong>
+      <span>{% if item.staff_name %}Con {{ item.staff_name }} · {% endif %}{{ item.price|money }}</span>
+    </div>
+    <span class="badge badge-{{ item.status }}">{{ item.status_label }}</span>
+    {% if item.internal_notes %}<p class="cd-note">Nota: {{ item.internal_notes }}</p>{% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% if is_capped %}<p class="cd-cap">Se muestran los {{ history|length }} turnos más recientes.</p>{% endif %}
+{% endblock %}
