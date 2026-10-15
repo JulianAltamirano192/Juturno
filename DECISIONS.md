@@ -1109,6 +1109,28 @@ Commit: `92a24d9`.
 
 ---
 
+## D-041: Horarios por profesional y horario partido
+
+**Fecha**: 2026-10-15
+
+**Contexto**: `BusinessHours.staff_id` y `resolve_day_windows` ya soportaban horarios por profesional, pero el panel solo manejaba `staff_id IS NULL` (ítem 30, prerrequisito del 16). La tabla tenía `uq_business_hours_tenant_staff_day (tenant_id, staff_id, day_of_week)`, que en la práctica solo frenaba a los profesionales: Postgres trata los NULL como distintos, así que el negocio ya podía tener horario partido y un profesional no.
+
+**Decisión** (elección de Julián): un profesional puede tener horario partido (varias franjas el mismo día), igual que el negocio. La migración `9a9d04b9ff5e` borra el UNIQUE y los solapamientos los valida el panel por dueño. `/panel/horarios` acepta `?staff=ID` (sin él, horario del negocio); editar y borrar toman el dueño de la propia fila. La semántica de `resolve_day_windows` no cambia: con al menos una franja, el profesional reemplaza por completo al negocio y sus días sin franja quedan cerrados.
+
+**Alternativas**:
+- **Una franja por día, sin migración**: conserva el UNIQUE y no toca la DB, pero el profesional queda más limitado que el negocio (sin pausa al mediodía). Descartada por Julián.
+- **`EXCLUDE USING gist` contra solapamientos**: garantizaría la regla en la DB, pero requiere `COALESCE(staff_id, 0)` para el NULL del negocio y un tipo de rango de horas (hoy son dos columnas `Time`). Descartada por ahora.
+
+**Consecuencias**:
+- **Ventaja** — Profesionales y negocio se comportan igual; sin cambios en `resolve_day_windows` ni en slots.
+- **Riesgo** — Dos envíos simultáneos pueden dejar franjas solapadas (ya pasaba con el negocio) y `calculate_available_slots` ofrecería horarios duplicados.
+- **Riesgo** — Crear o cambiar horarios no revisa reservas futuras ya tomadas: pueden quedar fuera de horario (ya pasaba con el negocio).
+- **Riesgo** — Al cargar la primera franja de un profesional, todos sus otros días pasan a cerrados (reemplazo total); el dueño tiene que cargar cada día que atienda.
+- **Riesgo** — El downgrade recrea el UNIQUE y falla si ya hay franjas duplicadas de un profesional.
+- **Deuda** — Validación de solapamiento solo en el panel, sin constraint en la DB; el `EXCLUDE` queda pendiente.
+
+---
+
 ## Roadmap de deuda técnica
 
 Ordenado por impacto/urgencia estimada:

@@ -71,8 +71,7 @@ Tenant (1) ──────< Service
      │       ├── staff_id NULL = horario del negocio
      │       ├── staff_id = ID = horario del profesional (prioridad)
      │       ├── day_of_week (0=Lun..6=Dom)
-     │       ├── start_time / end_time (Time, sin TZ)
-     │       └── unique uq_business_hours_tenant_staff_day (tenant_id, staff_id, day_of_week)
+     │       └── start_time / end_time (Time, sin TZ); varias franjas por día (horario partido), sin UNIQUE (D-041)
      │
      ├──< Booking
      │       ├── service_id, staff_id (nullable, ON DELETE SET NULL)
@@ -203,7 +202,9 @@ Lo servido son siempre bytes generados por la app, nunca los del usuario. El log
 - **Profesional**: `staff_id = ID` → prioridad sobre horario del negocio.
 - **Sin filas en tabla**: fallback estático `09:00-18:00` (no rompe página pública).
 - **Con filas pero sin día**: día **cerrado** (lista vacía).
-- Unique constraint: `(tenant_id, staff_id, day_of_week)`.
+- **Reemplazo (D-041)**: si un profesional tiene al menos una franja, sus horarios reemplazan por completo a los del negocio para esa persona y los días sin franja quedan cerrados; sin franjas usa el del negocio. Cargar la primera franja de un profesional cierra todos sus otros días.
+- Sin UNIQUE por día (se borró `uq_business_hours_tenant_staff_day`, migración `9a9d04b9ff5e`): negocio y profesional pueden tener horario partido. Los solapamientos los valida el panel por dueño (`staff_id` o `NULL`); no hay constraint en la DB.
+- El panel (`/panel/horarios?staff=ID`) edita el horario del negocio o el de un profesional; ver `API_REFERENCE.md`.
 
 ### 5.2 `resolve_day_windows(session, tenant_id, day_of_week, day_date, tenant_timezone, staff_id=None)`
 Lógica de prioridad:
@@ -457,7 +458,7 @@ app/
 - Cookie firmada (`juturno_session`) → `routers/panel.py` o `routers/auth.py`
 - Header `X-Tenant-API-Key` → `routers/api.py`
 
-Los routers de `mp_connect.py`, `mp_webhooks.py` y `webhooks.py` viven junto a su integración. La suite tiene 806 tests en 56 archivos (`tests/`), que corren con `./scripts/test.sh`.
+Los routers de `mp_connect.py`, `mp_webhooks.py` y `webhooks.py` viven junto a su integración. La suite tiene 815 tests en 57 archivos (`tests/`), que corren con `./scripts/test.sh`.
 
 ---
 
@@ -481,7 +482,7 @@ Los routers de `mp_connect.py`, `mp_webhooks.py` y `webhooks.py` viven junto a s
 ## Ver también
 
 - [`README.md`](README.md) — Quickstart, env vars, comandos
-- [`DECISIONS.md`](DECISIONS.md) — ADRs (D-001 a D-040)
+- [`DECISIONS.md`](DECISIONS.md) — ADRs (D-001 a D-041)
 - [`DEPLOYMENT.md`](DEPLOYMENT.md) — Deploy, migraciones, backups, CI
 - [`API_REFERENCE.md`](API_REFERENCE.md) — Endpoints con schemas
 - [`RUNBOOK.md`](RUNBOOK.md) — Incidentes y diagnóstico
