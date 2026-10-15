@@ -1,14 +1,17 @@
 """Tests de integración para la vista de agenda por día (Tarea 7)."""
 
+import re
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import select
 
-from app.models import Booking, Service, Tenant
+from app.models import Booking, Payment, Service, Tenant
 from app.session import create_session_token
+from app.templates import format_money
 
 TENANT_TZ = "America/Argentina/Buenos_Aires"
 
@@ -476,3 +479,335 @@ async def test_daily_view_links_to_its_week(client, db_session):
 
     assert resp.status_code == 200
     assert f"/panel/agenda?view=week&day={WEEK_SUNDAY}" in resp.text
+
+
+# ---------------------------------------------------------------------------
+# Seña cobrada y saldo a cobrar (vista diaria)
+# ---------------------------------------------------------------------------
+
+# Día fijo (pasado) para no depender de "hoy".
+MONEY_DAY = date(2026, 5, 6)
+
+
+def _money_line(deposit, balance):
+    return (
+        f'<span class="nw">Seña cobrada {format_money(deposit)}</span> · '
+        f'<span class="nw">A cobrar {format_money(balance)}</span>'
+    )
+
+
+def _summary(text, block):
+    """Cifras del bloque `resumen-dia` o `resumen-periodo`, como texto."""
+    assert f'id="resumen-{block}"' in text
+    html = text.split(f'id="resumen-{block}"', 1)[1].split("</section>", 1)[0]
+
+    def grab(label):
+        match = re.search(rf"{label}</span><strong>(.*?)</strong>", html)
+        return match.group(1) if match else None
+
+    breakdown = re.search(
+        r'<span class="nw">seña (.*?)</span> \+ <span class="nw">en el local (.*?)</span>',
+        html,
+    )
+    return {
+        "deposits": grab("Señas cobradas"),
+        "lost": grab("Cancelados / no se presentaron"),
+        "total": grab("Total a cobrar"),
+        "breakdown": breakdown.groups() if breakdown else None,
+    }
+
+
+def _expected(deposits, lost, total, local):
+    return {
+        "deposits": format_money(Decimal(deposits)),
+        "lost": lost,
+        "total": format_money(Decimal(total)),
+        "breakdown": (format_money(Decimal(deposits)), format_money(Decimal(local))),
+    }
+
+
+async def _money_tenant(session, name="Montos"):
+    tenant = Tenant(
+        name=name,
+        slug=f"montos-{uuid4().hex[:12]}",
+        owner_email=f"montos-{uuid4().hex[:12]}@test.com",
+        password_hash="x",
+        session_version=1,
+        timezone=TENANT_TZ,
+    )
+    session.add(tenant)
+    await session.flush()
+    service = Service(
+        tenant_id=tenant.id,
+        name="Servicio montos",
+        duration_minutes=30,
+        price=Decimal("1000.00"),
+        is_active=True,
+    )
+    session.add(service)
+    await session.flush()
+    return tenant, service
+
+
+async def _money_booking(
+    session,
+    tenant,
+    service,
+    hour,
+    status="confirmed",
+    price="1000.00",
+    deposit_at_booking=None,
+    payments=(),
+    day=MONEY_DAY,
+    minute=0,
+):
+    """Turno de 30 min en `day` a la hora dada con pagos [(monto, estado), ...]."""
+    start = datetime.combine(day, time(hour, minute), tzinfo=ZoneInfo(TENANT_TZ))
+    booking = Booking(
+        tenant_id=tenant.id,
+        service_id=service.id,
+        client_name=f"Cliente {hour}",
+        client_phone="5491100000000",
+        start_time=start,
+        end_time=start + timedelta(minutes=30),
+        price_at_booking=Decimal(price),
+        deposit_at_booking=(
+            Decimal(deposit_at_booking) if deposit_at_booking is not None else None
+        ),
+        status=status,
+        idempotency_key=f"montos-{uuid4().hex}",
+    )
+    session.add(booking)
+    await session.flush()
+    for amount, pay_status in payments:
+        session.add(
+            Payment(
+                booking_id=booking.id,
+                amount=Decimal(amount),
+                method="mercadopago",
+                status=pay_status,
+            )
+        )
+    await session.flush()
+    return booking
+
+
+async def _get_money_day(client, tenant, day=MONEY_DAY):
+    resp = await client.get(
+        "/panel/agenda",
+        params={"day": str(day)},
+        cookies={"juturno_session": make_session_cookie(tenant)},
+    )
+    assert resp.status_code == 200
+    return resp.text
+
+
+@pytest.mark.asyncio
+async def test_agenda_shows_approved_deposit_and_balance(client, db_session):
+    tenant, service = await _money_tenant(db_session)
+    await _money_booking(
+        db_session, tenant, service, 10, payments=[("300.00", "approved")]
+    )
+    await db_session.commit()
+
+    text = await _get_money_day(client, tenant)
+
+    assert _money_line(Decimal(300), Decimal(700)) in text
+
+
+@pytest.mark.asyncio
+async def test_agenda_ignores_non_approved_payments_and_snapshot(client, db_session):
+    """Sin pago, o con pago pending/rejected/refunded, la seña cobrada es 0
+    aunque `deposit_at_booking` tenga valor (no se usa el snapshot)."""
+    tenant, service = await _money_tenant(db_session)
+    for hour, payments in [
+        (9, []),
+        (10, [("300.00", "pending")]),
+        (11, [("300.00", "rejected")]),
+        (12, [("300.00", "refunded")]),
+    ]:
+        await _money_booking(
+            db_session,
+            tenant,
+            service,
+            hour,
+            deposit_at_booking="300.00",
+            payments=payments,
+        )
+    await db_session.commit()
+
+    text = await _get_money_day(client, tenant)
+
+    assert text.count(_money_line(Decimal(0), Decimal(1000))) == 4
+    assert "Seña cobrada $ 300" not in text
+
+
+@pytest.mark.asyncio
+async def test_agenda_sums_approved_payments(client, db_session):
+    tenant, service = await _money_tenant(db_session)
+    await _money_booking(
+        db_session,
+        tenant,
+        service,
+        10,
+        payments=[("200.00", "approved"), ("150.50", "approved"), ("99.00", "pending")],
+    )
+    await db_session.commit()
+
+    text = await _get_money_day(client, tenant)
+
+    assert _money_line(Decimal("350.50"), Decimal("649.50")) in text
+
+
+@pytest.mark.asyncio
+async def test_agenda_balance_is_never_negative(client, db_session):
+    tenant, service = await _money_tenant(db_session)
+    await _money_booking(
+        db_session, tenant, service, 10, payments=[("1200.00", "approved")]
+    )
+    await db_session.commit()
+
+    text = await _get_money_day(client, tenant)
+
+    assert _money_line(Decimal(1200), Decimal(0)) in text
+    assert "$ -" not in text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["cancelled", "expired", "no_show"])
+async def test_agenda_hides_balance_for_uncollectable_status(
+    client, db_session, status
+):
+    """Cancelado, vencido o no asistió: se muestra la seña cobrada, sin saldo."""
+    tenant, service = await _money_tenant(db_session)
+    await _money_booking(
+        db_session,
+        tenant,
+        service,
+        10,
+        status=status,
+        payments=[("250.00", "approved")],
+    )
+    await db_session.commit()
+
+    text = await _get_money_day(client, tenant)
+
+    assert "Seña cobrada $ 250</span></p>" in text
+    assert "A cobrar $" not in text.split('class="ag-money"', 1)[1].split("</p>", 1)[0]
+
+
+@pytest.mark.asyncio
+async def test_day_summary_figures(client, db_session):
+    tenant, service = await _money_tenant(db_session)
+    await _money_booking(
+        db_session, tenant, service, 9, payments=[("300.00", "approved")]
+    )
+    await _money_booking(
+        db_session,
+        tenant,
+        service,
+        10,
+        status="completed",
+        price="2000.00",
+        payments=[("500.00", "approved")],
+    )
+    # Pagó de más: el total es lo pagado y no queda nada por cobrar en el local.
+    await _money_booking(
+        db_session, tenant, service, 11, payments=[("1200.00", "approved")]
+    )
+    # pending y cancelled con pagos aprobados: no suman señas ni total.
+    await _money_booking(
+        db_session,
+        tenant,
+        service,
+        12,
+        status="pending",
+        payments=[("100.00", "approved")],
+    )
+    await _money_booking(
+        db_session,
+        tenant,
+        service,
+        13,
+        status="cancelled",
+        payments=[("400.00", "approved")],
+    )
+    await _money_booking(db_session, tenant, service, 14, status="no_show")
+    # Vencido: nunca pagó la seña, no cuenta como cancelado.
+    await _money_booking(db_session, tenant, service, 15, status="expired")
+    await db_session.commit()
+
+    text = await _get_money_day(client, tenant)
+
+    assert _summary(text, "dia") == _expected(2000, "2 personas", 4200, 2200)
+    # El renglón por turno se mantiene; el resumen de período no va en la agenda.
+    assert "Seña cobrada $ 400</span></p>" in text
+    assert 'id="resumen-periodo"' not in text
+    assert "Total del día" not in text
+
+
+@pytest.mark.asyncio
+async def test_day_summary_lost_count_is_singular_for_one(client, db_session):
+    tenant, service = await _money_tenant(db_session)
+    await _money_booking(db_session, tenant, service, 9, status="cancelled")
+    await _money_booking(db_session, tenant, service, 10, status="expired")
+    await db_session.commit()
+
+    text = await _get_money_day(client, tenant)
+
+    assert _summary(text, "dia") == _expected(0, "1 persona", 0, 0)
+
+
+@pytest.mark.asyncio
+async def test_day_summary_ignores_other_tenants(client, db_session):
+    tenant, service = await _money_tenant(db_session)
+    await _money_booking(
+        db_session, tenant, service, 10, payments=[("300.00", "approved")]
+    )
+    other, other_service = await _money_tenant(db_session, name="Otro montos")
+    await _money_booking(
+        db_session,
+        other,
+        other_service,
+        10,
+        price="5000.00",
+        payments=[("999.00", "approved")],
+    )
+    await _money_booking(db_session, other, other_service, 11, status="no_show")
+    await db_session.commit()
+
+    text = await _get_money_day(client, tenant)
+
+    assert _summary(text, "dia") == _expected(300, "0 personas", 1000, 700)
+    assert "$ 999" not in text
+
+
+@pytest.mark.asyncio
+async def test_day_without_bookings_hides_day_summary(client, db_session):
+    tenant, _service = await _money_tenant(db_session)
+    await db_session.commit()
+
+    text = await _get_money_day(client, tenant)
+
+    assert 'id="resumen-dia"' not in text
+    assert "Señas cobradas" not in text
+    assert "Seña cobrada" not in text
+
+
+@pytest.mark.asyncio
+async def test_week_view_shows_no_amounts(client, db_session):
+    tenant, service = await _money_tenant(db_session)
+    await _money_booking(
+        db_session, tenant, service, 10, payments=[("300.00", "approved")]
+    )
+    await db_session.commit()
+
+    resp = await client.get(
+        "/panel/agenda",
+        params={"view": "week", "day": str(MONEY_DAY)},
+        cookies={"juturno_session": make_session_cookie(tenant)},
+    )
+
+    assert resp.status_code == 200
+    assert "Cliente 10" in resp.text
+    assert "Seña cobrada" not in resp.text

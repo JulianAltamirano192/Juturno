@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+
+{% block title %}Estadísticas - {{ tenant.name }}{% endblock %}
+
+{% block head %}
+<style>
+  .day-nav{display:flex;align-items:center;gap:8px}
+  .day-nav .dn-label{min-width:200px;padding:0 8px;text-align:center;font-family:var(--font-display);font-size:16px}
+  .view-tg{display:inline-flex;align-self:center;padding:3px;border-radius:12px;border:1px solid var(--border);background:var(--surface)}
+  .view-tg a{display:inline-flex;align-items:center;justify-content:center;min-height:38px;padding:0 14px;border-radius:9px;font-size:14px;font-weight:600;color:var(--text-2)}
+  .view-tg a.on{background:var(--surface-2);color:var(--text)}
+  @media (max-width:900px){
+    .ph{flex-direction:column;align-items:stretch;flex-wrap:wrap}
+    .day-nav{justify-content:space-between}
+    .day-nav .dn-label{min-width:0;flex-grow:1}
+    .view-tg{align-self:stretch}
+    .view-tg a{flex:1 1 0}
+  }
+</style>
+{% endblock %}
+
+{% block dash_content %}
+<div class="ph">
+  <div>
+    <h1>Estadísticas</h1>
+    <p>Lo que cobraste de seña y lo que te falta cobrar en el local.</p>
+  </div>
+  <div class="day-nav">
+    <a class="icon-btn" href="/panel/estadisticas?period={{ period }}&day={{ prev_day }}" aria-label="{% if period == 'month' %}Mes anterior{% else %}Semana anterior{% endif %}">{{ ui.icon('izq') }}</a>
+    <strong class="dn-label">{{ period_label }}</strong>
+    <a class="icon-btn" href="/panel/estadisticas?period={{ period }}&day={{ next_day }}" aria-label="{% if period == 'month' %}Mes siguiente{% else %}Semana siguiente{% endif %}">{{ ui.icon('der') }}</a>
+  </div>
+  <nav class="view-tg" aria-label="Período">
+    <a{% if period == 'week' %} class="on"{% endif %} href="/panel/estadisticas?period=week&day={{ target_day }}"{% if period == 'week' %} aria-current="true"{% endif %}>Semana</a>
+    <a{% if period == 'month' %} class="on"{% endif %} href="/panel/estadisticas?period=month&day={{ target_day }}"{% if period == 'month' %} aria-current="true"{% endif %}>Mes</a>
+  </nav>
+</div>
+
+<section id="resumen-periodo">
+  <h2 class="sum-t">Resumen {% if period == 'month' %}del mes{% else %}de la semana{% endif %}</h2>
+  {{ ui.money_summary(summary) }}
+</section>
+{% endblock %}
