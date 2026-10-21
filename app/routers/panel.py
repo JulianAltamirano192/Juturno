@@ -402,13 +402,93 @@ def _summarize_money(
     }
 
 
-async def _money_summary(
-    session: AsyncSession, tenant: Tenant, first_day: date, days: int
-) -> dict[str, Decimal | int]:
-    """Resumen de plata de `days` días locales desde `first_day`."""
-    rows = await _bookings_for_days(session, tenant, first_day, days)
-    paid = await _approved_payments(session, tenant, [b.id for b, _ in rows])
-    return _summarize_money(tenant, rows, paid, first_day)
+_STATS_STATUSES = [
+    ("confirmed", "Confirmados"),
+    ("completed", "Completados"),
+    ("no_show", "No se presentaron"),
+    ("cancelled", "Cancelados"),
+]
+_STATS_TOP_SERVICES = 5
+
+
+def _pct(count: int, top: int) -> int:
+    """Largo de una barra: % del máximo del gráfico, entero de 0 a 100.
+    Un conteo mayor a 0 nunca queda en 0 (la barra se vería vacía)."""
+    if not count or not top:
+        return 0
+    return max(1, round(count * 100 / top))
+
+
+def _bar(label: str, count: int, top: int, tag: str = "") -> dict:
+    return {"label": label, "count": count, "width": _pct(count, top), "tag": tag}
+
+
+def _summarize_activity(
+    tenant: Tenant, rows: list[tuple[Booking, Service]], first_day: date, days: int
+) -> dict:
+    """Datos de los gráficos de Estadísticas.
+
+    La barra de estados cuenta confirmados, completados, no se presentaron y
+    cancelados (expired no: nunca pagó). Servicios, días de la semana y días
+    del mes cuentan lo atendido o por atender (confirmed + completed), como el
+    resumen de plata. Cada turno cuenta en el día local en que empieza.
+    """
+    tenant_tz = _tenant_tz(tenant)
+    statuses: dict[str, int] = {key: 0 for key, _ in _STATS_STATUSES}
+    services: dict[tuple[str, int | None], int] = {}
+    weekdays = [0] * 7
+    by_day = [0] * days
+    for b, s in rows:
+        start = b.start_time.astimezone(tenant_tz).date()
+        if start < first_day:
+            continue
+        if b.status in statuses:
+            statuses[b.status] += 1
+        if b.status in ("confirmed", "completed"):
+            services[(s.name, s.id)] = services.get((s.name, s.id), 0) + 1
+            weekdays[start.weekday()] += 1
+            by_day[(start - first_day).days] += 1
+
+    top_services = sorted(services.items(), key=lambda kv: (-kv[1], kv[0][0]))
+    top_services = top_services[:_STATS_TOP_SERVICES]
+    services_top = top_services[0][1] if top_services else 0
+    day_top = max(by_day)
+
+    # "Más tranquilo" = menos turnos entre los días con alguno: un día cerrado
+    # (0) no dice nada. Sin diferencia entre días, no se marca ninguno.
+    busiest = max(weekdays)
+    quietest = min((n for n in weekdays if n), default=0)
+    tags = {}
+    if busiest != quietest:
+        tags = {
+            weekdays.index(busiest): "Más movido",
+            weekdays.index(quietest): "Más tranquilo",
+        }
+
+    return {
+        "total": sum(statuses.values()),
+        "statuses": [
+            {"key": key, "label": label, "count": statuses[key]}
+            for key, label in _STATS_STATUSES
+        ],
+        "services": [_bar(name, n, services_top) for (name, _), n in top_services],
+        "weekdays": (
+            [
+                _bar(_DAY_NAMES[i], n, busiest, tags.get(i, ""))
+                for i, n in enumerate(weekdays)
+            ]
+            if busiest
+            else []
+        ),
+        "by_day": [
+            {
+                "day": first_day + timedelta(days=i),
+                "count": n,
+                "height": _pct(n, day_top),
+            }
+            for i, n in enumerate(by_day)
+        ],
+    }
 
 
 async def _tenant_has(
@@ -2029,7 +2109,8 @@ async def panel_stats(
     session: AsyncSession = Depends(get_db),
 ):
     """Señas cobradas, cancelados y total a cobrar de la semana (lunes a
-    domingo) o del mes que contiene `day`. Período desconocido = semana."""
+    domingo) o del mes que contiene `day`, más los gráficos de turnos por
+    estado, servicios y días (ítem 18). Período desconocido = semana."""
     target_day = datetime.now(_tenant_tz(tenant)).date()
     if day:
         try:
@@ -2056,6 +2137,9 @@ async def panel_stats(
         )
         prev_day = first_day - timedelta(days=7)
 
+    rows = await _bookings_for_days(session, tenant, first_day, days)
+    paid = await _approved_payments(session, tenant, [b.id for b, _ in rows])
+
     # El layout tiene el formulario de "Cerrar sesión".
     csrf_token = generate_csrf_token(request)
     response = templates.TemplateResponse(
@@ -2069,7 +2153,8 @@ async def panel_stats(
             "target_day": target_day.isoformat(),
             "prev_day": prev_day.isoformat(),
             "next_day": (first_day + timedelta(days=days)).isoformat(),
-            "summary": await _money_summary(session, tenant, first_day, days),
+            "summary": _summarize_money(tenant, rows, paid, first_day),
+            "activity": _summarize_activity(tenant, rows, first_day, days),
         },
     )
     set_csrf_cookie(response, csrf_token)

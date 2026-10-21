@@ -10,7 +10,31 @@
   .view-tg{display:inline-flex;align-self:center;padding:3px;border-radius:12px;border:1px solid var(--border);background:var(--surface)}
   .view-tg a{display:inline-flex;align-items:center;justify-content:center;min-height:38px;padding:0 14px;border-radius:9px;font-size:14px;font-weight:600;color:var(--text-2)}
   .view-tg a.on{background:var(--surface-2);color:var(--text)}
+  .charts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:20px}
+  .chart{padding:16px;border-radius:16px;background:var(--surface);border:1px solid rgba(255,255,255,.08)}
+  #turnos-periodo,#por-dia,#sin-turnos{margin-top:20px}
+  .stack{display:flex;gap:2px;height:14px;border-radius:7px;overflow:hidden;background:var(--surface-2)}
+  .legend{display:flex;flex-wrap:wrap;gap:6px 16px;margin:10px 0 0;padding:0;list-style:none;font-size:14px;color:var(--text-2)}
+  .legend li{display:flex;align-items:center;gap:6px}
+  .legend i{width:10px;height:10px;border-radius:3px}
+  .st-confirmed{background:var(--cyan)}
+  .st-completed{background:var(--green)}
+  .st-no_show{background:var(--magenta)}
+  .st-cancelled{background:var(--muted-2)}
+  .bars{display:flex;flex-direction:column;gap:10px;margin:0;padding:0;list-style:none}
+  .bars li{display:grid;grid-template-columns:minmax(0,1fr) 4ch;gap:4px 10px;align-items:center;font-size:14px}
+  .bar-l{grid-row:1;grid-column:1/-1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .bars .tag{grid-row:1;grid-column:1/-1;justify-self:end;font-size:12px;font-style:normal;color:var(--muted)}
+  .bars .tag.up{color:var(--cyan-l)}
+  .bar{grid-row:2;grid-column:1;height:8px;border-radius:4px;background:var(--surface-2);overflow:hidden}
+  .bar span{display:block;height:100%;border-radius:4px;background:var(--grad-soft)}
+  .bars strong{grid-row:2;grid-column:2;text-align:right;font-family:var(--font-display)}
+  .days svg{display:block;width:100%;height:120px}
+  .days rect{fill:var(--cyan)}
+  .axis{display:flex;justify-content:space-between;margin-top:6px;font-size:12px;color:var(--muted)}
+  .chart-empty{color:var(--muted);font-size:14px}
   @media (max-width:900px){
+    .charts{grid-template-columns:1fr}
     .ph{flex-direction:column;align-items:stretch;flex-wrap:wrap}
     .day-nav{justify-content:space-between}
     .day-nav .dn-label{min-width:0;flex-grow:1}
@@ -19,6 +43,13 @@
   }
 </style>
 {% endblock %}
+
+{% macro bar_list(rows) -%}
+{% if rows %}<ul class="bars">
+{% for r in rows %}<li><span class="bar-l">{{ r.label }}</span>{% if r.tag %}<em class="tag{{ ' up' if r.tag == 'Más movido' }}">{{ r.tag }}</em>{% endif %}<span class="bar"><span style="width:{{ r.width }}%"></span></span><strong>{{ r.count }}</strong></li>
+{% endfor %}</ul>
+{%- else %}<p class="chart-empty">Sin turnos confirmados o completados.</p>{% endif %}
+{%- endmacro %}
 
 {% block dash_content %}
 <div class="ph">
@@ -41,4 +72,41 @@
   <h2 class="sum-t">Resumen {% if period == 'month' %}del mes{% else %}de la semana{% endif %}</h2>
   {{ ui.money_summary(summary) }}
 </section>
+
+{% if activity.total %}
+<section id="turnos-periodo" class="chart">
+  <h2 class="sum-t">Turnos</h2>
+  <div class="stack" aria-hidden="true">{% for s in activity.statuses if s.count %}<span class="st-{{ s.key }}" style="flex-grow:{{ s.count }}"></span>{% endfor %}</div>
+  <ul class="legend">
+    {% for s in activity.statuses %}<li><i class="st-{{ s.key }}"></i>{{ s.label }} <strong>{{ s.count }}</strong></li>
+    {% endfor %}
+  </ul>
+</section>
+
+<div class="charts">
+  <section id="servicios-periodo" class="chart">
+    <h2 class="sum-t">Servicios más pedidos</h2>
+    {{ bar_list(activity.services) }}
+  </section>
+  <section id="dias-periodo" class="chart">
+    <h2 class="sum-t">Días de la semana</h2>
+    {{ bar_list(activity.weekdays) }}
+  </section>
+</div>
+
+{% if period == 'month' %}
+<section id="por-dia" class="chart days">
+  <h2 class="sum-t">Turnos por día</h2>
+  {% set top_day = activity.by_day|max(attribute='count') %}
+  {# role="img" esconde los <title> de cada columna: el aria-label resume el dato. #}
+  <svg viewBox="0 0 {{ activity.by_day|length * 10 }} 100" preserveAspectRatio="none" role="img" aria-label="Turnos confirmados y completados por día del mes.{% if top_day.count %} El más movido fue el {{ top_day.day.day }}/{{ top_day.day.month }}, con {{ top_day.count }} {{ 'turno' if top_day.count == 1 else 'turnos' }}.{% else %} Ninguno.{% endif %}">
+    {% for d in activity.by_day %}<rect x="{{ loop.index0 * 10 + 1 }}" y="{{ 100 - d.height }}" width="8" height="{{ d.height }}"><title>{{ d.day.day }}/{{ d.day.month }}: {{ d.count }} {{ 'turno' if d.count == 1 else 'turnos' }}</title></rect>
+    {% endfor %}
+  </svg>
+  <div class="axis" aria-hidden="true"><span>1</span><span>15</span><span>{{ activity.by_day|length }}</span></div>
+</section>
+{% endif %}
+{% else %}
+<p id="sin-turnos" class="chart-empty">Sin turnos en este período.</p>
+{% endif %}
 {% endblock %}
