@@ -37,6 +37,11 @@ BOOKING_NOTES_MAX = 500
 # Largo máximo del aviso destacado de la página pública (ítem 39).
 PUBLIC_NOTICE_MAX = 280
 
+# Preguntas por servicio que responde el cliente al reservar (ítem 42).
+SERVICE_QUESTIONS_MAX = 3
+SERVICE_QUESTION_MAX = 120
+BOOKING_ANSWER_MAX = 200
+
 # Rubros del negocio (ítem 14), en el orden en que se muestran. La clave se
 # guarda en la DB (la usará el buscador por rubro); "otro" va con texto libre.
 BUSINESS_CATEGORIES = {
@@ -263,6 +268,12 @@ class Service(SQLModel, table=True):
         sa_column_kwargs={"server_default": text("0")},
         description="Minutos libres después de cada turno; se suman al end_time.",
     )
+    # [{"text": str, "required": bool}, ...], hasta SERVICE_QUESTIONS_MAX.
+    # Siempre se asigna una lista nueva: JSON no detecta cambios in situ.
+    questions: list[dict[str, Any]] = Field(
+        default_factory=list,
+        sa_column=Column(JSON, nullable=False, server_default=text("'[]'")),
+    )
     is_active: bool = Field(default=True, index=True)
 
     tenant: Tenant | None = Relationship(back_populates="services")
@@ -449,6 +460,14 @@ class Booking(SQLModel, table=True):
     internal_notes: str | None = Field(
         default=None,
         sa_column=Column(String(BOOKING_NOTES_MAX), nullable=True),
+    )
+
+    # Respuestas del cliente a las preguntas del servicio (ítem 42), copiadas
+    # con su pregunta: [{"question": str, "answer": str}, ...]. Sin respuestas
+    # = NULL. Editar las preguntas del servicio no cambia los turnos hechos.
+    # none_as_null: sin esto, `answers=None` se guarda como el JSON `null`.
+    answers: list[dict[str, str]] | None = Field(
+        default=None, sa_column=Column(JSON(none_as_null=True), nullable=True)
     )
 
     created_at: datetime = Field(

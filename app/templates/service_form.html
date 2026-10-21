@@ -14,6 +14,11 @@
   .dur-row span{color:var(--muted)}
   .check-row{display:flex;align-items:center;gap:10px;min-height:44px;cursor:pointer}
   .check-row input{width:20px;height:20px;accent-color:var(--cyan);flex-shrink:0}
+  .q-set{border:0;padding:0;margin:0 0 20px;min-width:0}
+  .q-set legend{padding:0;margin-bottom:6px;font-weight:600}
+  .q-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;align-items:center;margin-top:10px}
+  .q-row .field-error{grid-column:1/-1}
+  @media (max-width:520px){.q-row{grid-template-columns:minmax(0,1fr)}}
   .dep-note{margin-top:8px;padding:10px 12px;border-radius:10px;background:rgba(34,211,238,.08);font-size:13px;line-height:1.5;color:var(--cyan-xl)}
   .preview{position:sticky;top:24px;display:flex;flex-direction:column;gap:12px}
   .preview .pv-label{font-size:13px;font-weight:600;color:var(--muted)}
@@ -68,6 +73,19 @@
       <div class="field-hint">Para limpiar o preparar: el turno siguiente se puede reservar recién después de este tiempo.</div>
       {% if errors.buffer_minutes %}<div class="field-error">{{ errors.buffer_minutes }}</div>{% endif %}
     </div>
+
+    <fieldset class="field q-set">
+      <legend>Preguntas al reservar <span class="opt">(opcional)</span></legend>
+      <div class="field-hint">El cliente las responde al reservar este servicio (hasta {{ booking_answer_max }} caracteres cada una) y vos ves las respuestas en la agenda.</div>
+      {%- for i in range(1, service_questions_max + 1) %}
+      {%- set key = 'question_' ~ i %}
+      <div class="q-row">
+        <input type="text" id="{{ key }}" name="{{ key }}" maxlength="{{ service_question_max }}" value="{{ form.get(key, '') }}" aria-label="Pregunta {{ i }}"{% if i == 1 %} placeholder="Ej: ¿Tenés alguna indicación para nosotros?"{% endif %}{% if errors[key] %} class="has-error"{% endif %}>
+        <label class="check-row"><input type="checkbox" id="{{ key }}_required" name="{{ key }}_required" value="on"{% if form.get(key ~ '_required') %} checked{% endif %}>Obligatoria</label>
+        {% if errors[key] %}<div class="field-error">{{ errors[key] }}</div>{% endif %}
+      </div>
+      {%- endfor %}
+    </fieldset>
 
     <div class="field">
       <label for="price">Precio total</label>
