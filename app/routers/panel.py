@@ -63,7 +63,7 @@ from app.schemas import (
     clean_business_profile,
     clean_client_name,
 )
-from app.services import effective_deposit
+from app.services import combo_name, effective_deposit, extra_services_by_booking
 from app.templates import templates
 
 router = APIRouter()
@@ -448,7 +448,11 @@ def _bar(label: str, count: int, top: int, tag: str = "") -> dict:
 
 
 def _summarize_activity(
-    tenant: Tenant, rows: list[tuple[Booking, Service]], first_day: date, days: int
+    tenant: Tenant,
+    rows: list[tuple[Booking, Service]],
+    first_day: date,
+    days: int,
+    extras: dict[int, list[Service]],
 ) -> dict:
     """Datos de los gráficos de Estadísticas.
 
@@ -469,7 +473,10 @@ def _summarize_activity(
         if b.status in statuses:
             statuses[b.status] += 1
         if b.status in ("confirmed", "completed"):
-            services[(s.name, s.id)] = services.get((s.name, s.id), 0) + 1
+            # Cada servicio de un combo (ítem 43) cuenta como pedido.
+            for service in (s, *extras.get(b.id, [])):
+                key = (service.name, service.id)
+                services[key] = services.get(key, 0) + 1
             weekdays[start.weekday()] += 1
             by_day[(start - first_day).days] += 1
 
@@ -531,6 +538,9 @@ async def dashboard_page(
     tenant_tz = _tenant_tz(tenant)
     now = datetime.now(tenant_tz)
     rows = await _bookings_for_day(session, tenant, now.date())
+    extras = await extra_services_by_booking(
+        session, tenant.id, [b.id for b, _ in rows]
+    )
 
     def _count(state: str) -> int:
         return sum(1 for b, _ in rows if b.status == state)
@@ -544,7 +554,7 @@ async def dashboard_page(
     upcoming = [
         {
             "client_name": b.client_name,
-            "service_name": s.name,
+            "service_name": combo_name(s.name, extras.get(b.id)),
             "start_local": b.start_time.astimezone(tenant_tz).strftime("%H:%M"),
             "status": b.status,
             "status_label": _AGENDA_STATUS_LABELS.get(b.status, b.status),
@@ -2008,6 +2018,9 @@ async def panel_agenda(
         )
 
     rows = await _bookings_for_day(session, tenant, target_day)
+    extras = await extra_services_by_booking(
+        session, tenant.id, [b.id for b, _ in rows]
+    )
 
     paid = await _approved_payments(session, tenant, [b.id for b, _ in rows])
     due = {
@@ -2020,7 +2033,7 @@ async def panel_agenda(
             "booking_id": b.id,
             "client_name": b.client_name,
             "client_phone": b.client_phone,
-            "service_name": s.name,
+            "service_name": combo_name(s.name, extras.get(b.id)),
             "start_local": b.start_time.astimezone(tenant_tz).strftime("%H:%M"),
             "end_local": b.end_time.astimezone(tenant_tz).strftime("%H:%M"),
             "status": b.status,
@@ -2083,6 +2096,9 @@ async def _render_week_agenda(
         for i in range(7)
     ]
     rows = await _bookings_for_days(session, tenant, monday, 7)
+    extras = await extra_services_by_booking(
+        session, tenant.id, [b.id for b, _ in rows]
+    )
     for b, s in rows:
         start_local = b.start_time.astimezone(tenant_tz)
         # Un turno que empezó el domingo anterior y cruza la medianoche va al lunes.
@@ -2090,7 +2106,7 @@ async def _render_week_agenda(
         week[index]["items"].append(
             {
                 "client_name": b.client_name,
-                "service_name": s.name,
+                "service_name": combo_name(s.name, extras.get(b.id)),
                 "start_local": start_local.strftime("%H:%M"),
                 "end_local": b.end_time.astimezone(tenant_tz).strftime("%H:%M"),
                 "status": b.status,
@@ -2169,6 +2185,9 @@ async def panel_stats(
 
     rows = await _bookings_for_days(session, tenant, first_day, days)
     paid = await _approved_payments(session, tenant, [b.id for b, _ in rows])
+    extras = await extra_services_by_booking(
+        session, tenant.id, [b.id for b, _ in rows]
+    )
 
     # El layout tiene el formulario de "Cerrar sesión".
     csrf_token = generate_csrf_token(request)
@@ -2184,7 +2203,7 @@ async def panel_stats(
             "prev_day": prev_day.isoformat(),
             "next_day": (first_day + timedelta(days=days)).isoformat(),
             "summary": _summarize_money(tenant, rows, paid, first_day),
-            "activity": _summarize_activity(tenant, rows, first_day, days),
+            "activity": _summarize_activity(tenant, rows, first_day, days, extras),
         },
     )
     set_csrf_cookie(response, csrf_token)
@@ -2293,6 +2312,9 @@ async def panel_client_detail(
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
 
     tenant_tz = _tenant_tz(tenant)
+    extras = await extra_services_by_booking(
+        session, tenant.id, [b.id for b, _, _ in rows]
+    )
     history = []
     for b, s, st in rows:
         start_local = b.start_time.astimezone(tenant_tz)
@@ -2301,7 +2323,7 @@ async def panel_client_detail(
                 "day": start_local.date().isoformat(),
                 "day_label": start_local.strftime("%d/%m/%Y"),
                 "time_label": start_local.strftime("%H:%M"),
-                "service_name": s.name,
+                "service_name": combo_name(s.name, extras.get(b.id)),
                 "staff_name": st.name if st else None,
                 "status": b.status,
                 "status_label": _AGENDA_STATUS_LABELS.get(b.status, b.status),
@@ -2415,6 +2437,9 @@ async def panel_agenda_export_csv(
             "Respuestas",
         ]
     )
+    extras = await extra_services_by_booking(
+        session, tenant.id, [booking.id for booking, _, _ in rows]
+    )
     for booking, service_name, staff_name in rows:
         start_local = booking.start_time.astimezone(tenant_tz)
         deposit = booking.deposit_at_booking or Decimal(0)
@@ -2422,7 +2447,7 @@ async def panel_agenda_export_csv(
             [
                 start_local.strftime("%d/%m/%Y"),
                 start_local.strftime("%H:%M"),
-                _csv_cell(service_name),
+                _csv_cell(combo_name(service_name, extras.get(booking.id))),
                 _csv_cell(staff_name or ""),
                 _csv_cell(booking.client_name),
                 _csv_cell(booking.client_phone),

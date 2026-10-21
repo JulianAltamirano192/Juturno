@@ -37,6 +37,9 @@ BOOKING_NOTES_MAX = 500
 # Largo máximo del aviso destacado de la página pública (ítem 39).
 PUBLIC_NOTICE_MAX = 280
 
+# Servicios en un mismo turno: el principal más hasta 2 extra (ítem 43).
+BOOKING_SERVICES_MAX = 3
+
 # Preguntas por servicio que responde el cliente al reservar (ítem 42).
 SERVICE_QUESTIONS_MAX = 3
 SERVICE_QUESTION_MAX = 120
@@ -486,6 +489,34 @@ class Booking(SQLModel, table=True):
         back_populates="booking",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"},
     )
+
+
+class BookingExtraService(SQLModel, table=True):
+    """
+    Servicios que se suman al principal de un turno (ítem 43). El principal
+    sigue en `Booking.service_id`; acá van el segundo y el tercero, en orden
+    (`position` 1 y 2). Un turno de un solo servicio no tiene filas.
+
+    Duración, precio y seña del combo ya están en `end_time`,
+    `price_at_booking` y `deposit_at_booking` del turno.
+    """
+
+    __tablename__ = "booking_extra_service"
+    __table_args__ = (
+        CheckConstraint(
+            f"position BETWEEN 1 AND {BOOKING_SERVICES_MAX - 1}",
+            name="ck_booking_extra_service_position",
+        ),
+        UniqueConstraint(
+            "booking_id", "service_id", name="uq_booking_extra_service_service"
+        ),
+    )
+
+    booking_id: int = Field(
+        foreign_key="booking.id", primary_key=True, ondelete="CASCADE"
+    )
+    position: int = Field(primary_key=True)
+    service_id: int = Field(foreign_key="service.id", index=True, ondelete="CASCADE")
 
 
 class Payment(SQLModel, table=True):

@@ -418,3 +418,43 @@ async def has_overlapping_booking(
     if staff_id is not None:
         stmt = stmt.where(or_(Booking.staff_id == staff_id, Booking.staff_id.is_(None)))
     return (await session.execute(stmt)).scalar_one() > 0
+
+
+# Ids por consulta: asyncpg admite hasta 32767 parámetros (un CSV de un año
+# de un negocio grande puede tener más turnos).
+_EXTRAS_BATCH = 10_000
+
+
+async def extra_services_by_booking(
+    session, tenant_id: int, booking_ids: list[int]
+) -> dict[int, list]:
+    """Servicios extra de cada turno (ítem 43), en orden; los turnos de un solo
+    servicio no aparecen. Solo servicios del tenant, por las dudas."""
+    if not booking_ids:
+        return {}
+    from sqlalchemy import select
+    from sqlmodel import col
+
+    from app.models import BookingExtraService, Service
+
+    extras: dict[int, list] = {}
+    for i in range(0, len(booking_ids), _EXTRAS_BATCH):
+        stmt = (
+            select(col(BookingExtraService.booking_id), Service)
+            .join(Service, BookingExtraService.service_id == Service.id)
+            .where(
+                col(BookingExtraService.booking_id).in_(
+                    booking_ids[i : i + _EXTRAS_BATCH]
+                ),
+                Service.tenant_id == tenant_id,
+            )
+            .order_by(BookingExtraService.booking_id, BookingExtraService.position)
+        )
+        for booking_id, service in await session.execute(stmt):
+            extras.setdefault(booking_id, []).append(service)
+    return extras
+
+
+def combo_name(main_name: str, extras: list | None) -> str:
+    """Nombre del turno ("Lavado + Encerado"): el principal y los extra, en orden."""
+    return " + ".join([main_name, *(s.name for s in extras or [])])
