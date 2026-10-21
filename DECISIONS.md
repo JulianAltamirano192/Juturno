@@ -1287,6 +1287,33 @@ En `compute_available_slots` se corre hacia atrás el inicio de cada turno exist
 
 ---
 
+## D-048: Preguntas personalizadas por servicio, guardadas como copia en el turno
+
+**Fecha**: 2026-10-21
+
+**Contexto**: Fase 5, ítem 42. Algunos negocios necesitan un dato del cliente antes del turno (el modelo del auto en un lavadero, la zona del cuerpo en un estudio de tatuajes). Julián eligió el alcance.
+
+**Decisión**:
+- **Solo texto libre** (Julián): cada pregunta es un campo de texto, obligatoria u opcional. Sin sí/no ni listas de opciones.
+- **Límites** (Julián): hasta 3 preguntas por servicio, de hasta 120 caracteres; respuestas de hasta 200.
+- **Las obligatorias se exigen solo en la página pública** (Julián): `POST /public/bookings` da 422 si falta una. `POST /bookings` (API key) acepta `answers` pero no las exige, así una integración existente no empieza a fallar cuando el dueño agrega una pregunta. La reserva manual del panel no pide respuestas.
+- **Guardado**: `Service.questions` es JSON (`[{"text", "required"}]`, NOT NULL, default `[]`). `Booking.answers` es JSON con una copia `[{"question", "answer"}]` (NULL sin respuestas): editar o borrar una pregunta no cambia lo que respondieron los turnos anteriores. Las respuestas vacías no se guardan.
+- **Limpieza**: las respuestas pasan por `build_booking_answers`, que colapsa espacios y saltos sin normalizar el texto (el dueño ve lo que escribió el cliente) y rechaza control, privados, zero-width, bidi y BOM; el zero-width joiner de los emoji compuestos pasa. El schema pone un tope de 800 caracteres por respuesta antes de limpiarla, para que un texto enorme no se procese (hallazgo MEDIA del `security-auditor`). Se permiten links: solo los ve el dueño, como texto.
+- **Respuestas por posición, con control de cambios**: `answers[i]` responde `questions[i]`. La página pública manda también los textos de las preguntas que mostró (`questions`); si el dueño las cambió mientras el cliente tenía la página abierta, 422 "Recargá la página" en vez de guardar una respuesta bajo otra pregunta. En la API `questions` es opcional.
+- **Dónde se ven**: agenda diaria, historial del cliente y columna "Respuestas" al final del CSV (pasa por `_csv_cell`). No van en los WhatsApp: las plantillas de Meta son fijas.
+
+**Alternativas**:
+- **Tablas `service_question` y `booking_answer`**: permitirían consultar por pregunta, pero para 3 textos cortos que solo se muestran agregan joins y migraciones sin ganancia. Descartadas.
+- **Guardar solo el índice de la pregunta**: un cambio en el servicio cambiaría el sentido de respuestas viejas. Descartado.
+- **Exigir las obligatorias también en la API**: cambia el contrato de una integración existente. Descartado por Julián.
+
+**Consecuencias**:
+- **Ventaja** — Sin tablas nuevas; una migración que solo agrega columnas.
+- **Riesgo** — `JSON` (no `JSONB`): no se puede indexar ni consultar por respuesta. Si hace falta buscar por respuestas, migrar a `JSONB`.
+- **Deuda** — Sin tipos de pregunta (sí/no, opciones) ni respuestas en la reserva manual o en el WhatsApp de aviso al dueño. Una obligatoria se puede "responder" con caracteres de relleno visibles como blanco (U+3164, U+2800): impacto cosmético, aceptado.
+
+---
+
 ## Roadmap de deuda técnica
 
 Ordenado por impacto/urgencia estimada:
