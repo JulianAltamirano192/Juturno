@@ -7,6 +7,7 @@ from sqlmodel import col
 from app.config import settings
 from app.models import Booking, NotificationOutbox, Service, Tenant
 from app.phone import InvalidPhoneError, normalize_whatsapp_phone
+from app.services import combo_name, extra_services_by_booking
 from app.whatsapp_service import WhatsAppService
 
 logger = logging.getLogger(__name__)
@@ -146,11 +147,12 @@ async def _send_event(session, whatsapp: WhatsAppService, event) -> str | None:
         except InvalidPhoneError:
             return "owner_whatsapp_invalid"
         service = await session.get(Service, booking.service_id)
+        extras = await extra_services_by_booking(session, tenant.id, [booking.id])
         response = await whatsapp.send_owner_new_booking(
             phone,
             tenant.name,
             booking.client_name,
-            service.name if service else "",
+            combo_name(service.name, extras.get(booking.id)) if service else "",
             fecha_legible,
         )
         response.raise_for_status()

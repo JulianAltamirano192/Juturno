@@ -1,12 +1,19 @@
 import asyncio
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 
 import pytest
 from sqlalchemy import select
 
 from app import outbox_worker
 from app.booking_actions import transition_booking_status
-from app.models import Booking, NotificationOutbox, Service, Tenant
+from app.models import (
+    Booking,
+    BookingExtraService,
+    NotificationOutbox,
+    Service,
+    Tenant,
+)
 from app.outbox_worker import MAX_OUTBOX_ATTEMPTS, process_outbox
 from tests.conftest import TestingSessionLocal
 
@@ -395,3 +402,31 @@ async def test_owner_alert_template_params_are_sanitized(monkeypatch):
     texts = [p["text"] for p in params]
     assert texts[:3] == ["Mi Negocio SA", "Ana Pérez", "-"]
     assert texts[3] == "x" * 60
+
+
+@pytest.mark.asyncio
+async def test_owner_alert_names_the_whole_combo(db_session, sent, owner_sent):
+    """Un turno con varios servicios (ítem 43) avisa con "A + B"."""
+    event = await _event(
+        db_session,
+        "owner-combo",
+        notification_type="owner_new_booking",
+        tenant_whatsapp="5491144443333",
+    )
+    booking = await db_session.get(Booking, event.booking_id)
+    barba = Service(
+        tenant_id=booking.tenant_id,
+        name="Barba",
+        duration_minutes=30,
+        price=Decimal("1000.00"),
+    )
+    db_session.add(barba)
+    await db_session.flush()
+    db_session.add(
+        BookingExtraService(booking_id=booking.id, position=1, service_id=barba.id)
+    )
+    await db_session.commit()
+
+    await process_outbox(TestingSessionLocal)
+
+    assert [call[3] for call in owner_sent] == ["Turno + Barba"]
