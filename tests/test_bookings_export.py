@@ -27,6 +27,7 @@ HEADER = [
     "Precio",
     "Seña",
     "Notas",
+    "Respuestas",
 ]
 
 
@@ -175,6 +176,7 @@ async def test_export_row_format_staff_notes_and_amounts():
         "5000,00",
         "1500,50",
         "Trae su material",
+        "",  # Respuestas (ítem 42): este turno no tiene
     ]
     # Sin personal → celda vacía; sin seña → 0,00; sin nota → vacío
     assert rows[2][3] == ""

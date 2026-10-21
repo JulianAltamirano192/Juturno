@@ -46,7 +46,7 @@
   </div>
   {% for service, deposit in services_with_deposit %}
   <div class="srow{% if not service.is_active %} off{% endif %}" role="row">
-    <div role="cell" class="s-name">{{ service.name }}<span class="s-meta">{{ service.duration_minutes }} min{% if service.buffer_minutes %} (+{{ service.buffer_minutes }} min libres){% endif %} · {{ service.price|money }}</span></div>
+    <div role="cell" class="s-name">{{ service.name }}<span class="s-meta">{{ service.duration_minutes }} min{% if service.buffer_minutes %} (+{{ service.buffer_minutes }} min libres){% endif %} · {{ service.price|money }}{% if service.questions %} · {{ service.questions|length }} {{ 'pregunta' if service.questions|length == 1 else 'preguntas' }}{% endif %}</span></div>
     <span role="cell" class="s-dur">{{ service.duration_minutes }} min{% if service.buffer_minutes %}<span class="s-auto">+{{ service.buffer_minutes }} min libres</span>{% endif %}</span>
     <span role="cell" class="s-price">{{ service.price|money }}</span>
     <span role="cell" class="s-dep">Seña {{ deposit|money }}{% if service.deposit_amount is none %}<span class="s-auto">30% automático</span>{% endif %}</span>

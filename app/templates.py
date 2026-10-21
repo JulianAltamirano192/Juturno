@@ -5,9 +5,12 @@ from fastapi.templating import Jinja2Templates
 
 from app.logo import logo_version
 from app.models import (
+    BOOKING_ANSWER_MAX,
     BUSINESS_CATEGORIES,
     BUSINESS_CATEGORY_OTHER_MAX,
     SERVICE_BUFFER_CHOICES,
+    SERVICE_QUESTION_MAX,
+    SERVICE_QUESTIONS_MAX,
 )
 
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
@@ -30,5 +33,8 @@ templates.env.filters["money"] = format_money
 templates.env.globals["business_categories"] = BUSINESS_CATEGORIES
 templates.env.globals["business_category_other_max"] = BUSINESS_CATEGORY_OTHER_MAX
 templates.env.globals["service_buffer_choices"] = SERVICE_BUFFER_CHOICES
+templates.env.globals["service_questions_max"] = SERVICE_QUESTIONS_MAX
+templates.env.globals["service_question_max"] = SERVICE_QUESTION_MAX
+templates.env.globals["booking_answer_max"] = BOOKING_ANSWER_MAX
 # Función (el contexto de algunas páginas trae "logo_version" ya calculado).
 templates.env.globals["logo_version_of"] = logo_version

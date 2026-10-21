@@ -13,7 +13,12 @@ from app.auth import get_current_tenant
 from app.database import get_db
 from app.models import Booking, Service, Staff, Tenant
 from app.phone import InvalidPhoneError, normalize_whatsapp_phone
-from app.schemas import AvailableSlotsResponse, BookingCreate, clean_client_name
+from app.schemas import (
+    AvailableSlotsResponse,
+    BookingCreate,
+    build_booking_answers,
+    clean_client_name,
+)
 from app.services import (
     compute_available_slots,
     effective_deposit,
@@ -134,6 +139,18 @@ async def create_booking(
     if not service or service.tenant_id != payload.tenant_id or not service.is_active:
         raise HTTPException(status_code=404, detail="Service not found for tenant")
 
+    # La API no exige las obligatorias: una integración existente no empieza
+    # a fallar porque el dueño agregue una pregunta (ítem 42).
+    try:
+        answers = build_booking_answers(
+            service.questions,
+            payload.answers,
+            require=False,
+            shown=payload.questions,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
     if payload.staff_id is not None:
         staff = await session.get(Staff, payload.staff_id)
         if not staff or staff.tenant_id != payload.tenant_id or not staff.is_active:
@@ -184,6 +201,7 @@ async def create_booking(
         price_at_booking=service.price,
         deposit_at_booking=effective_deposit(service.price, service.deposit_amount),
         idempotency_key=payload.idempotency_key,
+        answers=answers,
         status="pending",
     )
 

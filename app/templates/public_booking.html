@@ -65,6 +65,7 @@
   .muted-box{color:var(--muted);text-align:center;padding:28px 16px;font-size:.95rem;line-height:1.5}
   .mini{display:block;margin:16px auto 0;min-height:44px;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:0 20px;font-weight:600;color:var(--cyan-l);cursor:pointer;font-size:.95rem;font-family:inherit}
   label{display:block;font-size:.88rem;font-weight:600;color:#e3e5ec;margin:16px 0 8px}
+  label .opt{font-weight:400;color:#a9aebb}
   label:first-child{margin-top:0}
   input{width:100%;height:52px;font-size:16px;padding:0 14px;border:1px solid rgba(255,255,255,.16);border-radius:12px;font-family:inherit;color:var(--text);background:rgba(255,255,255,.04)}
   input::placeholder{color:#7f8494}
@@ -276,6 +277,10 @@ function renderForm() {
     + '<input id="f-name" type="text" maxlength="60" autocomplete="name" placeholder="Ej.: María González">'
     + '<label for="f-phone">Tu WhatsApp</label>'
     + '<input id="f-phone" type="tel" inputmode="numeric" autocomplete="tel" placeholder="Ej.: 5491123456789">'
+    + (state.service.questions || []).map((q, i) =>
+      '<label for="f-q' + i + '">' + esc(q.text) + (q.required ? "" : ' <span class="opt">(opcional)</span>') + "</label>"
+      + '<input id="f-q' + i + '" type="text" maxlength="{{ booking_answer_max }}"' + (q.required ? " required" : "") + ">"
+    ).join("")
     + '<p class="hint">' + (noDeposit(state.service)
       ? "Reservás sin seña. Te confirmamos por WhatsApp."
       : "Se abona una seña de " + fmtMoney(state.service.deposit_amount)
@@ -288,12 +293,13 @@ function renderForm() {
 function validateForm() {
   const name = document.getElementById("f-name");
   const phone = document.getElementById("f-phone");
+  const answers = Array.from(document.querySelectorAll("[id^=f-q]"));
   const ok = () => {
     const digits = phone.value.replace(/\D/g, "");
-    cta.disabled = !(name.value.trim().length >= 2 && digits.length >= 8);
+    const answered = answers.every((a) => !a.required || a.value.trim());
+    cta.disabled = !(name.value.trim().length >= 2 && digits.length >= 8 && answered);
   };
-  name.addEventListener("input", ok);
-  phone.addEventListener("input", ok);
+  [name, phone, ...answers].forEach((el) => el.addEventListener("input", ok));
 }
 
 // ---------- acciones ----------
@@ -368,6 +374,8 @@ async function submitBooking() {
         start_time: state.day + "T" + state.slot + ":00",
         staff_id: state.staff ? state.staff.id : null,
         idempotency_key: idem,
+        answers: Array.from(document.querySelectorAll("[id^=f-q]"), (a) => a.value.trim()),
+        questions: (state.service.questions || []).map((q) => q.text),
       }),
     });
     const data = await res.json().catch(() => ({}));

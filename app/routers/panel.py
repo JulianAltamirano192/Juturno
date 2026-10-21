@@ -40,6 +40,8 @@ from app.models import (
     DEPOSIT_EXPIRATION_CHOICES,
     PUBLIC_NOTICE_MAX,
     SERVICE_BUFFER_CHOICES,
+    SERVICE_QUESTION_MAX,
+    SERVICE_QUESTIONS_MAX,
     BlockedPeriod,
     Booking,
     BusinessHours,
@@ -127,6 +129,28 @@ def _parse_service_form(form: dict) -> tuple[dict, dict]:
             data["buffer_minutes"] = buffer_minutes
         except (ValueError, TypeError):
             errors["buffer_minutes"] = "Elegí un tiempo libre de la lista."
+
+    # Opt-in como el tiempo libre: un formulario viejo no borra las preguntas.
+    if any(f"question_{i}" in form for i in range(1, SERVICE_QUESTIONS_MAX + 1)):
+        questions = []
+        for i in range(1, SERVICE_QUESTIONS_MAX + 1):
+            key = f"question_{i}"
+            text, error = _clean_owner_text(form.get(key), SERVICE_QUESTION_MAX)
+            if error == "too_long":
+                errors[key] = (
+                    f"La pregunta puede tener hasta {SERVICE_QUESTION_MAX} caracteres."
+                )
+            elif error:
+                errors[key] = "La pregunta tiene caracteres no permitidos."
+            elif text:
+                # Una línea: el formulario público la muestra como etiqueta.
+                questions.append(
+                    {
+                        "text": " ".join(text.split()),
+                        "required": bool(form.get(f"{key}_required")),
+                    }
+                )
+        data["questions"] = questions
 
     try:
         price = _parse_amount(form.get("price", ""))
@@ -1128,6 +1152,7 @@ async def panel_services_new_submit(
         buffer_minutes=data.get("buffer_minutes", 0),
         price=data["price"],
         deposit_amount=data.get("deposit_amount"),
+        questions=data.get("questions", []),
         is_active=True,
     )
     session.add(new_service)
@@ -1161,6 +1186,10 @@ async def panel_services_edit_form(
     }
     if service.deposit_amount != 0:
         form["charge_deposit"] = "on"
+    for i, question in enumerate(service.questions, start=1):
+        form[f"question_{i}"] = question["text"]
+        if question["required"]:
+            form[f"question_{i}_required"] = "on"
     response = templates.TemplateResponse(
         request,
         "service_form.html",
@@ -1216,6 +1245,7 @@ async def panel_services_edit_submit(
     service.buffer_minutes = data.get("buffer_minutes", service.buffer_minutes)
     service.price = data["price"]
     service.deposit_amount = data.get("deposit_amount")
+    service.questions = data.get("questions", service.questions)
     session.add(service)
     await session.commit()
     return RedirectResponse(
@@ -1996,6 +2026,7 @@ async def panel_agenda(
             "status": b.status,
             "status_label": _AGENDA_STATUS_LABELS.get(b.status, b.status),
             "internal_notes": b.internal_notes,
+            "answers": b.answers or [],
             "price": b.price_at_booking,
             "deposit_paid": paid.get(b.id, Decimal(0)),
             "balance_due": due[b.id],
@@ -2276,6 +2307,7 @@ async def panel_client_detail(
                 "status_label": _AGENDA_STATUS_LABELS.get(b.status, b.status),
                 "price": b.price_at_booking,
                 "internal_notes": b.internal_notes,
+                "answers": b.answers or [],
             }
         )
     counts = {key: 0 for key in ("completed", "no_show", "cancelled")}
@@ -2380,6 +2412,7 @@ async def panel_agenda_export_csv(
             "Precio",
             "Seña",
             "Notas",
+            "Respuestas",
         ]
     )
     for booking, service_name, staff_name in rows:
@@ -2397,6 +2430,11 @@ async def panel_agenda_export_csv(
                 _csv_amount(booking.price_at_booking),
                 _csv_amount(deposit),
                 _csv_cell(booking.internal_notes or ""),
+                _csv_cell(
+                    " | ".join(
+                        f"{a['question']}: {a['answer']}" for a in booking.answers or []
+                    )
+                ),
             ]
         )
 

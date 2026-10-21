@@ -15,6 +15,9 @@
   .cd-when span{font-size:13px;color:var(--muted-2)}
   .cd-what{display:flex;flex-direction:column;gap:2px;min-width:0}
   .cd-what span{font-size:13px;color:var(--muted-2)}
+  .cd-answers{grid-column:1 / -1;margin:0;font-size:13px;overflow-wrap:anywhere}
+  .cd-answers dt{color:var(--muted-2)}
+  .cd-answers dd{margin:0 0 4px;color:var(--text-2)}
   .cd-note{grid-column:1 / -1;font-size:13px;color:var(--text-2);white-space:pre-line;overflow-wrap:anywhere}
   .cd-cap{margin-top:14px;font-size:13px;color:var(--muted-2)}
   @media (max-width:900px){
@@ -48,6 +51,7 @@
       <span>{% if item.staff_name %}Con {{ item.staff_name }} · {% endif %}{{ item.price|money }}</span>
     </div>
     <span class="badge badge-{{ item.status }}">{{ item.status_label }}</span>
+    {% if item.answers %}<dl class="cd-answers">{% for a in item.answers %}<dt>{{ a.question }}</dt><dd>{{ a.answer }}</dd>{% endfor %}</dl>{% endif %}
     {% if item.internal_notes %}<p class="cd-note">Nota: {{ item.internal_notes }}</p>{% endif %}
   </div>
   {% endfor %}

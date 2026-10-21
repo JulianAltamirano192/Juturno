@@ -24,7 +24,12 @@ from app.models import Booking, Payment, Service, Staff, Tenant, TenantLogo
 from app.mp_connect import ERR_PAGO_NO_CONFIGURADO, resolve_mp_access_token
 from app.mp_crypto import MPTokenCryptoError
 from app.mp_webhooks import create_mp_preference
-from app.schemas import AvailableSlotsResponse, BookingCreate, clean_client_name
+from app.schemas import (
+    AvailableSlotsResponse,
+    BookingCreate,
+    build_booking_answers,
+    clean_client_name,
+)
 from app.services import (
     active_staff,
     compute_any_staff_slots,
@@ -286,6 +291,16 @@ async def create_public_booking(
     if not service or service.tenant_id != payload.tenant_id or not service.is_active:
         raise HTTPException(status_code=404, detail="Service not found for tenant")
 
+    try:
+        answers = build_booking_answers(
+            service.questions,
+            payload.answers,
+            require=True,
+            shown=payload.questions,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
     if payload.staff_id is not None:
         chosen = await session.get(Staff, payload.staff_id)
         if not chosen or chosen.tenant_id != payload.tenant_id or not chosen.is_active:
@@ -401,6 +416,7 @@ async def create_public_booking(
             price_at_booking=service.price,
             deposit_at_booking=deposit_decimal,
             idempotency_key=payload.idempotency_key,
+            answers=answers,
             status="pending",
         )
         try:
@@ -561,6 +577,7 @@ async def public_booking_page(
             "duration_minutes": s.duration_minutes,
             "price": float(s.price),
             "deposit_amount": float(effective_deposit(s.price, s.deposit_amount)),
+            "questions": s.questions,
         }
         for s in services
     ]
