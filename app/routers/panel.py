@@ -2026,6 +2026,7 @@ async def panel_agenda(
             "status": b.status,
             "status_label": _AGENDA_STATUS_LABELS.get(b.status, b.status),
             "internal_notes": b.internal_notes,
+            "answers": b.answers or [],
             "price": b.price_at_booking,
             "deposit_paid": paid.get(b.id, Decimal(0)),
             "balance_due": due[b.id],
@@ -2306,6 +2307,7 @@ async def panel_client_detail(
                 "status_label": _AGENDA_STATUS_LABELS.get(b.status, b.status),
                 "price": b.price_at_booking,
                 "internal_notes": b.internal_notes,
+                "answers": b.answers or [],
             }
         )
     counts = {key: 0 for key in ("completed", "no_show", "cancelled")}
@@ -2410,6 +2412,7 @@ async def panel_agenda_export_csv(
             "Precio",
             "Seña",
             "Notas",
+            "Respuestas",
         ]
     )
     for booking, service_name, staff_name in rows:
@@ -2427,6 +2430,11 @@ async def panel_agenda_export_csv(
                 _csv_amount(booking.price_at_booking),
                 _csv_amount(deposit),
                 _csv_cell(booking.internal_notes or ""),
+                _csv_cell(
+                    " | ".join(
+                        f"{a['question']}: {a['answer']}" for a in booking.answers or []
+                    )
+                ),
             ]
         )
 
