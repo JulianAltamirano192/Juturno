@@ -1,15 +1,19 @@
 import re
 import unicodedata
 from datetime import date, datetime
+from typing import Annotated
 
 from pydantic import BaseModel, Field, field_validator
 
 from app.models import (
+    BOOKING_ANSWER_MAX,
     BUSINESS_CATEGORIES,
     BUSINESS_CATEGORY_OTHER,
     BUSINESS_CATEGORY_OTHER_MAX,
     FACEBOOK_MAX,
     LOCALITY_MAX,
+    SERVICE_QUESTION_MAX,
+    SERVICE_QUESTIONS_MAX,
 )
 
 CLIENT_NAME_MAX = 60
@@ -36,6 +40,64 @@ def clean_client_name(raw: str) -> str:
     if not any(c.isalpha() for c in name) or _LINK.search(name):
         raise ValueError(name)
     return name
+
+
+# Invisibles que engañan al dueño o al cliente: zero-width, marcas y aislantes
+# bidi, BOM. El zero-width joiner (U+200D) no: arma los emoji compuestos.
+_INVISIBLE = frozenset(
+    "\u200b\u200c\u200e\u200f\u202a\u202b\u202c\u202d\u202e"
+    "\u2060\u2061\u2062\u2063\u2064\u2066\u2067\u2068\u2069\ufeff"
+)
+
+
+def _has_forbidden_char(text: str) -> bool:
+    """Control (NUL: Postgres → 500), privados, surrogates o invisibles. Los
+    no asignados (Cn) pasan: Python puede no conocer un emoji nuevo."""
+    return any(
+        unicodedata.category(c) in ("Cc", "Co", "Cs") or c in _INVISIBLE for c in text
+    )
+
+
+def build_booking_answers(
+    questions: list[dict],
+    answers: list[str],
+    require: bool,
+    shown: list[str] | None = None,
+) -> list[dict[str, str]] | None:
+    """Respuestas del cliente (`answers[i]` responde `questions[i]`) copiadas
+    con su pregunta para `Booking.answers`, con los espacios colapsados. Las
+    vacías no se guardan; sin ninguna = None.
+
+    `shown` son los textos de las preguntas que vio el cliente (la página
+    pública los manda): si el dueño las cambió en el medio, las respuestas
+    quedarían bajo otra pregunta.
+
+    ValueError con el motivo (en español, va como `detail` del 422) si las
+    preguntas cambiaron, sobran respuestas, alguna es muy larga o trae
+    caracteres de control o invisibles, o, con `require`, falta una obligatoria.
+    """
+    if shown is not None and shown != [q["text"] for q in questions]:
+        raise ValueError(
+            "Las preguntas de este servicio cambiaron. Recargá la página para verlas."
+        )
+    if len(answers) > len(questions):
+        raise ValueError("Hay más respuestas que preguntas para este servicio.")
+    saved = []
+    for i, question in enumerate(questions):
+        raw = answers[i] if i < len(answers) else ""
+        # Sin NFKC: el dueño ve lo que escribió el cliente ("²" no pasa a "2").
+        answer = " ".join(raw.split())
+        if len(answer) > BOOKING_ANSWER_MAX:
+            raise ValueError(
+                f"Cada respuesta puede tener hasta {BOOKING_ANSWER_MAX} caracteres."
+            )
+        if _has_forbidden_char(answer):
+            raise ValueError("Una respuesta tiene caracteres no permitidos.")
+        if answer:
+            saved.append({"question": question["text"], "answer": answer})
+        elif require and question["required"]:
+            raise ValueError(f"Falta responder: {question['text']}")
+    return saved or None
 
 
 def clean_business_category(
@@ -184,6 +246,17 @@ class BookingCreate(BaseModel):
     start_time: datetime
     end_time: datetime | None = None
     idempotency_key: str
+    # Respuestas a las preguntas del servicio, en orden (ítem 42). El tope por
+    # ítem (holgado: el largo real se mide después de colapsar espacios) evita
+    # que un texto enorme llegue a `split()`.
+    answers: list[Annotated[str, Field(max_length=BOOKING_ANSWER_MAX * 4)]] = Field(
+        default_factory=list, max_length=SERVICE_QUESTIONS_MAX
+    )
+    # Textos de las preguntas que vio el cliente; opcional (la API puede no
+    # mandarlo). Ver `build_booking_answers`.
+    questions: (
+        list[Annotated[str, Field(max_length=SERVICE_QUESTION_MAX * 4)]] | None
+    ) = Field(default=None, max_length=SERVICE_QUESTIONS_MAX)
 
     @field_validator("idempotency_key")
     @classmethod
