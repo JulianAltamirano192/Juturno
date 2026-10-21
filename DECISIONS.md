@@ -1274,7 +1274,7 @@ En `compute_available_slots` se corre hacia atrás el inicio de cada turno exist
 - **Mismas filas que el resumen de plata**: `panel_stats` trae los turnos una vez (`_bookings_for_days`) y los agrega en Python; no hay queries nuevas. Cada turno cuenta en el día local en que empieza.
 - **Qué cuenta**: la barra de estados cuenta confirmados, completados, no se presentaron y cancelados (los `expired` no, igual que en el resto). Servicios, días de la semana y días del mes cuentan lo atendido o por atender (`confirmed` + `completed`), como el resumen de plata.
 - **Servicios top**: hasta 5, por cantidad y, a igual cantidad, por nombre.
-- **Días fuertes/débiles**: "Más movido" es el día de la semana con más turnos; "Más tranquilo", el de menos entre los días con alguno (un día cerrado, con 0, no dice nada). Si no hay diferencia, no se marca ninguno.
+- **Días fuertes/débiles**: "Más movido" es el día de la semana con más turnos; "Más tranquilo", el de menos entre los días con alguno (un día cerrado, con 0, no dice nada). Si no hay diferencia, no se marca ninguno; en un empate se marcan todos los días empatados. En la vista mensual el gráfico suma todos los lunes, todos los martes, etc., y lo aclara debajo del título.
 
 **Alternativas**:
 - **Chart.js vendored** (como `qrcode-generator`): tooltips y animaciones, pero ~200 KB de JS, un `<script>` más y gráficos en `<canvas>` que un lector de pantalla no lee. Descartada por Julián.

@@ -455,15 +455,14 @@ def _summarize_activity(
     day_top = max(by_day)
 
     # "Más tranquilo" = menos turnos entre los días con alguno: un día cerrado
-    # (0) no dice nada. Sin diferencia entre días, no se marca ninguno.
+    # (0) no dice nada. Sin diferencia entre días, no se marca ninguno; en un
+    # empate se marcan todos los días empatados.
     busiest = max(weekdays)
     quietest = min((n for n in weekdays if n), default=0)
     tags = {}
     if busiest != quietest:
-        tags = {
-            weekdays.index(busiest): "Más movido",
-            weekdays.index(quietest): "Más tranquilo",
-        }
+        tags = {i: "Más movido" for i, n in enumerate(weekdays) if n == busiest}
+        tags |= {i: "Más tranquilo" for i, n in enumerate(weekdays) if n == quietest}
 
     return {
         "total": sum(statuses.values()),

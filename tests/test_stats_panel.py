@@ -504,3 +504,61 @@ def test_stats_bar_never_hides_a_nonzero_count():
     assert _pct(0, 250) == 0
     assert _pct(3, 0) == 0
     assert _pct(2, 3) == 67
+
+
+@pytest.mark.asyncio
+async def test_stats_weekday_ties_mark_every_tied_day(client, db_session):
+    tenant, service = await _money_tenant(db_session)
+    friday = WEEK_MONDAY + timedelta(days=4)
+    for day in (WEEK_MONDAY, friday):
+        for hour in (9, 10):
+            await _money_booking(db_session, tenant, service, hour, day=day)
+    tuesday = WEEK_MONDAY + timedelta(days=1)
+    for day in (tuesday, MONEY_DAY):
+        await _money_booking(db_session, tenant, service, 10, day=day)
+    await db_session.commit()
+
+    text = await _get_stats(client, tenant, day=MONEY_DAY)
+
+    tags = {name: tag for name, tag, _w, _n in _bars(text, "dias-periodo")}
+    assert tags == {
+        "Lunes": "Más movido",
+        "Martes": "Más tranquilo",
+        "Miércoles": "Más tranquilo",
+        "Jueves": "",
+        "Viernes": "Más movido",
+        "Sábado": "",
+        "Domingo": "",
+    }
+
+
+@pytest.mark.asyncio
+async def test_stats_services_with_same_name_are_separate_rows(client, db_session):
+    tenant, service = await _money_tenant(db_session)
+    twin = await _extra_service(db_session, tenant, service.name)
+    await _money_booking(db_session, tenant, service, 9)
+    await _money_booking(db_session, tenant, twin, 10)
+    await _money_booking(db_session, tenant, twin, 11)
+    await db_session.commit()
+
+    text = await _get_stats(client, tenant, day=MONEY_DAY)
+
+    assert _bars(text, "servicios-periodo") == [
+        ("Servicio montos", "", 100, 2),
+        ("Servicio montos", "", 50, 1),
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("period, shown", [("month", True), ("week", False)])
+async def test_stats_weekday_chart_explains_month_sum(
+    client, db_session, period, shown
+):
+    tenant, service = await _money_tenant(db_session)
+    await _money_booking(db_session, tenant, service, 10)
+    await db_session.commit()
+
+    text = await _get_stats(client, tenant, period=period, day=MONEY_DAY)
+
+    html = _section(text, "dias-periodo")
+    assert ("Suma de todo el mes" in html) is shown
